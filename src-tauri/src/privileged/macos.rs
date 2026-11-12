@@ -76,6 +76,9 @@ impl HelperInstaller for MacosInstaller {
     fn install(&self) -> Result<(), InstallerError> {
         let helper_source = resolve_helper_binary()?;
         let sing_box_source = resolve_sing_box_binary()?;
+        // macOS не запускает LaunchDaemon с ad-hoc подписью; проверяем до
+        // копирования файлов, чтобы не оставить полусобранный сервис.
+        ensure_launch_daemon_signature(&helper_source)?;
         let staging = Staging::new()?;
 
         let staged_helper = staging.path.join("splitroute-helper");
@@ -84,7 +87,6 @@ impl HelperInstaller for MacosInstaller {
 
         copy_binary(&helper_source, &staged_helper)?;
         copy_binary(&sing_box_source, &staged_sing_box)?;
-        ensure_signature(&staged_helper)?;
 
         let paths = InstallPaths::standard(current_uid());
         fs::write(&staged_plist, plist_contents(&paths)).map_err(|error| {
@@ -310,24 +312,34 @@ fn copy_binary(source: &Path, destination: &Path) -> Result<(), InstallerError> 
     })
 }
 
-/// Подпись helper'а: уже подписанный бинарь не трогаем.
-///
-/// В debug неподписанный бинарь получает ad-hoc подпись; в release это ошибка —
-/// для распространения нужна подпись Developer ID и notarization (R7).
-fn ensure_signature(path: &Path) -> Result<(), InstallerError> {
-    if is_signed(path) {
-        return Ok(());
-    }
-    if cfg!(debug_assertions) {
-        return adhoc_sign(path);
-    }
-    Err(InstallerError::Failed(
-        "helper не подписан; для релиза нужна подпись Developer ID".to_string(),
-    ))
+/// Тип подписи helper'а.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SignatureKind {
+    Real,
+    Adhoc,
+    Invalid,
 }
 
-fn is_signed(path: &Path) -> bool {
-    Command::new("/usr/bin/codesign")
+/// macOS 15 не запускает LaunchDaemon с ad-hoc подписью: AMFI отвечает
+/// «has no CMS blob» и убивает процесс. Проверяем подпись заранее.
+fn ensure_launch_daemon_signature(path: &Path) -> Result<(), InstallerError> {
+    match signature_kind(path) {
+        SignatureKind::Real => Ok(()),
+        SignatureKind::Adhoc => Err(InstallerError::Failed(
+            "helper подписан ad-hoc; macOS не запускает такой LaunchDaemon \
+             (AMFI: no CMS blob). Нужна подпись Apple Development или Developer ID"
+                .to_string(),
+        )),
+        SignatureKind::Invalid => Err(InstallerError::Failed(
+            "helper не подписан или подпись повреждена; macOS не запускает такой \
+             LaunchDaemon. Подпишите helper сертификатом Apple Development или Developer ID"
+                .to_string(),
+        )),
+    }
+}
+
+fn signature_kind(path: &Path) -> SignatureKind {
+    let verified = Command::new("/usr/bin/codesign")
         .arg("--verify")
         .arg("--strict")
         .arg(path)
@@ -336,26 +348,36 @@ fn is_signed(path: &Path) -> bool {
         .stderr(Stdio::null())
         .status()
         .map(|status| status.success())
-        .unwrap_or(false)
-}
+        .unwrap_or(false);
+    if !verified {
+        return SignatureKind::Invalid;
+    }
 
-/// Ad-hoc подпись для dev-режима; релизная сборка подписывается Developer ID.
-fn adhoc_sign(path: &Path) -> Result<(), InstallerError> {
     let output = Command::new("/usr/bin/codesign")
-        .arg("--force")
-        .arg("--sign")
-        .arg("-")
+        .arg("-dv")
+        .arg("--verbose=4")
         .arg(path)
         .stdin(Stdio::null())
-        .output()
-        .map_err(|error| InstallerError::Failed(format!("codesign: {error}")))?;
-    if !output.status.success() {
-        return Err(InstallerError::Failed(format!(
-            "codesign завершился с ошибкой: {}",
-            short_output(&output.stderr)
-        )));
+        .output();
+    match output {
+        // codesign печатает сведения о подписи в stderr.
+        Ok(output) if output.status.success() => {
+            let details = String::from_utf8_lossy(&output.stderr);
+            if is_adhoc_signature(&details) {
+                SignatureKind::Adhoc
+            } else {
+                SignatureKind::Real
+            }
+        }
+        _ => SignatureKind::Invalid,
     }
-    Ok(())
+}
+
+fn is_adhoc_signature(details: &str) -> bool {
+    details.lines().any(|line| {
+        let line = line.trim();
+        line == "Signature=adhoc" || (line.starts_with("flags=") && line.contains("adhoc"))
+    })
 }
 
 fn run_privileged_script(directory: &Path, name: &str, script: &str) -> Result<(), InstallerError> {
@@ -541,6 +563,34 @@ mod tests {
                 .unwrap();
             let _ = fs::remove_file(&path);
             assert!(status.success(), "{name}.sh не проходит sh -n");
+        }
+    }
+
+    #[test]
+    fn adhoc_signature_is_detected() {
+        assert!(is_adhoc_signature(
+            "flags=0x20002(adhoc,linker-signed)\nSignature=adhoc"
+        ));
+        assert!(is_adhoc_signature("Signature=adhoc"));
+    }
+
+    #[test]
+    fn real_signature_is_not_adhoc() {
+        assert!(!is_adhoc_signature(
+            "Authority=Developer ID Application: Example\nTeamIdentifier=ABC123"
+        ));
+        assert!(!is_adhoc_signature("flags=0x0(none)"));
+    }
+
+    #[test]
+    fn unsigned_helper_is_rejected() {
+        let path = temp_path("unsigned", "bin");
+        fs::write(&path, b"not a mach-o").unwrap();
+        let error = ensure_launch_daemon_signature(&path).unwrap_err();
+        let _ = fs::remove_file(&path);
+        match error {
+            InstallerError::Failed(message) => assert!(message.contains("не подписан")),
+            other => panic!("ожидалась ошибка подписи, получено {other:?}"),
         }
     }
 
