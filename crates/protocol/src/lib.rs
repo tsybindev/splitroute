@@ -170,8 +170,24 @@ pub struct HelperStatus {
     pub pid: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub version: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "deserialize_optional_secs"
+    )]
     pub started_at: Option<u64>,
+}
+
+/// Принимает время старта как целые или дробные секунды: dev-helper отдаёт
+/// `time.time()` (float), продакшн-helper может отдавать целые.
+fn deserialize_optional_secs<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<f64>::deserialize(deserializer)?;
+    Ok(value
+        .filter(|seconds| seconds.is_finite() && *seconds >= 0.0)
+        .map(|seconds| seconds.trunc() as u64))
 }
 
 /// Разбор ответа с проверкой версии и статуса.
@@ -284,5 +300,13 @@ mod tests {
         let encoded = serde_json::to_string(&status).unwrap();
         let decoded: HelperStatus = serde_json::from_str(&encoded).unwrap();
         assert_eq!(decoded, status);
+    }
+
+    #[test]
+    fn helper_status_accepts_fractional_started_at() {
+        // dev-helper на Python отдаёт time.time(): дробные секунды.
+        let raw = r#"{"state":"running","pid":42,"started_at":1762950000.123}"#;
+        let decoded: HelperStatus = serde_json::from_str(raw).unwrap();
+        assert_eq!(decoded.started_at, Some(1_762_950_000));
     }
 }
