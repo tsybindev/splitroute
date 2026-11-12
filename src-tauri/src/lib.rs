@@ -2,12 +2,16 @@
 
 pub mod commands;
 pub mod config;
+pub mod logging;
 pub mod privileged;
+pub mod store;
 pub mod subscription;
+pub mod tray;
 
 use std::sync::Arc;
 
 use privileged::{HelperClient, HelperInstaller, UnsupportedInstaller};
+use tauri::Manager;
 
 #[cfg(unix)]
 fn default_helper() -> Arc<dyn HelperClient> {
@@ -23,17 +27,67 @@ fn default_installer() -> Arc<dyn HelperInstaller> {
     Arc::new(UnsupportedInstaller)
 }
 
+/// rustls без `aws-lc`: провайдер ring регистрируется один раз до первого запроса.
+fn init_tls() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let state = commands::AppState::new(default_helper(), default_installer());
+    init_tls();
+
+    let state = commands::AppState::new(
+        default_helper(),
+        default_installer(),
+        store::Store::default_location(),
+        Arc::new(subscription::ReqwestFetcher::new()),
+    );
+
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            tray::show_main(app);
+        }))
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--hidden"]),
+        ))
         .manage(state)
+        .setup(|app| {
+            tray::create(app.handle())?;
+            let state = app.state::<commands::AppState>();
+            if state.store.settings().preferences.launch_minimized {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+            }
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let state = window.state::<commands::AppState>();
+                if state.store.settings().preferences.close_to_tray {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             commands::helper_status,
             commands::connect,
             commands::disconnect,
             commands::helper_install,
             commands::helper_uninstall,
+            commands::subscription_fetch,
+            commands::profiles_list,
+            commands::profile_select,
+            commands::rules_list,
+            commands::rules_upsert,
+            commands::rules_delete,
+            commands::settings_get,
+            commands::settings_update,
+            commands::hwid_generate,
+            commands::logs_list,
+            commands::diagnostics_get,
         ])
         .run(tauri::generate_context!())
         .expect("ошибка запуска SplitRoute");

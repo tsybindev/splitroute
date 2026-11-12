@@ -4,8 +4,13 @@
 //! TCP). Профили без outbound `proxy`, с другим протоколом или транспортом
 //! пропускаются с причиной, а не роняют обновление (PRD §6.1).
 
+use serde::Serialize;
 use serde_json::Value;
 use splitroute_protocol::{Profile, Protocol, TlsConfig, TlsKind, Transport};
+
+pub mod fetch;
+
+pub use fetch::{fetch_and_parse, FetchError, FetchRequest, ReqwestFetcher, SubscriptionFetcher};
 
 /// Ошибка разбора ответа подписки целиком.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -21,7 +26,7 @@ pub enum SubscriptionError {
 }
 
 /// Профиль, пропущенный при разборе, с причиной.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SkippedProfile {
     pub index: usize,
     pub name: String,
