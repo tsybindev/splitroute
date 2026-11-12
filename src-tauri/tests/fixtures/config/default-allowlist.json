@@ -1,21 +1,19 @@
 {
   "dns": {
-    "final": "local",
+    "final": "remote",
     "rules": [
       {
-        "process_name": [
-          "Google Chrome"
+        "domain": [
+          "localhost"
         ],
-        "process_path_regex": [
-          "^/Applications/Google Chrome\\.app/"
-        ],
-        "server": "remote"
+        "server": "local"
       },
       {
-        "process_name": [
-          "curl"
+        "domain_suffix": [
+          ".local",
+          "home.arpa"
         ],
-        "server": "remote"
+        "server": "local"
       }
     ],
     "servers": [
@@ -92,6 +90,12 @@
     },
     "final": "direct",
     "rules": [
+      {
+        "action": "hijack-dns",
+        "port": [
+          53
+        ]
+      },
       {
         "domain": [
           "localhost"

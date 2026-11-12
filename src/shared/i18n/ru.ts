@@ -37,10 +37,10 @@ export const ru = {
   "connect.helper.installed": "Установлен",
   "connect.helper.missing": "Не установлен",
   "connect.dns": "DNS",
-  "connect.dns.process": "Раздельный по процессам",
+  "connect.dns.proxy": "Через прокси",
   "connect.dns.system": "Системный",
-  "connect.dns.processWarning":
-    "Разделение DNS по процессу не подтверждено на macOS 15 / sing-box 1.14: DNS выбранных приложений может уходить в локальный resolver.",
+  "connect.dns.systemWarning":
+    "DNS выбранных приложений уходит в локальный resolver — возможна утечка.",
   "connect.allowlist": "Приложений через прокси",
   "connect.noSubscription": "Подписка не добавлена. Добавьте URL подписки в настройках.",
   "connect.goProfiles": "Перейти к локациям",
@@ -92,10 +92,12 @@ export const ru = {
   "settings.network.mixed": "Локальный mixed-inbound",
   "settings.network.mixedPort": "Порт mixed-inbound",
   "settings.network.dns": "DNS-режим",
-  "settings.network.dns.process": "Раздельный по процессам",
-  "settings.network.dns.system": "Системный",
-  "settings.network.dns.processHint":
-    "На macOS 15 / sing-box 1.14 разделение DNS по процессу не подтверждено: возможна утечка DNS в локальный resolver. Системный режим использует DNS ОС.",
+  "settings.network.dns.proxy": "Весь DNS через прокси",
+  "settings.network.dns.system": "Системный DNS",
+  "settings.network.dns.proxyHint":
+    "Весь DNS идёт через прокси, утечек нет. DNS невыбранных приложений тоже идёт через прокси; локальные имена (.local) могут не работать.",
+  "settings.network.dns.systemHint":
+    "DNS операционной системы, максимальная совместимость. DNS выбранных приложений уходит локально — возможна утечка.",
   "settings.network.logLevel": "Уровень логов",
   "settings.app.title": "Приложение",
   "settings.app.autostart": "Запускать при входе в систему",

@@ -39,7 +39,7 @@ pub fn build_config(
 
     Ok(json!({
         "log": { "level": json!(settings.log_level), "timestamp": true },
-        "dns": build_dns(settings, &active),
+        "dns": build_dns(settings),
         "inbounds": build_inbounds(settings),
         "outbounds": build_outbounds(settings, profile)?,
         "route": build_route(settings, &active),
@@ -72,32 +72,34 @@ fn validate(settings: &Settings, profile: &Profile) -> Result<(), ConfigError> {
     Ok(())
 }
 
-fn build_dns(settings: &Settings, rules: &[&AppRule]) -> Value {
-    let mut servers = Vec::new();
-    let mut dns_rules = Vec::new();
-
-    if settings.dns_mode == DnsMode::ProcessSplit {
-        servers.push(json!({
-            "tag": "remote",
-            "type": "tls",
-            "server": REMOTE_DNS,
-            "detour": "proxy",
-        }));
-        for rule in rules {
-            if let Some(mut selectors) = selectors(rule) {
-                selectors.insert("server".to_string(), json!("remote"));
-                dns_rules.push(Value::Object(selectors));
-            }
-        }
+/// DNS-политика (PRD §6.4). Per-process DNS не поддерживается, поэтому правил
+/// по процессам здесь нет: либо весь DNS через прокси, либо системный DNS.
+fn build_dns(settings: &Settings) -> Value {
+    match settings.dns_mode {
+        // Весь DNS через прокси; локальные имена резолвим системно.
+        DnsMode::Proxy => json!({
+            "servers": [
+                {
+                    "tag": "remote",
+                    "type": "tls",
+                    "server": REMOTE_DNS,
+                    "detour": "proxy",
+                },
+                { "tag": "local", "type": "local" },
+            ],
+            "rules": [
+                { "domain": ["localhost"], "server": "local" },
+                { "domain_suffix": [".local", "home.arpa"], "server": "local" },
+            ],
+            "final": "remote",
+        }),
+        // Только системный DNS, без remote и правил.
+        DnsMode::System => json!({
+            "servers": [{ "tag": "local", "type": "local" }],
+            "rules": [],
+            "final": "local",
+        }),
     }
-
-    servers.push(json!({ "tag": "local", "type": "local" }));
-
-    json!({
-        "servers": servers,
-        "rules": dns_rules,
-        "final": "local",
-    })
 }
 
 fn build_inbounds(settings: &Settings) -> Value {
@@ -191,12 +193,18 @@ fn build_tls(profile: &Profile) -> Result<Value, ConfigError> {
 }
 
 fn build_route(settings: &Settings, rules: &[&AppRule]) -> Value {
-    let mut route_rules = vec![
-        // Локальный трафик и приватные сети — всегда напрямую и раньше
-        // process-правил, чтобы не загнать петлю mixed-inbound в прокси.
-        json!({ "domain": ["localhost"], "outbound": "direct" }),
-        json!({ "ip_is_private": true, "outbound": "direct" }),
-    ];
+    let mut route_rules = Vec::new();
+
+    // В режиме proxy перехватываем DNS из TUN и отдаём его в dns.final=remote.
+    // В режиме system DNS не перехватываем: приложения используют DNS ОС.
+    if settings.dns_mode == DnsMode::Proxy {
+        route_rules.push(json!({ "port": [53], "action": "hijack-dns" }));
+    }
+
+    // Локальный трафик и приватные сети — всегда напрямую и раньше
+    // process-правил, чтобы не загнать петлю mixed-inbound в прокси.
+    route_rules.push(json!({ "domain": ["localhost"], "outbound": "direct" }));
+    route_rules.push(json!({ "ip_is_private": true, "outbound": "direct" }));
 
     if !settings.ipv6_enabled {
         for rule in rules {
@@ -311,7 +319,37 @@ mod tests {
         disabled.enabled = false;
         let config = build_config(&Settings::default(), &profile(), &[disabled]).unwrap();
         let rules = config["route"]["rules"].as_array().unwrap();
-        assert_eq!(rules.len(), 2, "только localhost и ip_is_private");
+        assert_eq!(
+            rules.len(),
+            3,
+            "hijack-dns, localhost и ip_is_private; правил по процессам нет"
+        );
+    }
+
+    #[test]
+    fn proxy_dns_goes_through_proxy_without_process_rules() {
+        let config = build_config(&Settings::default(), &profile(), &[rule()]).unwrap();
+        let dns = &config["dns"];
+        assert_eq!(dns["final"], "remote");
+        let servers = dns["servers"].as_array().unwrap();
+        assert!(servers.iter().any(|item| item["tag"] == "remote"
+            && item["type"] == "tls"
+            && item["detour"] == "proxy"));
+        assert!(servers.iter().any(|item| item["tag"] == "local"));
+
+        let dns_rules = dns["rules"].as_array().unwrap();
+        assert!(dns_rules
+            .iter()
+            .all(|item| item.get("process_name").is_none()
+                && item.get("process_path").is_none()
+                && item.get("process_path_regex").is_none()));
+        assert!(dns_rules.iter().any(|item| item["domain_suffix"]
+            .as_array()
+            .is_some_and(|suffixes| suffixes.iter().any(|s| s == ".local"))));
+
+        let route_rules = config["route"]["rules"].as_array().unwrap();
+        assert_eq!(route_rules[0]["action"], "hijack-dns");
+        assert_eq!(route_rules[0]["port"][0], 53);
     }
 
     #[test]
@@ -354,7 +392,16 @@ mod tests {
         let servers = config["dns"]["servers"].as_array().unwrap();
         assert_eq!(servers.len(), 1);
         assert_eq!(servers[0]["tag"], "local");
+        assert_eq!(config["dns"]["final"], "local");
         assert!(config["dns"]["rules"].as_array().unwrap().is_empty());
+        assert!(
+            config["route"]["rules"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|item| item.get("action").is_none() || item["action"] != "hijack-dns"),
+            "в режиме system DNS не перехватывается"
+        );
     }
 
     #[test]

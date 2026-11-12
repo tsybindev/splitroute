@@ -74,11 +74,21 @@ describe("SettingsScreen", () => {
     );
   });
 
-  it("предупреждает о неподтверждённом разделении DNS", () => {
+  it("предлагает только два DNS-режима с подсказками", async () => {
+    const user = userEvent.setup();
     useAppStore.setState({ settings: makeSettings() });
     render(<SettingsScreen />);
+
+    const select = screen.getByLabelText(/DNS-режим/);
+    const options = Array.from(select.querySelectorAll("option")).map(
+      (option) => option.getAttribute("value"),
+    );
+    expect(options).toEqual(["proxy", "system"]);
+    expect(screen.getByText(/Весь DNS идёт через прокси, утечек нет/)).toBeInTheDocument();
+
+    await user.selectOptions(select, "system");
     expect(
-      screen.getByText(/разделение DNS по процессу не подтверждено/i),
+      screen.getByText(/DNS выбранных приложений уходит локально/),
     ).toBeInTheDocument();
   });
 

@@ -150,13 +150,23 @@ pub(crate) fn connect_inner(state: &AppState) -> Result<HelperStatus, CommandErr
         })?;
 
     let config = build_config(&data.settings.network, profile, &data.rules)?;
-    #[cfg(target_os = "macos")]
-    if data.settings.network.dns_mode == splitroute_protocol::DnsMode::ProcessSplit {
-        state.logs.push(
-            LogLevel::Warn,
-            "DNS: разделение по процессу не подтверждено на macOS 15 / sing-box 1.14; \
-             возможна утечка в локальный resolver",
-        );
+    match data.settings.network.dns_mode {
+        splitroute_protocol::DnsMode::Proxy => {
+            state
+                .logs
+                .push(LogLevel::Info, "DNS: режим proxy — весь DNS через прокси");
+        }
+        splitroute_protocol::DnsMode::System => {
+            state.logs.push(
+                LogLevel::Info,
+                "DNS: режим system — DNS операционной системы",
+            );
+            state.logs.push(
+                LogLevel::Warn,
+                "DNS: режим system — DNS выбранных приложений уходит в локальный \
+                 resolver, возможна утечка",
+            );
+        }
     }
     let status = state.helper.start(config)?;
     state
@@ -651,10 +661,37 @@ mod tests {
         assert!(!entries.is_empty());
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
-    fn connect_warns_about_unverified_dns_split() {
+    fn connect_logs_proxy_dns_mode_without_warning() {
         let state = state_with(Ok(fixture()));
+        subscription_fetch_inner(
+            &state,
+            Some("https://example.invalid/sub".to_string()),
+            None,
+            None,
+        )
+        .unwrap();
+        connect_inner(&state).unwrap();
+
+        let infos = state.logs.list(Some(LogLevel::Info), 20);
+        assert!(
+            infos
+                .iter()
+                .any(|entry| entry.message.contains("режим proxy")),
+            "при connect должен логироваться выбранный режим DNS"
+        );
+        assert!(
+            state.logs.list(Some(LogLevel::Warn), 20).is_empty(),
+            "в режиме proxy предупреждений об утечке DNS быть не должно"
+        );
+    }
+
+    #[test]
+    fn connect_logs_system_dns_leak_warning() {
+        let state = state_with(Ok(fixture()));
+        let mut settings = state.store.settings();
+        settings.network.dns_mode = splitroute_protocol::DnsMode::System;
+        settings_update_inner(&state, settings).unwrap();
         subscription_fetch_inner(
             &state,
             Some("https://example.invalid/sub".to_string()),
@@ -666,8 +703,10 @@ mod tests {
 
         let warnings = state.logs.list(Some(LogLevel::Warn), 10);
         assert!(
-            warnings.iter().any(|entry| entry.message.contains("DNS")),
-            "на macOS должно быть предупреждение о непроверенном разделении DNS"
+            warnings
+                .iter()
+                .any(|entry| entry.message.contains("DNS") && entry.message.contains("утечка")),
+            "в режиме system нужен Warn об утечке DNS"
         );
     }
 

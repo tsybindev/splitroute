@@ -90,10 +90,12 @@ pub struct AppRule {
 /// Режим DNS (PRD §6.4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DnsMode {
-    /// Выбранные процессы → remote, остальные → local.
-    #[serde(rename = "process")]
-    ProcessSplit,
-    /// Системный DNS для всех (fallback с предупреждением).
+    /// Весь DNS через прокси (remote), по умолчанию, без утечек.
+    /// Старое значение `process` из state.json читается как `proxy`: per-process
+    /// DNS не поддерживается на macOS 15 / sing-box 1.14 (PRD §6.4).
+    #[serde(rename = "proxy", alias = "process")]
+    Proxy,
+    /// Системный DNS для всех (совместимо, с предупреждением об утечке).
     #[serde(rename = "system")]
     System,
 }
@@ -127,7 +129,7 @@ impl Default for Settings {
             ipv6_enabled: false,
             mixed_inbound_enabled: true,
             mixed_port: 10808,
-            dns_mode: DnsMode::ProcessSplit,
+            dns_mode: DnsMode::Proxy,
             log_level: LogLevel::Info,
         }
     }
@@ -166,17 +168,36 @@ mod tests {
         assert!(!settings.ipv6_enabled);
         assert!(settings.mixed_inbound_enabled);
         assert_eq!(settings.mixed_port, 10808);
-        assert_eq!(settings.dns_mode, DnsMode::ProcessSplit);
+        assert_eq!(settings.dns_mode, DnsMode::Proxy);
         assert_eq!(settings.log_level, LogLevel::Info);
     }
 
     #[test]
     fn dns_mode_serializes_as_documented() {
-        assert_eq!(
-            serde_json::to_value(DnsMode::ProcessSplit).unwrap(),
-            "process"
-        );
+        assert_eq!(serde_json::to_value(DnsMode::Proxy).unwrap(), "proxy");
         assert_eq!(serde_json::to_value(DnsMode::System).unwrap(), "system");
+    }
+
+    #[test]
+    fn legacy_process_dns_mode_migrates_to_proxy() {
+        // Старые state.json содержат "process"; читаем его как "proxy".
+        let legacy: DnsMode = serde_json::from_str("\"process\"").unwrap();
+        assert_eq!(legacy, DnsMode::Proxy);
+        assert_eq!(serde_json::to_value(legacy).unwrap(), "proxy");
+    }
+
+    #[test]
+    fn settings_with_legacy_process_migrates_on_load() {
+        let raw = r#"{
+            "mtu": 1500,
+            "ipv6_enabled": false,
+            "mixed_inbound_enabled": true,
+            "mixed_port": 10808,
+            "dns_mode": "process",
+            "log_level": "info"
+        }"#;
+        let settings: Settings = serde_json::from_str(raw).unwrap();
+        assert_eq!(settings.dns_mode, DnsMode::Proxy);
     }
 
     #[test]

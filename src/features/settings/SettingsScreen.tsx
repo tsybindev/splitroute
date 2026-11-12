@@ -212,16 +212,20 @@ function SettingsForm({ initial }: { initial: AppSettings }) {
                 })
               }
             >
-              <option value="process">
-                {t("settings.network.dns.process")}
+              <option value="proxy">
+                {t("settings.network.dns.proxy")}
               </option>
               <option value="system">{t("settings.network.dns.system")}</option>
             </select>
-            {form.network.dns_mode === "process" ? (
+            {form.network.dns_mode === "system" ? (
               <span className="text-xs text-amber-300">
-                {t("settings.network.dns.processHint")}
+                {t("settings.network.dns.systemHint")}
               </span>
-            ) : null}
+            ) : (
+              <span className="text-xs text-neutral-500">
+                {t("settings.network.dns.proxyHint")}
+              </span>
+            )}
           </Field>
           <Field
             label={t("settings.network.mixedPort")}

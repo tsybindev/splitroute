@@ -33,20 +33,22 @@ describe("ConnectScreen", () => {
     expect(screen.getByText("Локация не выбрана")).toBeInTheDocument();
     expect(screen.getByText(/Подписка не добавлена/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Подключить" })).toBeDisabled();
+    expect(screen.getByText("Через прокси")).toBeInTheDocument();
     expect(
-      screen.getByText(/Разделение DNS по процессу не подтверждено/),
-    ).toBeInTheDocument();
+      screen.queryByText(/уходит в локальный resolver/),
+    ).not.toBeInTheDocument();
   });
 
-  it("не показывает предупреждение о DNS в системном режиме", () => {
+  it("показывает предупреждение об утечке в системном режиме", () => {
     const settings = makeSettings();
     settings.network.dns_mode = "system";
     useAppStore.setState({ settings, helperStatus: stoppedStatus });
     render(<ConnectScreen />);
 
+    expect(screen.getByText("Системный")).toBeInTheDocument();
     expect(
-      screen.queryByText(/Разделение DNS по процессу не подтверждено/),
-    ).not.toBeInTheDocument();
+      screen.getByText(/уходит в локальный resolver/),
+    ).toBeInTheDocument();
   });
 
   it("подключается и показывает статус и локацию", async () => {

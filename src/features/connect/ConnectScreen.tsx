@@ -125,15 +125,15 @@ export function ConnectScreen() {
         </Card>
         <Card title={t("connect.dns")}>
           <Badge
-            tone={settings?.network.dns_mode === "system" ? "info" : "warn"}
+            tone={settings?.network.dns_mode === "system" ? "warn" : "success"}
           >
             {settings?.network.dns_mode === "system"
               ? t("connect.dns.system")
-              : t("connect.dns.process")}
+              : t("connect.dns.proxy")}
           </Badge>
-          {settings?.network.dns_mode === "process" ? (
+          {settings?.network.dns_mode === "system" ? (
             <p className="mt-2 text-xs text-amber-300">
-              {t("connect.dns.processWarning")}
+              {t("connect.dns.systemWarning")}
             </p>
           ) : null}
         </Card>

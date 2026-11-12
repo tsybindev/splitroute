@@ -1,7 +1,21 @@
 {
   "dns": {
-    "final": "local",
-    "rules": [],
+    "final": "remote",
+    "rules": [
+      {
+        "domain": [
+          "localhost"
+        ],
+        "server": "local"
+      },
+      {
+        "domain_suffix": [
+          ".local",
+          "home.arpa"
+        ],
+        "server": "local"
+      }
+    ],
     "servers": [
       {
         "detour": "proxy",
@@ -76,6 +90,12 @@
     },
     "final": "direct",
     "rules": [
+      {
+        "action": "hijack-dns",
+        "port": [
+          53
+        ]
+      },
       {
         "domain": [
           "localhost"

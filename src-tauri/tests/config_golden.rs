@@ -83,7 +83,7 @@ fn check_golden(name: &str, config: &Value) {
 }
 
 #[test]
-fn golden_default_allowlist_process_dns() {
+fn golden_default_allowlist_proxy_dns() {
     let config = build_config(
         &Settings::default(),
         &profile(),
@@ -133,6 +133,18 @@ fn generated_configs_pass_sing_box_check() {
             build_config(
                 &Settings {
                     ipv6_enabled: true,
+                    ..Settings::default()
+                },
+                &profile(),
+                &[chrome_rule()],
+            )
+            .unwrap(),
+        ),
+        (
+            "system-dns",
+            build_config(
+                &Settings {
+                    dns_mode: DnsMode::System,
                     ..Settings::default()
                 },
                 &profile(),

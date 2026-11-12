@@ -53,7 +53,7 @@ export interface AppRule {
   enabled: boolean;
 }
 
-export type DnsMode = "process" | "system";
+export type DnsMode = "proxy" | "system";
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error";
 
 export interface NetworkSettings {

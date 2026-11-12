@@ -21,7 +21,7 @@ export function makeSettings(overrides: Partial<AppSettings> = {}): AppSettings 
       ipv6_enabled: false,
       mixed_inbound_enabled: true,
       mixed_port: 10808,
-      dns_mode: "process",
+      dns_mode: "proxy",
       log_level: "info",
       ...overrides.network,
     },
