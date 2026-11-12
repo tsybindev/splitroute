@@ -193,6 +193,20 @@ def peer_uid(connection: socket.socket) -> int:
     return uid
 
 
+def allowed_peer_uid() -> int:
+    """uid клиента, которому разрешено подключение.
+
+    Под root (sudo) клиент работает от имени пользователя из SUDO_UID; иначе —
+    от текущего uid. Это dev-режим: продакшн-helper будет проверять uid владельца
+    сокета, а не root-процесса.
+    """
+    if os.geteuid() == 0:
+        sudo_uid = os.environ.get("SUDO_UID", "")
+        if sudo_uid.isdigit():
+            return int(sudo_uid)
+    return os.getuid()
+
+
 def read_message(connection: socket.socket) -> bytes:
     """Читает одну строку JSON с лимитом размера."""
     chunks: list[bytes] = []
@@ -214,7 +228,7 @@ def serve_connection(connection: socket.socket, helper: Helper) -> None:
     connection.settimeout(READ_TIMEOUT_SECONDS)
     request_id: Any = None
     try:
-        if peer_uid(connection) != os.getuid():
+        if peer_uid(connection) != allowed_peer_uid():
             raise HelperError("FORBIDDEN", "клиент с другим uid")
         raw = read_message(connection)
         if not raw.strip():
@@ -268,6 +282,13 @@ def main(argv: list[str] | None = None) -> int:
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     server.bind(str(socket_path))
     os.chmod(socket_path, stat.S_IRUSR | stat.S_IWUSR)  # 0600
+    if os.geteuid() == 0:
+        sudo_uid = os.environ.get("SUDO_UID", "")
+        sudo_gid = os.environ.get("SUDO_GID", "")
+        if sudo_uid.isdigit() and sudo_gid.isdigit():
+            # Под sudo сокет должен принадлежать пользователю, иначе он не сможет
+            # подключиться к 0600-сокету.
+            os.chown(socket_path, int(sudo_uid), int(sudo_gid))
     server.listen(8)
     print(f"helper слушает {socket_path} (0600)", file=sys.stderr)
 

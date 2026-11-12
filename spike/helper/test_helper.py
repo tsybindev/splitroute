@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import socket
@@ -19,6 +20,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HELPER = Path(__file__).resolve().parent / "helper.py"
 ROOT = Path(__file__).resolve().parents[2]
@@ -36,6 +38,34 @@ def free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         return sock.getsockname()[1]
+
+
+def load_helper_module():
+    spec = importlib.util.spec_from_file_location("splitroute_helper", HELPER)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class AllowedUidTest(unittest.TestCase):
+    def test_sudo_uid_is_allowed_under_root(self) -> None:
+        helper = load_helper_module()
+        with mock.patch("os.geteuid", return_value=0), mock.patch.dict(
+            os.environ, {"SUDO_UID": "501"}, clear=False
+        ):
+            self.assertEqual(helper.allowed_peer_uid(), 501)
+
+    def test_missing_sudo_uid_falls_back_to_current_uid(self) -> None:
+        helper = load_helper_module()
+        with mock.patch("os.geteuid", return_value=0), mock.patch.dict(
+            os.environ, {}, clear=True
+        ):
+            self.assertEqual(helper.allowed_peer_uid(), os.getuid())
+
+    def test_non_root_uses_current_uid(self) -> None:
+        helper = load_helper_module()
+        with mock.patch("os.geteuid", return_value=os.getuid()):
+            self.assertEqual(helper.allowed_peer_uid(), os.getuid())
 
 
 class HelperTest(unittest.TestCase):
