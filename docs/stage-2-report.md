@@ -117,15 +117,24 @@ TUN и маршруты очищаются после остановки. Най
 5. **Не было способа проверить подключение без root.** Добавлен dev-переключатель
    `SPLITROUTE_MOCK_HELPER=1` (только debug): helper заменяется на
    `MockHelperClient`, в лог пишется предупреждение.
-6. **DNS-утечка (решение принято, реализация — S2-T10).** На macOS 15.8.2 /
-   sing-box 1.14.4 DNS-правила с `process_name`/`process_path` не применяются к
-   DNS-пакетам, перехваченным из TUN: `dns/tls[remote]` остаётся
-   `unreferenced`, выбранный `dig` получает домашний IP. Remote DoT через прокси
-   проверен отдельно на mixed-inbound и работает. PRD §6.4 обновлён: пользователь
-   выбирает `proxy` (весь DNS через прокси, по умолчанию) или `system` (DNS ОС,
-   с предупреждением); старый `process` выводится из UI и мигрирует в `proxy`.
-   Сейчас добавлены предупреждение в UI (Главная, Настройки) и `Warn` в лог при
-   `ProcessSplit` на macOS; поведение конфига пока не менялось.
+6. **DNS-утечка (S2-T10, реализовано).** На macOS 15.8.2 / sing-box 1.14.4
+   DNS-правила с `process_name`/`process_path` не применяются к DNS-пакетам,
+   перехваченным из TUN: `dns/tls[remote]` остаётся `unreferenced`, выбранный
+   `dig` получает домашний IP. Remote DoT через прокси проверен отдельно на
+   mixed-inbound и работает. Решение (PRD §6.4): два пользовательских режима.
+   - `DnsMode::{Proxy,System}`; старое `process` из `state.json` читается как
+     `proxy` (serde alias), дефолт — `proxy`.
+   - `proxy`: remote DoT через прокси + local, локальные имена (`.local`,
+     `home.arpa`) → local, `dns.final=remote`, первым `route`-правилом
+     `hijack-dns`; process-правил DNS нет.
+   - `system`: только local, без правил и `hijack-dns`.
+   - UI: только два варианта с подсказками; на Главной бейдж DNS (proxy —
+     success, system — warn), для `system` предупреждение об утечке; `connect`
+     логирует режим и пишет `Warn` для `system`.
+   - Golden-конфиги обновлены и проходят `sing-box check` (1.14.4).
+   - Поведение на реальном TUN (`proxy`: DNS выбранного и невыбранного процесса,
+     локальные имена; `system`: DNS ОС) **не проверено** — в окружении сессии нет
+     реальной подписки и root.
 
 ## 6. Проверки
 

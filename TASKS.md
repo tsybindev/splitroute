@@ -47,7 +47,7 @@
 
 ---
 
-## Этап 2 — ядро MVP (done: G2.1–G2.5; S2-T9 blocked — нет CachyOS; S2-T10 todo — DNS-политика)
+## Этап 2 — ядро MVP (done: G2.1–G2.6; S2-T9 blocked — нет CachyOS)
 
 | ID | Задача | Владелец | Критерий приёмки |
 |---|---|---|---|
@@ -60,7 +60,7 @@
 | S2-T7 | Трей, автозапуск, single instance | react-ui | done — меню трея (статус, подключить/отключить, открыть, выход), `tauri-plugin-autostart`, `tauri-plugin-single-instance`, закрытие в трей; single instance проверен headless; трей визуально **не проверен**, автозапуск в системе не регистрировался |
 | S2-T8 | Сквозной сценарий на macOS: подписка → локация → подключение → allowlist | оркестратор | done — отчёт `docs/stage-2-report.md`: реальная подписка (Happ UA → 2 профиля VLESS+Reality/TCP), реальный TUN, выбранный `curl` через прокси, невыбранный `python3` напрямую, выключение правила, очистка TUN/маршрутов; ошибки подписки и UI-состояния покрыты тестами. **DNS-утечка выявлена** (см. S2-T10), трей визуально **не проверен** (нет UI-автоматизации) |
 | S2-T9 | Сквозной сценарий на CachyOS | platform-native | **blocked** — машины с CachyOS нет; перенесено в этап 3 (S3-T7) |
-| S2-T10 | DNS-политика: два пользовательских режима `proxy` и `system` | rust-core + react-ui | **todo** — PRD §6.4 обновлён: per-process DNS не поддерживается; пользователь выбирает `proxy` (весь DNS через прокси, по умолчанию, `hijack-dns` + `final=remote`) или `system` (DNS ОС, предупреждение об утечке). Нужно: заменить `DnsMode::ProcessSplit` на `Proxy`/`System`, мигрировать сохранённый `process` → `proxy`, config + golden + `sing-box check`, UI-переключатель с подсказками, реальный TUN-тест для `proxy` (выбранный/невыбранный DNS, `.local`), docs |
+| S2-T10 | DNS-политика: два пользовательских режима `proxy` и `system` | rust-core + react-ui | done — `DnsMode::{Proxy,System}`, старое `process` читается как `proxy` (тесты serde/миграции); `build_dns`/`build_route`: proxy — remote DoT + local, локальные имена (`.local`, `home.arpa`) → local, `final=remote`, первым `hijack-dns`; system — только local, без правил и hijack; golden обновлены, `sing-box check` зелёный; connect логирует режим и для system пишет Warn; UI — только два варианта с подсказками, бейдж DNS. Реальный TUN-тест `proxy`/`system` — **не проверено** (нет подписки и root в окружении) |
 
 ---
 
