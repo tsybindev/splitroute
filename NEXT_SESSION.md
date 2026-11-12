@@ -4,44 +4,44 @@
 
 ## Состояние
 
-- Этап 1 завершён. Этап 2 в работе: закрыты подцели **G2.1** (S2-T1, S2-T2) и **G2.2** (S2-T3, S2-T4).
+- Этап 1 завершён. Этап 2: закрыты **G2.1** (S2-T1, T2), **G2.2** (S2-T3, T4), **G2.3** (S2-T5).
 - Ветка: `main`. Репозиторий: https://github.com/tsybindev/splitroute (private).
-- Последние коммиты: код G2.2 (`feat:`/`test:`), документация G2.2 (`docs:`).
+- Последние коммиты: код G2.3 (`feat:`/`test:`), документация G2.3 (`docs:`).
 
-### Сделано в G2.2
+### Сделано в G2.3
 
-- `src-tauri/src/subscription/`: парсер Happ-JSON → `Vec<Profile>` (VLESS + Reality/TLS + TCP),
-  стабильный `id`, пропуски с причинами; `parse_subscription_report` отдаёт и пропуски.
-- `src-tauri/src/config/`: `build_config(&Settings, &Profile, &[AppRule]) -> Value`:
-  TUN (auto_route/strict_route/MTU/stack), DNS remote/local + правила по процессу,
-  allowlist по `process_name`/`process_path`/`process_path_regex`, IPv6 on/off
-  (при выключенном — блок `::/0` для выбранных), смешанный inbound по настройкам.
-- Golden-файлы `src-tauri/tests/fixtures/config/*.json`; интеграционный тест
-  прогоняет `sing-box check` по сгенерированным конфигам.
-- Тесты: 17 unit (src-tauri) + 4 golden + 1 фикстура + 13 protocol.
+- `src-tauri/src/privileged/`:
+  - `HelperClient` (status/start/stop) + `HelperClientError` (NotInstalled, Unavailable,
+    Timeout, Protocol, Helper{code,message}, InvalidPayload).
+  - `UnixHelperClient`: Unix-сокет, JSON по строке, лимит `MAX_MESSAGE_BYTES`,
+    таймаут (по умолчанию 10 с), проверка версии протокола, путь сокета из
+    `SPLITROUTE_HELPER_SOCKET` / dev `$TMPDIR` / prod `/var/run/splitroute/`.
+  - `MockHelperClient` — идемпотентные start/stop/status.
+  - `Installer`-трейт + `UnsupportedInstaller` (установка сервиса — этап 3).
+- `src-tauri/src/commands/`: `AppState`, команды `helper_status`, `connect`,
+  `disconnect`, `helper_install`, `helper_uninstall`; зарегистрированы в `run()`.
+- Тесты: 8 клиента (включая версию/ошибку/таймаут/битый payload), 3 mock, 1 installer.
 
 ### Проверено
 
 - `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
-  `cargo test --workspace` — ok.
+  `cargo test --workspace` — ok (30 тестов в lib splitroute, 13 protocol, 4+1 integration).
 - `pnpm typecheck`, `pnpm lint`, `pnpm test` — ok.
-- `sing-box check` на сгенерированных конфигах — ok.
 
 ### Не проверено
 
-- CachyOS/Windows: нет машин.
-- TUN: нет root; проверяются только конфиги, не реальный туннель.
-- Реальная подписка: нет; фикстура синтетическая.
+- Реальная установка helper'а и работа под root — этап 3.
+- Реальная подписка/сервер — нет; фикстура синтетическая.
+- TUN — нет root; CachyOS/Windows — нет машин.
 
 ### Важные факты окружения
 
-- `export PATH="$HOME/.cargo/bin:$PATH"` в каждом shell (Rust 1.99.1, rustfmt/clippy есть).
-- В окружении `NODE_ENV=production`; тестам React задан `env: { NODE_ENV: "test" }`.
-- TypeScript запинен на 6.0.3 (typescript-eslint не поддерживает 7).
+- `export PATH="$HOME/.cargo/bin:$PATH"` в каждом shell.
+- `NODE_ENV=production` в окружении; React-тестам задан `env: { NODE_ENV: "test" }`.
+- TypeScript 6.0.3 (typescript-eslint не поддерживает 7).
 - ESLint игнорирует `target/`, `src-tauri/`, `crates/`, `spike/`.
-- Golden-файлы обновляются: `UPDATE_GOLDEN=1 cargo test -p splitroute --test config_golden`.
-- `override_address` у direct-outbound удалён в sing-box 1.13+; использовать route-правила.
-- Прототип helper'а и протокол для справки: `spike/helper/` (Python, dev-режим).
+- Путь Unix-сокета ограничен `SUN_LEN` (~104 байта) — в тестах использовать короткие имена.
+- Golden-конфиги: `UPDATE_GOLDEN=1 cargo test -p splitroute --test config_golden`.
 
 ### Проверка перед стартом
 
@@ -55,7 +55,7 @@ pnpm typecheck && pnpm lint && pnpm test
 
 ---
 
-## Промпт следующей подцели: G2.3 (S2-T5)
+## Промпт следующей подцели: G2.4 (S2-T6, S2-T7)
 
 Скопируй текст ниже целиком в новую сессию. Запускай из каталога `app/`.
 
@@ -64,66 +64,87 @@ pnpm typecheck && pnpm lint && pnpm test
 Рабочий каталог: /Users/tsybin_d/Documents/Dev/Backend/vpn_client/app
 Перед командами: export PATH="$HOME/.cargo/bin:$PATH"
 
-ЦЕЛЬ: подцель G2.3 этапа 2 — S2-T5: клиент helper'а (mock + реальный транспорт),
-установка/удаление. После подцели остановись: коммит кода, отдельный коммит
-документации, обновление NEXT_SESSION.md. Следующие подцели не начинай.
+ЦЕЛЬ: подцель G2.4 этапа 2 — S2-T6 (экраны) и S2-T7 (трей, автозапуск,
+single instance). После подцели остановись: коммит кода, отдельный коммит
+документации, обновление NEXT_SESSION.md. Следующую подцель не начинай.
 
 ПРОЧИТАЙ СНАЧАЛА
-- AGENTS.md §10 (архитектура), §11 (протокол helper'а), §12, §13, §14, §18.
-- PRD.md §6.8 (права и helper), §8 (безопасность), §9 (поток данных).
-- TASKS.md: S2-T5.
-- crates/protocol/src/lib.rs — Request/Response/Command/ErrorCode/HelperStatus,
-  PROTOCOL_VERSION, MAX_MESSAGE_BYTES.
-- spike/helper/README.md и spike/helper/helper.py — эталон протокола и поведения
-  (сокет 0600, uid пира, только start/stop/status, sing-box check до запуска).
+- AGENTS.md §2 (структура src/), §10, §12, §13, §14, §18.
+- PRD.md §5 (M1–M10), §6.1 (подписка), §6.3 (allowlist), §6.5 (трей/автозапуск),
+  §6.6 (настройки), §6.7 (логи), §7 (UX, состояния и ошибки).
+- TASKS.md: S2-T6, S2-T7.
+- crates/protocol — Profile, AppRule, Settings, HelperStatus.
+- src-tauri/src/{subscription,config,privileged,commands} — что уже есть.
+- NEXT_SESSION.md (этот файл).
+
+СРЕДА И ОГРАНИЧЕНИЯ
+- TUN без root недоступен; подключение проверять через mock helper или dev-режим
+  spike/helper/helper.py (без TUN).
+- Реальной подписки нет: использовать spike/fixtures/subscription.json; в UI
+  предусмотреть состояния «нет подписки», «ошибка», «пустая подписка».
+- Секреты (URL подписки, HWID, UUID) не логировать и не коммитить.
+- Не устанавливать автозапуск и сервисы в системе при тестах; проверять код и
+  конфигурацию, а реальную регистрацию отмечать как «не проверено».
 
 ЗАДАЧИ
 
-1. Клиент helper'а в `src-tauri/src/privileged/`:
-   - транспорт: Unix-сокет, JSON по одной строке, лимит MAX_MESSAGE_BYTES,
-     таймаут чтения; путь сокета: dev `$TMPDIR/splitroute-helper.sock`,
-     production `/var/run/splitroute/helper.sock`; переопределение через env/параметр.
-   - проверка PROTOCOL_VERSION и типизированные ошибки (на базе `ErrorCode`).
-   - операции: `status`, `start(config)`, `stop`, `install`, `uninstall`.
-     `start`/`stop`/`status` идемпотентны.
-2. Абстракция для тестов: трейт `HelperClient` + `UnixHelperClient` + `MockHelperClient`.
-   Логика вызывающего кода не должна зависеть от конкретного транспорта.
-3. Установка/удаление helper'а:
-   - интерфейс есть, но в этой сессии сервисы НЕ устанавливаются (нет root).
-   - реализуй `Installer`-трейт с `UnsupportedInstaller` (возвращает типизированную
-     ошибку «требуются права/этап 3») и mock для тестов; документируй, что реальная
-     установка LaunchDaemon/systemd — этап 3.
-4. Tauri commands (тонкие обёртки): helper_status, connect/disconnect (пока через
-   клиент), helper_install/helper_uninstall. Команды не содержат бизнес-логики.
-5. Тесты:
-   - mock: start/stop/status, идемпотентность stop, ошибки.
-   - реальный клиент против мини-сервера на Unix-сокете внутри теста: успешный
-     status, несовпадение версии, неизвестная команда, слишком большое сообщение,
-     таймаут/закрытый сокет.
-   - проверка, что клиент не принимает ответ с чужим protocol.
-6. Не логировать содержимое конфига (UUID/ключи). Ошибки — без секретов.
+S2-T6, экраны (React + TS + Zustand + i18n ru):
+- Главная: большая кнопка подключения, статус (helper/подписка/DNS/allowlist),
+  текущая локация, время сессии, переход к локациям.
+- Локации: список Profile, выбор активного, протокол/адрес, кнопка обновления,
+  пустое состояние.
+- Приложения: список правил AppRule, переключатель enabled, добавление вручную
+  (process_name / путь / regex), пояснение про процессы и дочерние процессы.
+- Настройки: URL подписки, HWID (генерация/редактирование), User-Agent, MTU,
+  IPv6, mixed-inbound (порт), DNS-режим, уровень логов, статус helper.
+- Логи: список строк, фильтр по уровню, копирование диагностики без секретов.
+- Все состояния и ошибки из PRD §7; тексты через словарь i18n (ru), без
+  захардкоженных строк в компонентах.
+- Обёртки Tauri commands/events в src/shared/api; UI не формирует config.
+
+Бэкенд-команды, которых не хватает для UI (добавить тонко, без бизнес-логики в UI):
+- получение подписки: `subscription_fetch(url, hwid, user_agent)` — HTTP через
+  reqwest с rustls, парсинг `subscription::parse_subscription`, кэш последнего
+  успешного ответа; ошибки типизированы (сеть, 401/403/404, невалидный JSON,
+  пустой список);
+- хранение активных Profile/Settings/AppRule в состоянии приложения (в памяти +
+  файл в пользовательском каталоге; без секретов в логах);
+- `profiles_list`, `rules_list`, `rules_upsert`, `rules_delete`, `settings_get`,
+  `settings_update`.
+Секреты — только в пользовательском конфиге, не в git и не в диагностике.
+
+S2-T7, трей и системная интеграция:
+- Иконка и меню трея: статус, подключить/отключить, открыть, выход; иконка
+  отражает состояние.
+- Автозапуск: tauri-plugin-autostart; опции «старт свёрнутым» и «подключаться
+  при старте» (только сохранение и передача флага; авто-подключение — позже).
+- Single instance: tauri-plugin-single-instance.
+- Обнови capabilities/permissions для плагинов.
+- Закрытие окна сворачивает в трей (настраивается).
 
 ПРОВЕРКИ
-- cargo fmt --all --check
-- cargo clippy --workspace --all-targets -- -D warnings
-- cargo test --workspace
-- pnpm typecheck && pnpm lint && pnpm test
+- pnpm typecheck && pnpm lint && pnpm test (Vitest + Testing Library, ключевые
+  состояния экранов; api замокать).
+- cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings
+  && cargo test --workspace.
+- pnpm build.
+- `pnpm tauri dev` — приложение стартует, окно открывается; трей в headless-проверке
+  не подтвердить — отметить как «не проверено» с причиной.
 
 ПОРЯДОК
-1. Контракты (трейты, ошибки) — сначала.
-2. Реализация и тесты.
-3. Коммит кода: feat:/test:. Отдельный коммит docs: (TASKS.md + NEXT_SESSION.md).
-4. NEXT_SESSION.md: состояние и промпт G2.4 (S2-T6/S2-T7 UI и трей).
+1. Контракты команд и типы (при необходимости — в crates/protocol).
+2. Бэкенд-команды + тесты, затем UI + тесты.
+3. Коммит кода: feat:/test:/refactor:. Отдельный коммит docs: (TASKS + NEXT_SESSION).
+4. NEXT_SESSION.md: состояние и промпт G2.5 (S2-T8 сквозной сценарий).
 
 ЧЕСТНОСТЬ
-- Не устанавливать сервисы, не трогать системные каталоги, не запускать с sudo.
-- Недоступное — «не проверено» с причиной.
-- Секреты не коммитить; перед коммитом проверять diff.
+- Не выдавай непроверенное за проверенное; недоступное — «не проверено» с причиной.
+- Не оставлять запущенные процессы и временные файлы; секреты не коммитить.
 ```
 
 ---
 
 ## Заметки
 
-- Дальше: G2.4 (S2-T6/T7 UI и трей), G2.5 (S2-T8 сквозной сценарий).
-- Реальная установка helper'а и подпись — этап 3; в G2.3 только интерфейс и mock.
+- Дальше: G2.5 (S2-T8 сквозной сценарий на macOS; CachyOS — если машина появится).
+- Реальная установка helper'а и подпись — этап 3, не раньше.

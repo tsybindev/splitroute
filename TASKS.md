@@ -55,7 +55,7 @@
 | S2-T2 | `crates/protocol`: типы IPC и общие модели | rust-core | done — Request/Response/Command/ErrorCode, HelperStatus, Profile, AppRule, Settings; 13 тестов, clippy чистый |
 | S2-T3 | Парсер подписки + фикстуры + тесты | rust-core | done — `src-tauri/src/subscription/`: VLESS+Reality/TLS+TCP → `Profile`, пропуски с причинами; тесты на валидный/пустой/нет proxy/битый JSON/неподдерживаемый транспорт + фикстура `spike/fixtures/subscription.json` |
 | S2-T4 | Генератор sing-box конфига + golden-тесты | rust-core | done — `src-tauri/src/config/`: TUN, DNS по процессу/системный, allowlist, IPv6 on/off, блок IPv6 для выбранных; golden-файлы + интеграционный `sing-box check` |
-| S2-T5 | Клиент helper'а (mock + реальный), установка/удаление | platform-native | start/stop/status идемпотентны, ошибки типизированы |
+| S2-T5 | Клиент helper'а (mock + реальный), установка/удаление | platform-native | done — `src-tauri/src/privileged/`: трейт `HelperClient`, Unix-транспорт (JSON-строки, лимит, таймаут, версия), mock, типизированные ошибки; `Installer`-заглушка (установка — этап 3); tests 8+3+1 |
 | S2-T6 | Экраны: Главная, Локации, Приложения, Настройки, Логи | react-ui | Все состояния и ошибки из PRD, русский UI |
 | S2-T7 | Трей, автозапуск, single instance | react-ui | Статус и меню соответствуют PRD |
 | S2-T8 | Сквозной сценарий: подписка → локация → подключение → allowlist | оркестратор | Ручная матрица PRD на macOS и CachyOS |
