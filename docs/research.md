@@ -157,6 +157,10 @@ Go 1.27.0; без root. Полный отчёт — [docs/spikes/stage-1.md](./s
 | DNS-правила по процессу применяются к TUN-DNS | **опровергнуто** | `dns/tls[remote] is unreferenced`; `dig` выбранного процесса получает домашний IP |
 | `hijack-dns` + `sniff` исправляют DNS-разделение | **опровергнуто** | с `{"port":[53],"action":"hijack-dns"}` и `{"action":"sniff"}` remote всё ещё не используется |
 | Remote DoT через прокси работает | **подтверждено** | mixed-only конфиг с `dns.final=remote`: запрос через SOCKS5 вернул IP прокси |
+| Режим `proxy`: DNS выбранного и невыбранного процесса идёт через прокси | **подтверждено (S2-T10)** | реальный TUN: `dig CH TXT whoami.cloudflare` = IP прокси, `remote` referenced в логе |
+| Режим `proxy`: локальные имена | **подтверждено** | `dig localhost` → `127.0.0.1` |
+| Режим `system`: DNS выбранного процесса уходит локально | **подтверждено** | `dig CH TXT whoami.cloudflare` = домашний IP, без `hijack-dns` |
+| Остановка ядра очищает TUN и маршрут | **подтверждено** | после `stop` нет `sing-box run`, адреса `172.19.0.1` и портов |
 | Трей визуально | **не проверено** | нет разрешений System Events/screencapture |
 
 Практическое следствие: на этой связке (macOS 15 / sing-box 1.14.4) per-app DNS
@@ -171,6 +175,14 @@ Go 1.27.0; без root. Полный отчёт — [docs/spikes/stage-1.md](./s
 `.local`, `home.arpa` → local; `dns.final = remote`; первым `route`-правилом
 `{"port":[53],"action":"hijack-dns"}`. В режиме `system`: только local, без
 правил и `hijack-dns`. Golden-конфиги проходят `sing-box check` (1.14.4).
-Поведение на реальном TUN (`proxy`: DNS выбранного и невыбранного процесса,
-локальные имена; `system`: DNS ОС) **не проверено** — в окружении нет реальной
-подписки и root.
+Поведение на реальном TUN подтверждено (2026-11-12, реальная подписка + dev-helper
+под root):
+- `proxy`: DNS выбранного и невыбранного процесса отдаётся через прокси —
+  `dig CH TXT whoami.cloudflare` вернул IP прокси, `remote` в логе не
+  `unreferenced`; `dig localhost` → `127.0.0.1`; выбранный `curl` → IP прокси,
+  невыбранный `python3` → домашний IP.
+- `system`: DNS выбранного процесса уходит локально —
+  `dig CH TXT whoami.cloudflare` вернул домашний IP; TCP выбранного `curl`
+  по-прежнему идёт через прокси. Это ожидаемая утечка DNS, ради которой в UI
+  показывается предупреждение.
+- `stop` удаляет TUN/маршрут и завершает `sing-box`.
