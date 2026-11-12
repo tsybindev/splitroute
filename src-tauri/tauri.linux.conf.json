@@ -1,0 +1,17 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "active": true,
+    "targets": ["deb", "rpm", "appimage"],
+    "externalBin": ["binaries/sing-box", "binaries/splitroute-helper"],
+    "linux": {
+      "deb": {
+        "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0", "polkitd | policykit-1"],
+        "section": "net"
+      },
+      "rpm": {
+        "depends": ["webkit2gtk4.1", "gtk3", "polkit"]
+      }
+    }
+  }
+}

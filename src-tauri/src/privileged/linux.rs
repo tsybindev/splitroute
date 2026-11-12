@@ -603,6 +603,15 @@ mod tests {
     }
 
     #[test]
+    fn socket_path_matches_client_release_default() {
+        // Клиент в release-сборке ищет сокет по этому пути. Если юнит и клиент
+        // разойдутся, установленный helper будет недоступен приложению.
+        assert_eq!(paths().socket, PathBuf::from("/run/splitroute/helper.sock"));
+        #[cfg(all(target_os = "linux", not(debug_assertions)))]
+        assert_eq!(super::super::default_socket_path(), paths().socket);
+    }
+
+    #[test]
     fn uid_is_parsed_from_proc_status() {
         let status =
             "Name:\tsplitroute\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\n";
