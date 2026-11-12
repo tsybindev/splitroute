@@ -2959,6 +2959,7 @@ dependencies = [
  "splitroute-protocol",
  "tauri",
  "tauri-build",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

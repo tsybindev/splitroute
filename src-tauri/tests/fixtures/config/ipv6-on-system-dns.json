@@ -1,0 +1,91 @@
+{
+  "dns": {
+    "final": "local",
+    "rules": [],
+    "servers": [
+      {
+        "tag": "local",
+        "type": "local"
+      }
+    ]
+  },
+  "inbounds": [
+    {
+      "address": [
+        "172.19.0.1/30",
+        "fdfe:dcba:9876::1/126"
+      ],
+      "auto_route": true,
+      "mtu": 1500,
+      "stack": "mixed",
+      "strict_route": true,
+      "tag": "tun-in",
+      "type": "tun"
+    },
+    {
+      "listen": "127.0.0.1",
+      "listen_port": 10808,
+      "tag": "mixed-in",
+      "type": "mixed"
+    }
+  ],
+  "log": {
+    "level": "debug",
+    "timestamp": true
+  },
+  "outbounds": [
+    {
+      "flow": "xtls-rprx-vision",
+      "server": "203.0.113.10",
+      "server_port": 443,
+      "tag": "proxy",
+      "tls": {
+        "enabled": true,
+        "reality": {
+          "enabled": true,
+          "public_key": "V1OuvPqM8PJgzYhYvOESBeqkVqqAhIcqZOl778zbalU",
+          "short_id": "00e5e640a81a9ac1"
+        },
+        "server_name": "example.com",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        }
+      },
+      "type": "vless",
+      "uuid": "d811a5ee-1d55-4dca-bd7f-f68b768a2241"
+    },
+    {
+      "tag": "direct",
+      "type": "direct"
+    }
+  ],
+  "route": {
+    "auto_detect_interface": true,
+    "default_domain_resolver": {
+      "server": "local"
+    },
+    "final": "direct",
+    "rules": [
+      {
+        "domain": [
+          "localhost"
+        ],
+        "outbound": "direct"
+      },
+      {
+        "ip_is_private": true,
+        "outbound": "direct"
+      },
+      {
+        "outbound": "proxy",
+        "process_name": [
+          "Google Chrome"
+        ],
+        "process_path_regex": [
+          "^/Applications/Google Chrome\\.app/"
+        ]
+      }
+    ]
+  }
+}
