@@ -10,7 +10,7 @@ pub mod tray;
 
 use std::sync::Arc;
 
-use privileged::{HelperClient, HelperInstaller, UnsupportedInstaller};
+use privileged::{HelperClient, HelperInstaller};
 use tauri::Manager;
 
 /// Dev-режим без helper'а и TUN: `SPLITROUTE_MOCK_HELPER=1` в debug-сборке.
@@ -34,7 +34,14 @@ fn default_helper() -> Arc<dyn HelperClient> {
 }
 
 fn default_installer() -> Arc<dyn HelperInstaller> {
-    Arc::new(UnsupportedInstaller)
+    #[cfg(target_os = "macos")]
+    {
+        Arc::new(privileged::MacosInstaller::new())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Arc::new(privileged::UnsupportedInstaller)
+    }
 }
 
 /// rustls без `aws-lc`: провайдер ring регистрируется один раз до первого запроса.

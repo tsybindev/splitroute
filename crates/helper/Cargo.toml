@@ -8,8 +8,18 @@ license.workspace = true
 name = "splitroute-helper"
 path = "src/main.rs"
 
+[lib]
+name = "splitroute_helper"
+path = "src/lib.rs"
+
 [dependencies]
 splitroute-protocol = { path = "../protocol" }
-serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+libc = "0.2"
+serde_json = { workspace = true }

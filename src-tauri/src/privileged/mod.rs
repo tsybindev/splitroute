@@ -1,14 +1,16 @@
 //! Клиент и установщик привилегированного helper'а.
 //!
-//! Транспорт — Unix-сокет, JSON по одной строке (как в прототипе `spike/helper/`).
-//! Установка сервиса (LaunchDaemon/systemd) требует прав администратора и будет
-//! реализована на этапе 3; здесь есть только интерфейс и `UnsupportedInstaller`.
+//! Транспорт — Unix-сокет, JSON по одной строке. Установка сервиса на macOS —
+//! LaunchDaemon через `MacosInstaller`; на остальных платформах пока заглушка.
 
 pub mod installer;
 pub mod mock;
 
 #[cfg(unix)]
 pub mod client;
+
+#[cfg(target_os = "macos")]
+pub mod macos;
 
 use serde_json::Value;
 use splitroute_protocol::{ErrorCode, HelperStatus, ProtocolError};
@@ -18,6 +20,9 @@ pub use mock::MockHelperClient;
 
 #[cfg(unix)]
 pub use client::{default_socket_path, UnixHelperClient};
+
+#[cfg(target_os = "macos")]
+pub use macos::MacosInstaller;
 
 /// Ошибка клиента helper'а (не зависит от платформы).
 #[derive(Debug, thiserror::Error)]

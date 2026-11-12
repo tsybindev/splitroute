@@ -1,34 +1,41 @@
-//! Установка/удаление helper'а.
+//! Установка и удаление helper'а.
 //!
-//! Реальная установка LaunchDaemon (macOS) и systemd (Linux) требует прав
-//! администратора и делается на этапе 3. Здесь — интерфейс, который UI будет
-//! вызывать, и честная заглушка вместо скрытой установки.
+//! На macOS установщик кладёт бинарь в `/Library/PrivilegedHelperTools`, а plist —
+//! в `/Library/LaunchDaemons`, после чего регистрирует сервис через `launchctl`.
+//! Пароль администратора запрашивает система (окно авторизации), сам установщик
+//! его не хранит. На остальных платформах установка пока не поддерживается.
 
 /// Ошибка установки helper'а.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum InstallerError {
-    #[error("для установки helper'а нужны права администратора (этап 3)")]
+    #[error("для установки helper'а нужны права администратора")]
     RequiresPrivileges,
     #[error("установка helper'а не поддерживается на этой платформе")]
     Unsupported,
+    #[error("не найден файл: {0}")]
+    MissingBinary(String),
+    #[error("не удалось установить helper: {0}")]
+    Failed(String),
 }
 
 /// Установщик helper'а.
+///
+/// Подтверждение установки даёт системный запрос прав; UI не хранит пароль.
 pub trait HelperInstaller: Send + Sync {
     fn install(&self) -> Result<(), InstallerError>;
     fn uninstall(&self) -> Result<(), InstallerError>;
 }
 
-/// Заглушка: установка отложена до этапа 3, вызывающий код получает явную ошибку.
+/// Заглушка для платформ, где установщик ещё не реализован.
 pub struct UnsupportedInstaller;
 
 impl HelperInstaller for UnsupportedInstaller {
     fn install(&self) -> Result<(), InstallerError> {
-        Err(InstallerError::RequiresPrivileges)
+        Err(InstallerError::Unsupported)
     }
 
     fn uninstall(&self) -> Result<(), InstallerError> {
-        Err(InstallerError::RequiresPrivileges)
+        Err(InstallerError::Unsupported)
     }
 }
 
@@ -37,15 +44,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn unsupported_installer_reports_privileges() {
+    fn unsupported_installer_reports_unsupported_platform() {
         let installer = UnsupportedInstaller;
         assert_eq!(
             installer.install().unwrap_err(),
-            InstallerError::RequiresPrivileges
+            InstallerError::Unsupported
         );
         assert_eq!(
             installer.uninstall().unwrap_err(),
-            InstallerError::RequiresPrivileges
+            InstallerError::Unsupported
         );
     }
 }

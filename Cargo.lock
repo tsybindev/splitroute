@@ -3636,6 +3636,7 @@ name = "splitroute"
 version = "0.1.0"
 dependencies = [
  "dirs 7.0.0",
+ "libc",
  "reqwest",
  "rustls",
  "serde",
@@ -3654,7 +3655,7 @@ name = "splitroute-helper"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "serde",
+ "libc",
  "serde_json",
  "splitroute-protocol",
 ]
