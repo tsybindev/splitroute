@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Power } from "lucide-react";
 import { t } from "../../shared/i18n/ru";
+import { helperBadge } from "../../shared/lib/helperState";
 import { useAppStore } from "../../shared/state/appStore";
 import { Badge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
@@ -40,12 +41,14 @@ export function ConnectScreen() {
   const settings = useAppStore((state) => state.settings);
   const rules = useAppStore((state) => state.rules);
   const helperStatus = useAppStore((state) => state.helperStatus);
+  const helperStatusError = useAppStore((state) => state.helperStatusError);
   const actionError = useAppStore((state) => state.actionError);
   const busy = useAppStore((state) => state.busy);
   const toggleConnection = useAppStore((state) => state.toggleConnection);
   const setActiveTab = useAppStore((state) => state.setActiveTab);
 
   const selected = profiles.find((profile) => profile.id === selectedProfileId);
+  const badge = helperBadge(helperStatus, helperStatusError);
   const session = useSessionTime(helperStatus?.started_at);
   const activeRules = rules.filter((rule) => rule.enabled).length;
   const connected = connection === "connected";
@@ -117,11 +120,7 @@ export function ConnectScreen() {
 
       <div className="grid gap-3 sm:grid-cols-3">
         <Card title={t("connect.helper")}>
-          <Badge tone={helperStatus ? "success" : "warn"}>
-            {helperStatus
-              ? helperStatus.version ?? t("connect.helper.installed")
-              : t("connect.helper.missing")}
-          </Badge>
+          <Badge tone={badge.tone}>{helperStatus?.version ?? badge.label}</Badge>
         </Card>
         <Card title={t("connect.dns")}>
           <Badge

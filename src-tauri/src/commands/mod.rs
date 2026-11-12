@@ -66,8 +66,15 @@ impl From<HelperClientError> for CommandError {
 }
 
 impl From<InstallerError> for CommandError {
+    /// Код ошибки различает причину, чтобы UI показал её, а не общую строку.
     fn from(error: InstallerError) -> Self {
-        Self::new("INSTALLER", error.to_string())
+        let code = match &error {
+            InstallerError::RequiresPrivileges => "INSTALLER_PRIVILEGES",
+            InstallerError::Unsupported => "INSTALLER_UNSUPPORTED",
+            InstallerError::MissingBinary(_) => "INSTALLER_MISSING_BINARY",
+            InstallerError::Failed(_) => "INSTALLER_FAILED",
+        };
+        Self::new(code, error.to_string())
     }
 }
 
@@ -714,6 +721,30 @@ mod tests {
     fn settings_network_default_is_available() {
         let settings: Settings = AppSettings::default().network;
         assert_eq!(settings.mtu, 1500);
+    }
+
+    /// UI показывает причину установки, поэтому код должен различать случаи.
+    #[test]
+    fn installer_errors_map_to_distinct_codes() {
+        let cases = [
+            (InstallerError::RequiresPrivileges, "INSTALLER_PRIVILEGES"),
+            (InstallerError::Unsupported, "INSTALLER_UNSUPPORTED"),
+            (
+                InstallerError::MissingBinary("splitroute-helper".to_string()),
+                "INSTALLER_MISSING_BINARY",
+            ),
+            (
+                InstallerError::Failed("операция отменена пользователем".to_string()),
+                "INSTALLER_FAILED",
+            ),
+        ];
+        for (error, code) in cases {
+            // Текст установщика сохраняется, чтобы UI показал точную причину.
+            let message = error.to_string();
+            let command_error = CommandError::from(error);
+            assert_eq!(command_error.code, code);
+            assert_eq!(command_error.message, message);
+        }
     }
 
     /// Первый вызов — ошибка авторизации, второй — успешная фикстура.

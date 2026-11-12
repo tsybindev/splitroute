@@ -103,6 +103,7 @@ fn packaging_scripts_are_valid_shell() {
     for script in [
         "../scripts/package.sh",
         "../scripts/build-helper-sidecar.sh",
+        "../scripts/portable.sh",
     ] {
         let path = manifest_dir().join(script);
         let text = fs::read_to_string(&path)
@@ -117,5 +118,83 @@ fn packaging_scripts_are_valid_shell() {
             .status()
             .expect("запуск sh -n");
         assert!(status.success(), "{script} не проходит sh -n");
+    }
+}
+
+/// GPL-3.0 требует распространять текст лицензии вместе с программой, а
+/// сторонние компоненты — с уведомлениями. Файлы должны лежать в корне и
+/// попадать в поставку, а не только в репозиторий.
+#[test]
+fn license_and_notices_exist_in_repository_root() {
+    let root = manifest_dir().join("..");
+    for name in ["LICENSE", "THIRD_PARTY_NOTICES"] {
+        let path = root.join(name);
+        let text = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("нет {}: {error}", path.display()));
+        assert!(!text.trim().is_empty(), "{name} пуст");
+    }
+
+    let license = fs::read_to_string(root.join("LICENSE")).unwrap();
+    assert!(
+        license.contains("GNU GENERAL PUBLIC LICENSE") && license.contains("Version 3"),
+        "LICENSE должен быть текстом GNU GPL v3"
+    );
+
+    let notices = fs::read_to_string(root.join("THIRD_PARTY_NOTICES")).unwrap();
+    // sing-box — GPL-3.0-обязательство: версия, ссылка на исходники, лицензия.
+    assert!(notices.contains("sing-box"), "в notices нет sing-box");
+    assert!(notices.contains("v1.14.4"), "не закреплена версия sing-box");
+    assert!(
+        notices.contains("https://github.com/SagerNet/sing-box/tree/v1.14.4"),
+        "нет ссылки на исходники закреплённой версии sing-box"
+    );
+    assert!(notices.contains("GPL-3.0"), "не указана лицензия sing-box");
+    // Windows-драйвер распространяется по отдельной лицензии WireGuard LLC.
+    assert!(notices.contains("Prebuilt Binaries License"));
+    assert!(notices.contains("wintun"));
+    // Frontend/Rust/Tauri зафиксированы.
+    for component in ["Tauri", "react", "rustls"] {
+        assert!(notices.contains(component), "в notices нет {component}");
+    }
+    // Уведомления не должны содержать секретов.
+    assert!(!notices.contains("d811a5ee"));
+}
+
+#[test]
+fn base_config_bundles_license_and_notices() {
+    let config = read_json(&manifest_dir().join("tauri.conf.json"));
+    assert_eq!(
+        config["bundle"]["license"], "GPL-3.0-only",
+        "в метаданных пакета должна быть SPDX-лицензия проекта"
+    );
+    assert_eq!(
+        config["bundle"]["licenseFile"], "../LICENSE",
+        "DMG/NSIS должны показывать текст лицензии"
+    );
+    assert_eq!(
+        config["bundle"]["resources"]["../LICENSE"], "LICENSE",
+        "LICENSE должен попадать в ресурсы приложения"
+    );
+    assert_eq!(
+        config["bundle"]["resources"]["../THIRD_PARTY_NOTICES"], "THIRD_PARTY_NOTICES",
+        "THIRD_PARTY_NOTICES должен попадать в ресурсы приложения"
+    );
+}
+
+#[test]
+fn linux_packages_ship_license_docs() {
+    let config = read_json(&manifest_dir().join("tauri.linux.conf.json"));
+    for (target, prefix) in [("deb", ""), ("rpm", "/"), ("appimage", "")] {
+        let files = config["bundle"]["linux"][target]["files"]
+            .as_object()
+            .unwrap_or_else(|| panic!("нет bundle.linux.{target}.files"));
+        for name in ["LICENSE", "THIRD_PARTY_NOTICES"] {
+            let key = format!("{prefix}usr/share/doc/splitroute/{name}");
+            assert!(
+                files.contains_key(&key),
+                "{target}: нет {key} — пакет не содержит уведомлений"
+            );
+            assert_eq!(files[&key], format!("../{name}"));
+        }
     }
 }

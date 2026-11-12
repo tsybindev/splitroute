@@ -34,6 +34,7 @@ interface AppState {
   skippedCount: number;
   rules: AppRule[];
   helperStatus: HelperStatus | null;
+  helperStatusError: CommandError | null;
   connection: ConnectionState;
   fetchError: CommandError | null;
   actionError: CommandError | null;
@@ -57,6 +58,7 @@ interface AppState {
   loadSettings: () => Promise<void>;
   saveSettings: (settings: AppSettings) => Promise<void>;
   regenerateHwid: () => Promise<string | null>;
+  refreshHelperStatus: () => Promise<void>;
   loadLogs: (level: LogLevel | null) => Promise<void>;
   loadDiagnostics: () => Promise<string>;
   clearNotice: () => void;
@@ -71,6 +73,7 @@ const initialState = {
   skippedCount: 0,
   rules: [] as AppRule[],
   helperStatus: null,
+  helperStatusError: null,
   connection: "disconnected" as ConnectionState,
   fetchError: null,
   actionError: null,
@@ -123,6 +126,7 @@ export const useAppStore = create<AppState>((set, get) => {
   const applyStatus = (status: HelperStatus) => {
     set({
       helperStatus: status,
+      helperStatusError: null,
       connection: connectionFromStatus(status),
     });
   };
@@ -145,8 +149,7 @@ export const useAppStore = create<AppState>((set, get) => {
           });
         })(),
         (async () => {
-          const status = await api.helperStatus();
-          applyStatus(status);
+          await get().refreshHelperStatus();
         })(),
         get().loadLogs(null),
       ]);
@@ -296,6 +299,14 @@ export const useAppStore = create<AppState>((set, get) => {
       } catch (error) {
         set({ actionError: toCommandError(error) });
         return null;
+      }
+    },
+
+    refreshHelperStatus: async () => {
+      try {
+        applyStatus(await api.helperStatus());
+      } catch (error) {
+        set({ helperStatus: null, helperStatusError: toCommandError(error) });
       }
     },
 

@@ -36,6 +36,8 @@ export const ru = {
   "connect.helper": "Helper",
   "connect.helper.installed": "Установлен",
   "connect.helper.missing": "Не установлен",
+  "connect.helper.outdated": "Устарел",
+  "connect.helper.unavailable": "Не отвечает",
   "connect.dns": "DNS",
   "connect.dns.proxy": "Через прокси",
   "connect.dns.system": "Системный",
@@ -107,8 +109,12 @@ export const ru = {
   "settings.helper.title": "Helper",
   "settings.helper.status": "Статус",
   "settings.helper.install": "Установить",
+  "settings.helper.reinstall": "Переустановить",
   "settings.helper.uninstall": "Удалить",
-  "settings.helper.hint": "Установка сервиса требует прав администратора и появится на этапе 3.",
+  "settings.helper.hint":
+    "Установка сервиса требует прав администратора: пароль запрашивает система, приложение его не хранит.",
+  "settings.helper.installed": "Helper установлен.",
+  "settings.helper.removed": "Helper удалён.",
   "settings.save": "Сохранить настройки",
   "settings.saved": "Настройки сохранены",
 
@@ -141,7 +147,12 @@ export const ru = {
   "errors.HELPER_INVALID_RESPONSE": "Helper вернул некорректный ответ.",
   "errors.CONFIG": "Не удалось собрать конфиг.",
   "errors.STORE": "Не удалось сохранить данные.",
-  "errors.INSTALLER": "Установка helper'а недоступна.",
+  "errors.INSTALLER_PRIVILEGES": "Нужны права администратора.",
+  "errors.INSTALLER_UNSUPPORTED":
+    "Установка helper'а не поддерживается на этой платформе.",
+  "errors.INSTALLER_MISSING_BINARY":
+    "Не найден файл, нужный для установки helper'а.",
+  "errors.INSTALLER_FAILED": "Не удалось установить helper.",
   "errors.UNKNOWN": "Неизвестная ошибка.",
 } as const;
 

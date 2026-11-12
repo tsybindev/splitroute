@@ -109,6 +109,7 @@ BAT
 esac
 
 cp LICENSE "$stage/" 2>/dev/null || true
+cp THIRD_PARTY_NOTICES "$stage/" 2>/dev/null || true
 
 archive=$root/target/portable/$name.tar.gz
 rm -f "$archive"

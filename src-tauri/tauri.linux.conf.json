@@ -7,10 +7,24 @@
     "linux": {
       "deb": {
         "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0", "polkitd | policykit-1"],
-        "section": "net"
+        "section": "net",
+        "files": {
+          "usr/share/doc/splitroute/LICENSE": "../LICENSE",
+          "usr/share/doc/splitroute/THIRD_PARTY_NOTICES": "../THIRD_PARTY_NOTICES"
+        }
       },
       "rpm": {
-        "depends": ["webkit2gtk4.1", "gtk3", "polkit"]
+        "depends": ["webkit2gtk4.1", "gtk3", "polkit"],
+        "files": {
+          "/usr/share/doc/splitroute/LICENSE": "../LICENSE",
+          "/usr/share/doc/splitroute/THIRD_PARTY_NOTICES": "../THIRD_PARTY_NOTICES"
+        }
+      },
+      "appimage": {
+        "files": {
+          "usr/share/doc/splitroute/LICENSE": "../LICENSE",
+          "usr/share/doc/splitroute/THIRD_PARTY_NOTICES": "../THIRD_PARTY_NOTICES"
+        }
       }
     }
   }

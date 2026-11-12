@@ -27,6 +27,12 @@
   "bundle": {
     "active": false,
     "icon": ["icons/icon.png"],
-    "category": "Utility"
+    "category": "Utility",
+    "license": "GPL-3.0-only",
+    "licenseFile": "../LICENSE",
+    "resources": {
+      "../LICENSE": "LICENSE",
+      "../THIRD_PARTY_NOTICES": "THIRD_PARTY_NOTICES"
+    }
   }
 }

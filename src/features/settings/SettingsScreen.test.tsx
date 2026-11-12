@@ -3,13 +3,14 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SettingsScreen } from "./SettingsScreen";
 import { resetAppStore, useAppStore } from "../../shared/state/appStore";
-import { makeSettings } from "../../test/fixtures";
+import { makeSettings, stoppedStatus } from "../../test/fixtures";
 
 const apiMock = vi.hoisted(() => ({
   settingsUpdate: vi.fn(),
   hwidGenerate: vi.fn(),
   helperInstall: vi.fn(),
   helperUninstall: vi.fn(),
+  helperStatus: vi.fn(),
 }));
 
 vi.mock("../../shared/api/client", () => ({
@@ -22,6 +23,7 @@ describe("SettingsScreen", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetAppStore();
+    apiMock.helperStatus.mockResolvedValue(stoppedStatus);
   });
 
   it("показывает загрузку без настроек", () => {
@@ -92,11 +94,40 @@ describe("SettingsScreen", () => {
     ).toBeInTheDocument();
   });
 
-  it("показывает ошибку установки helper'а", async () => {
+  it("показывает статус helper'а из helper_status", async () => {
+    useAppStore.setState({
+      settings: makeSettings(),
+      helperStatus: { state: "stopped", version: "sing-box 1.14.4" },
+    });
+    render(<SettingsScreen />);
+
+    expect(screen.getByText("sing-box 1.14.4")).toBeInTheDocument();
+  });
+
+  it("показывает точную причину: нужны права администратора", async () => {
     const user = userEvent.setup();
     apiMock.helperInstall.mockRejectedValue({
-      code: "INSTALLER",
-      message: "нужны права",
+      code: "INSTALLER_PRIVILEGES",
+      message: "для установки helper'а нужны права администратора",
+    });
+    useAppStore.setState({ settings: makeSettings() });
+
+    render(<SettingsScreen />);
+    await user.click(screen.getByRole("button", { name: "Установить" }));
+
+    await waitFor(() =>
+      expect(screen.getByText("Нужны права администратора.")).toBeInTheDocument(),
+    );
+    expect(
+      screen.getByText("для установки helper'а нужны права администратора"),
+    ).toBeInTheDocument();
+  });
+
+  it("показывает отмену системного запроса прав", async () => {
+    const user = userEvent.setup();
+    apiMock.helperInstall.mockRejectedValue({
+      code: "INSTALLER_FAILED",
+      message: "операция отменена пользователем",
     });
     useAppStore.setState({ settings: makeSettings() });
 
@@ -105,7 +136,65 @@ describe("SettingsScreen", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByText("Установка helper'а недоступна."),
+        screen.getByText("операция отменена пользователем"),
+      ).toBeInTheDocument(),
+    );
+  });
+
+  it("показывает отсутствующий бинарь и подпись helper'а", async () => {
+    const user = userEvent.setup();
+    apiMock.helperInstall.mockRejectedValue({
+      code: "INSTALLER_MISSING_BINARY",
+      message: "не найден файл: splitroute-helper",
+    });
+    useAppStore.setState({ settings: makeSettings() });
+
+    render(<SettingsScreen />);
+    await user.click(screen.getByRole("button", { name: "Установить" }));
+
+    await waitFor(() =>
+      expect(screen.getByText("не найден файл: splitroute-helper")).toBeInTheDocument(),
+    );
+  });
+
+  it("показывает неподдерживаемую платформу", async () => {
+    const user = userEvent.setup();
+    apiMock.helperInstall.mockRejectedValue({
+      code: "INSTALLER_UNSUPPORTED",
+      message: "установка helper'а не поддерживается на этой платформе",
+    });
+    useAppStore.setState({ settings: makeSettings() });
+
+    render(<SettingsScreen />);
+    await user.click(screen.getByRole("button", { name: "Установить" }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("Установка helper'а не поддерживается на этой платформе."),
+      ).toBeInTheDocument(),
+    );
+  });
+
+  it("показывает успешную установку и обновляет статус из ядра", async () => {
+    const user = userEvent.setup();
+    apiMock.helperInstall.mockResolvedValue(undefined);
+    apiMock.helperStatus.mockResolvedValue({
+      state: "stopped",
+      version: "sing-box 1.14.4",
+    });
+    useAppStore.setState({ settings: makeSettings(), helperStatus: null });
+
+    render(<SettingsScreen />);
+    await user.click(screen.getByRole("button", { name: "Установить" }));
+
+    await waitFor(() =>
+      expect(screen.getByText("Helper установлен.")).toBeInTheDocument(),
+    );
+    expect(apiMock.helperStatus).toHaveBeenCalled();
+    // После установки кнопка меняется на «Переустановить» — статус пришёл из ядра.
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Переустановить" }),
       ).toBeInTheDocument(),
     );
   });

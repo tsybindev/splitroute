@@ -88,4 +88,28 @@ describe("ConnectScreen", () => {
     render(<ConnectScreen />);
     expect(screen.getByText("00:01:05")).toBeInTheDocument();
   });
+
+  it("различает состояния helper'а: нет, устарел, не отвечает", () => {
+    useAppStore.setState({
+      settings: makeSettings(),
+      helperStatus: null,
+      helperStatusError: null,
+    });
+    const { rerender } = render(<ConnectScreen />);
+    expect(screen.getByText("Не установлен")).toBeInTheDocument();
+
+    useAppStore.setState({
+      helperStatus: null,
+      helperStatusError: { code: "HELPER_PROTOCOL", message: "версия" },
+    });
+    rerender(<ConnectScreen />);
+    expect(screen.getByText("Устарел")).toBeInTheDocument();
+
+    useAppStore.setState({
+      helperStatus: null,
+      helperStatusError: { code: "HELPER_UNAVAILABLE", message: "нет ответа" },
+    });
+    rerender(<ConnectScreen />);
+    expect(screen.getByText("Не отвечает")).toBeInTheDocument();
+  });
 });

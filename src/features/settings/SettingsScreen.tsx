@@ -3,6 +3,7 @@ import { Loader2, RefreshCw } from "lucide-react";
 import { api, toCommandError } from "../../shared/api/client";
 import type { AppSettings, CommandError } from "../../shared/api/types";
 import { t } from "../../shared/i18n/ru";
+import { helperBadge } from "../../shared/lib/helperState";
 import { useAppStore } from "../../shared/state/appStore";
 import { Badge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
@@ -51,13 +52,18 @@ export function SettingsScreen() {
 
 function SettingsForm({ initial }: { initial: AppSettings }) {
   const helperStatus = useAppStore((state) => state.helperStatus);
+  const helperStatusError = useAppStore((state) => state.helperStatusError);
   const actionError = useAppStore((state) => state.actionError);
   const notice = useAppStore((state) => state.notice);
   const busy = useAppStore((state) => state.busy);
   const saveSettings = useAppStore((state) => state.saveSettings);
   const regenerateHwid = useAppStore((state) => state.regenerateHwid);
+  const refreshHelperStatus = useAppStore((state) => state.refreshHelperStatus);
   const [form, setForm] = useState<AppSettings>(initial);
   const [helperError, setHelperError] = useState<CommandError | null>(null);
+  const [helperNotice, setHelperNotice] = useState<string | null>(null);
+  const [helperBusy, setHelperBusy] = useState(false);
+  const badge = helperBadge(helperStatus, helperStatusError);
 
   const updateSubscription = (patch: Partial<AppSettings["subscription"]>) =>
     setForm({
@@ -73,14 +79,24 @@ function SettingsForm({ initial }: { initial: AppSettings }) {
 
   const runHelperAction = async (action: "install" | "uninstall") => {
     setHelperError(null);
+    setHelperNotice(null);
+    setHelperBusy(true);
     try {
       if (action === "install") {
         await api.helperInstall();
+        setHelperNotice(t("settings.helper.installed"));
       } else {
         await api.helperUninstall();
+        setHelperNotice(t("settings.helper.removed"));
       }
     } catch (error) {
+      // Показываем причину установщика: права, отмену, отсутствующий бинарь
+      // или неподдерживаемую платформу — не общую строку.
       setHelperError(toCommandError(error));
+    } finally {
+      setHelperBusy(false);
+      // Статус берём только из helper_status: пароля и локального «успеха» нет.
+      await refreshHelperStatus();
     }
   };
 
@@ -297,17 +313,21 @@ function SettingsForm({ initial }: { initial: AppSettings }) {
 
       <Card title={t("settings.helper.title")}>
         <div className="flex flex-wrap items-center gap-3">
-          <Badge tone={helperStatus ? "success" : "warn"}>
-            {helperStatus
-              ? helperStatus.version ?? t("connect.helper.installed")
-              : t("connect.helper.missing")}
+          <Badge tone={badge.tone}>
+            {helperStatus?.version ?? badge.label}
           </Badge>
-          <Button onClick={() => void runHelperAction("install")}>
-            {t("settings.helper.install")}
+          <Button
+            onClick={() => void runHelperAction("install")}
+            disabled={helperBusy}
+          >
+            {helperStatus
+              ? t("settings.helper.reinstall")
+              : t("settings.helper.install")}
           </Button>
           <Button
             variant="danger"
             onClick={() => void runHelperAction("uninstall")}
+            disabled={helperBusy}
           >
             {t("settings.helper.uninstall")}
           </Button>
@@ -315,7 +335,14 @@ function SettingsForm({ initial }: { initial: AppSettings }) {
         <p className="mt-2 text-xs text-neutral-500">
           {t("settings.helper.hint")}
         </p>
-        {helperError ? <div className="mt-3"><ErrorBox error={helperError} /></div> : null}
+        {helperNotice ? (
+          <p className="mt-3 text-sm text-emerald-300">{helperNotice}</p>
+        ) : null}
+        {helperError ? (
+          <div className="mt-3">
+            <ErrorBox error={helperError} showDetail />
+          </div>
+        ) : null}
       </Card>
 
       {actionError ? <ErrorBox error={actionError} /> : null}
