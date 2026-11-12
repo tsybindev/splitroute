@@ -159,6 +159,10 @@ fn network_message(error: &reqwest::Error) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
+
     use super::*;
 
     struct MockFetcher {
@@ -254,5 +258,80 @@ mod tests {
         let mut broken = request();
         broken.url = "  ".to_string();
         assert_eq!(fetcher.fetch(&broken).unwrap_err(), FetchError::MissingUrl);
+    }
+
+    /// Одноразовый HTTP-сервер: принимает один запрос и отдаёт заданный ответ.
+    fn spawn_http_server(status_line: &str, body: String) -> (String, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let status_line = status_line.to_string();
+        let handle = thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buffer = [0_u8; 2048];
+                let _ = stream.read(&mut buffer);
+                let response = format!(
+                    "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        (format!("http://{address}/subscription.json"), handle)
+    }
+
+    fn init_tls() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+
+    #[test]
+    fn http_statuses_are_mapped_end_to_end() {
+        init_tls();
+        for (status, expected) in [
+            ("401 Unauthorized", FetchError::Unauthorized),
+            ("403 Forbidden", FetchError::Forbidden),
+            ("404 Not Found", FetchError::NotFound),
+            ("500 Internal Server Error", FetchError::Status(500)),
+        ] {
+            let (url, handle) = spawn_http_server(status, String::new());
+            let mut target = request();
+            target.url = url;
+            assert_eq!(
+                ReqwestFetcher::new().fetch(&target).unwrap_err(),
+                expected,
+                "статус {status}"
+            );
+            handle.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn http_fixture_is_parsed_end_to_end() {
+        init_tls();
+        let (url, handle) = spawn_http_server("200 OK", fixture());
+        let mut target = request();
+        target.url = url;
+        let subscription = fetch_and_parse(&ReqwestFetcher::new(), &target).unwrap();
+        assert_eq!(subscription.profiles.len(), 2);
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn http_errors_from_body_are_typed() {
+        init_tls();
+        for (body, code) in [
+            ("{oops".to_string(), "INVALID_JSON"),
+            ("[]".to_string(), "EMPTY"),
+            (
+                r#"[{"remarks":"x","outbounds":[]}]"#.to_string(),
+                "NO_PROFILES",
+            ),
+        ] {
+            let (url, handle) = spawn_http_server("200 OK", body);
+            let mut target = request();
+            target.url = url;
+            let error = fetch_and_parse(&ReqwestFetcher::new(), &target).unwrap_err();
+            assert_eq!(error.code(), code);
+            handle.join().unwrap();
+        }
     }
 }

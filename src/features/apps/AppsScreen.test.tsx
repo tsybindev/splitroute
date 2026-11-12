@@ -65,6 +65,32 @@ describe("AppsScreen", () => {
     );
   });
 
+  it("добавляет правило по regex пути", async () => {
+    const user = userEvent.setup();
+    apiMock.rulesUpsert.mockResolvedValue([]);
+
+    render(<AppsScreen />);
+    await user.type(screen.getByLabelText("Название"), "Chrome");
+    await user.selectOptions(screen.getByLabelText("Тип правила"), "regex");
+    await user.type(
+      screen.getByLabelText("Значение"),
+      "^/Applications/Google Chrome\\.app/",
+    );
+    await user.click(screen.getByRole("button", { name: "Добавить правило" }));
+
+    await waitFor(() =>
+      expect(apiMock.rulesUpsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "Chrome",
+          process_name: [],
+          process_path: [],
+          path_regex: ["^/Applications/Google Chrome\\.app/"],
+          enabled: true,
+        }),
+      ),
+    );
+  });
+
   it("не отправляет пустое правило", async () => {
     const user = userEvent.setup();
     render(<AppsScreen />);

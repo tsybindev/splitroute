@@ -13,6 +13,7 @@ struct MockState {
     started_at: Option<u64>,
     start_calls: u32,
     stop_calls: u32,
+    last_config: Option<Value>,
 }
 
 /// In-memory реализация `HelperClient`: идемпотентные start/stop, предсказуемый статус.
@@ -36,6 +37,11 @@ impl MockHelperClient {
         self.state.lock().unwrap().stop_calls
     }
 
+    /// Конфиг, переданный в последний `start` (для тестов).
+    pub fn last_config(&self) -> Option<Value> {
+        self.state.lock().unwrap().last_config.clone()
+    }
+
     fn status_of(state: &MockState) -> HelperStatus {
         HelperStatus {
             state: if state.running {
@@ -56,12 +62,13 @@ impl HelperClient for MockHelperClient {
         Ok(Self::status_of(&state))
     }
 
-    fn start(&self, _config: Value) -> Result<HelperStatus, HelperClientError> {
+    fn start(&self, config: Value) -> Result<HelperStatus, HelperClientError> {
         let mut state = self.state.lock().unwrap();
         state.start_calls += 1;
+        state.last_config = Some(config);
         if !state.running {
             state.running = true;
-            state.started_at = Some(1_762_950_000);
+            state.started_at = Some(crate::store::now_secs());
         }
         Ok(Self::status_of(&state))
     }
@@ -106,5 +113,19 @@ mod tests {
         let status = client.status().unwrap();
         assert_eq!(status.state, CoreState::Running);
         assert_eq!(status.pid, Some(4242));
+    }
+
+    #[test]
+    fn start_records_config_and_current_time() {
+        let client = MockHelperClient::new();
+        let before = crate::store::now_secs();
+        let config = serde_json::json!({ "log": { "level": "info" } });
+        let status = client.start(config.clone()).unwrap();
+        let after = crate::store::now_secs();
+
+        let started_at = status.started_at.expect("время старта");
+        assert!((before..=after).contains(&started_at));
+        assert_eq!(client.last_config(), Some(config));
+        assert_eq!(client.stop().unwrap().started_at, None);
     }
 }

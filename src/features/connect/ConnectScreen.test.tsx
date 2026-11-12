@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ConnectScreen } from "./ConnectScreen";
@@ -20,6 +20,10 @@ describe("ConnectScreen", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetAppStore();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("показывает пустое состояние без локации и блокирует подключение", () => {
@@ -51,5 +55,21 @@ describe("ConnectScreen", () => {
     await waitFor(() =>
       expect(screen.getByText("Подключено")).toBeInTheDocument(),
     );
+  });
+
+  it("показывает время сессии из статуса helper'а", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-12T12:00:00Z"));
+    const now = Math.floor(Date.now() / 1000);
+    useAppStore.setState({
+      settings: makeSettings(),
+      profiles: [makeProfile()],
+      selectedProfileId: "profile-1",
+      helperStatus: { state: "running", pid: 42, started_at: now - 65 },
+      connection: "connected",
+    });
+
+    render(<ConnectScreen />);
+    expect(screen.getByText("00:01:05")).toBeInTheDocument();
   });
 });

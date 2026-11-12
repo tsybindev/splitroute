@@ -40,6 +40,43 @@ describe("ProfilesScreen", () => {
     ).toBeInTheDocument();
   });
 
+  it("показывает понятные тексты для ошибок подписки", () => {
+    const cases: Array<[string, string]> = [
+      ["UNAUTHORIZED", "Сервер отклонил HWID (401). Проверьте HWID в настройках."],
+      ["FORBIDDEN", "Доступ к подписке запрещён (403)."],
+      ["NOT_FOUND", "Подписка не найдена (404). Проверьте URL."],
+      ["INVALID_JSON", "Сервер вернул некорректный JSON."],
+      ["EMPTY", "Подписка пуста."],
+      ["NO_PROFILES", "В подписке нет поддерживаемых профилей."],
+    ];
+
+    for (const [code, message] of cases) {
+      resetAppStore();
+      useAppStore.setState({ fetchError: { code, message: "server text" } });
+      const { unmount } = render(<ProfilesScreen />);
+      expect(screen.getByText(message)).toBeInTheDocument();
+      unmount();
+    }
+  });
+
+  it("повторяет обновление по кнопке «Повторить»", async () => {
+    const user = userEvent.setup();
+    apiMock.subscriptionFetch.mockResolvedValue({
+      profiles: [],
+      selected_profile_id: null,
+      fetched_at: null,
+      skipped: [],
+    });
+    useAppStore.setState({ fetchError: { code: "NETWORK", message: "нет сети" } });
+
+    render(<ProfilesScreen />);
+    await user.click(screen.getByRole("button", { name: "Повторить" }));
+
+    await waitFor(() =>
+      expect(apiMock.subscriptionFetch).toHaveBeenCalledTimes(1),
+    );
+  });
+
   it("выбирает локацию из списка", async () => {
     const user = userEvent.setup();
     const first = makeProfile({ id: "p1", name: "Локация A" });

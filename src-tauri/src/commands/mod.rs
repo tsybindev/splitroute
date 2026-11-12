@@ -648,4 +648,159 @@ mod tests {
         let settings: Settings = AppSettings::default().network;
         assert_eq!(settings.mtu, 1500);
     }
+
+    /// Первый вызов — ошибка авторизации, второй — успешная фикстура.
+    struct FailThenOkFetcher {
+        calls: std::sync::atomic::AtomicUsize,
+        body: String,
+    }
+
+    impl SubscriptionFetcher for FailThenOkFetcher {
+        fn fetch(&self, _request: &FetchRequest) -> Result<String, FetchError> {
+            if self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                Err(FetchError::Unauthorized)
+            } else {
+                Ok(self.body.clone())
+            }
+        }
+    }
+
+    #[test]
+    fn subscription_error_then_retry_succeeds() {
+        let state = AppState::new(
+            Arc::new(MockHelperClient::new()),
+            Arc::new(UnsupportedInstaller),
+            Store::load(temp_path("retry")),
+            Arc::new(FailThenOkFetcher {
+                calls: std::sync::atomic::AtomicUsize::new(0),
+                body: fixture(),
+            }),
+        );
+
+        let error = subscription_fetch_inner(
+            &state,
+            Some("https://example.invalid/sub".to_string()),
+            None,
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "UNAUTHORIZED");
+        assert!(state.store.data().profiles.is_empty());
+
+        let response = subscription_fetch_inner(
+            &state,
+            Some("https://example.invalid/sub".to_string()),
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(response.profiles.len(), 2);
+        assert_eq!(
+            response.selected_profile_id.as_deref(),
+            Some(response.profiles[0].id.as_str())
+        );
+    }
+
+    #[test]
+    fn end_to_end_subscription_location_rules_connect() {
+        let path = temp_path("e2e");
+        let helper = Arc::new(MockHelperClient::new());
+        let state = AppState::new(
+            helper.clone(),
+            Arc::new(UnsupportedInstaller),
+            Store::load(&path),
+            Arc::new(MockFetcher {
+                body: Ok(fixture()),
+            }),
+        );
+
+        // Пустое состояние: нет подписки, локации и правил.
+        let empty = state.store.data();
+        assert!(empty.profiles.is_empty());
+        assert!(empty.selected_profile_id.is_none());
+        assert!(empty.rules.is_empty());
+
+        // Успешное обновление: два профиля, первый выбран автоматически.
+        let fetched = subscription_fetch_inner(
+            &state,
+            Some("https://example.invalid/sub".to_string()),
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(fetched.profiles.len(), 2);
+        let first = fetched.profiles[0].id.clone();
+        let second = fetched.profiles[1].id.clone();
+        assert_eq!(fetched.selected_profile_id.as_deref(), Some(first.as_str()));
+
+        // Выбор второй локации сохраняется после «перезапуска».
+        state.store.select_profile(&second).unwrap();
+        drop(state);
+        let state = AppState::new(
+            helper.clone(),
+            Arc::new(UnsupportedInstaller),
+            Store::load(&path),
+            Arc::new(MockFetcher {
+                body: Ok(fixture()),
+            }),
+        );
+        assert_eq!(
+            state.store.data().selected_profile_id.as_deref(),
+            Some(second.as_str())
+        );
+
+        // allowlist: правило по имени процесса и правило по regex пути.
+        let process_rule = AppRule {
+            id: "rule-curl".to_string(),
+            name: "curl".to_string(),
+            platform: Platform::Macos,
+            process_name: vec!["curl".to_string()],
+            process_path: Vec::new(),
+            path_regex: Vec::new(),
+            enabled: true,
+        };
+        let regex_rule = AppRule {
+            id: "rule-chrome".to_string(),
+            name: "Google Chrome".to_string(),
+            platform: Platform::Macos,
+            process_name: Vec::new(),
+            process_path: Vec::new(),
+            path_regex: vec![r"^/Applications/Google Chrome\.app/".to_string()],
+            enabled: true,
+        };
+        state.store.upsert_rule(process_rule).unwrap();
+        state.store.upsert_rule(regex_rule.clone()).unwrap();
+        assert_eq!(state.store.rules().len(), 2);
+        state
+            .store
+            .upsert_rule(AppRule {
+                enabled: false,
+                ..regex_rule
+            })
+            .unwrap();
+
+        // Подключение через mock helper: в конфиг попадает только включённое правило,
+        // выбранная локация — вторая.
+        let status = connect_inner(&state).unwrap();
+        assert_eq!(status.state, splitroute_protocol::CoreState::Running);
+        let config = helper.last_config().expect("конфиг передан helper'у");
+        let route_rules = config["route"]["rules"].as_array().unwrap();
+        assert!(route_rules
+            .iter()
+            .any(|rule| rule["process_name"][0] == "curl"));
+        assert!(
+            !route_rules
+                .iter()
+                .any(|rule| rule.get("process_path_regex").is_some()),
+            "выключенное правило не должно попадать в конфиг"
+        );
+        assert_eq!(config["outbounds"][0]["server"], "203.0.113.20");
+
+        // Отключение.
+        assert_eq!(
+            disconnect_inner(&state).unwrap().state,
+            splitroute_protocol::CoreState::Stopped
+        );
+        let _ = std::fs::remove_file(&path);
+    }
 }
