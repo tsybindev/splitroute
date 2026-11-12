@@ -55,7 +55,9 @@ impl Default for AppSettings {
             subscription: SubscriptionSettings {
                 url: String::new(),
                 hwid: generate_hwid(),
-                user_agent: "SplitRoute/0.1.0".to_string(),
+                // Провайдер отдаёт Happ-JSON только при этом User-Agent;
+                // с произвольным UA возвращается base64-список vless-ссылок.
+                user_agent: "Happ/4.1.0".to_string(),
                 auto_update_hours: 12,
             },
             network: Settings::default(),
@@ -309,6 +311,10 @@ mod tests {
             .bytes()
             .all(|byte| byte.is_ascii_hexdigit()));
         assert!(settings.subscription.url.is_empty());
+        assert_eq!(
+            settings.subscription.user_agent, "Happ/4.1.0",
+            "провайдер отдаёт Happ-JSON только при этом User-Agent"
+        );
         assert!(settings.preferences.close_to_tray);
         assert!(store.data().profiles.is_empty());
     }
