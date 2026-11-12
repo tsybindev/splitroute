@@ -51,8 +51,8 @@
 
 | ID | Задача | Владелец | Критерий приёмки |
 |---|---|---|---|
-| S2-T1 | Tauri 2 скелет, workspace, CI-команды | оркестратор | `pnpm tauri dev` запускается на macOS и CachyOS |
-| S2-T2 | `crates/protocol`: типы IPC и общие модели | rust-core | Типы сериализуются, версия протокола проверяется |
+| S2-T1 | Tauri 2 скелет, workspace, CI-команды | оркестратор | `pnpm tauri dev` запускается на macOS и CachyOS — **macOS 15.8.2: done**, `pnpm tauri dev` стартует (Vite + окно); CachyOS **не проверено** (нет машины) |
+| S2-T2 | `crates/protocol`: типы IPC и общие модели | rust-core | done — Request/Response/Command/ErrorCode, HelperStatus, Profile, AppRule, Settings; 13 тестов, clippy чистый |
 | S2-T3 | Парсер подписки + фикстуры + тесты | rust-core | Покрыты валидный JSON, пустой список, нет `proxy`, битый JSON |
 | S2-T4 | Генератор sing-box конфига + golden-тесты | rust-core | Allowlist, direct, IPv6 on/off, DNS-режимы |
 | S2-T5 | Клиент helper'а (mock + реальный), установка/удаление | platform-native | start/stop/status идемпотентны, ошибки типизированы |
