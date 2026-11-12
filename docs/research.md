@@ -203,10 +203,14 @@ Go 1.27.0; без root. Полный отчёт — [docs/spikes/stage-1.md](./s
 | `stop` удаляет конфиг и завершает ядро | **подтверждено** | `kill(pid, 0)` → ESRCH, `config.json` отсутствует |
 | Второй экземпляр helper'а не запускается и не удаляет конфиг работающего | **подтверждено** | интеграционный тест: второй процесс завершается с ошибкой, `config.json` первого остаётся |
 | Реальный клиент приложения совместим с новым helper'ом | **подтверждено** | `src-tauri/tests/helper_roundtrip.rs`: `UnixHelperClient::status/start/stop` по реальному сокету |
-| Установка LaunchDaemon, `launchctl print`, права `/var/run/splitroute` | **не проверено** | `sudo -n` требует пароль; системный сервис не ставился без явного подтверждения пользователя |
+| Ad-hoc/linker-подпись helper'а не запускается как LaunchDaemon на macOS 15.8.2 | **подтверждено** | реальная установка: файлы скопированы, launchd запустил helper, ядро сообщило `AMFI: ... has no CMS blob?` и `Unrecoverable CT signature issue, bailing out`; сервис удалён, сокета нет |
+| На машине есть codesigning identity для helper'а | **опровергнуто** | `security find-identity -v -p codesigning` → `0 valid identities found` |
+| Установка LaunchDaemon, `launchctl print`, права `/var/run/splitroute` | **blocked** | нужен сертификат Apple Development/Developer ID; ad-hoc не подходит. После проверки файлы и runtime удалены, сервис не загружен |
+| Удаление установленных файлов при незагруженном сервисе | **подтверждено** | Uninstall из UI удалил plist, helper, sing-box и `/var/run/splitroute`; процессов не осталось |
 
-Практическое следствие: для production-проверки нужен запуск установщика из
-UI с паролем администратора; чек-лист и ожидаемые права —
-`docs/stage-3-report.md` §6. Debug-сборка приложения использует
-`$TMPDIR/splitroute-helper.sock`; для установленного LaunchDaemon нужен
-`SPLITROUTE_HELPER_SOCKET=/var/run/splitroute/helper.sock`.
+Практическое следствие: S3-T2 закрыт по коду, но ручная проверка LaunchDaemon
+**blocked** без сертификата Apple Development/Developer ID. Установщик теперь
+проверяет подпись до копирования и не оставляет полусобранный сервис; чек-лист
+и ожидаемые права — `docs/stage-3-report.md` §6. Debug-сборка приложения
+использует `$TMPDIR/splitroute-helper.sock`; для установленного LaunchDaemon
+нужен `SPLITROUTE_HELPER_SOCKET=/var/run/splitroute/helper.sock`.

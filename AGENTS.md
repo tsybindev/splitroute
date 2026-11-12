@@ -174,7 +174,8 @@ sudo python3 spike/helper/helper.py \
 
 ### 4.5. Подпись и helper в dev
 
-- Локальная сборка: ad-hoc подпись `codesign --force --deep --sign - <app>`; для Tauri это делается в конфиге бандла.
+- Локальная сборка приложения: ad-hoc подпись `codesign --force --deep --sign - <app>`; для Tauri это делается в конфиге бандла.
+- **Helper как LaunchDaemon требует настоящую подпись.** На macOS 15.8.2 AMFI отвергает ad-hoc/linker-подпись (`has no CMS blob`) и убивает процесс. Нужен сертификат Apple Development/Developer ID; установщик проверяет подпись до копирования и ad-hoc не принимает.
 - Dev-режим helper'а: отдельный процесс под `sudo`, сокет в `/tmp/splitroute-helper.sock`, без установки LaunchDaemon.
 - Production-режим: LaunchDaemon в `/Library/LaunchDaemons`, сокет в `/var/run/splitroute/`, права `0600` для пользователя-владельца. Установка/удаление — только через UI и с явным подтверждением.
 - Если helper не устанавливается: проверить подпись (`codesign -dv`), путь plist, `launchctl print system/<label>`, логи `log show --predicate 'process == "splitroute-helper"' --last 5m`.
@@ -447,7 +448,7 @@ cargo build -p splitroute-helper
 ## 15. Известные платформенные грабли
 
 - **macOS 27+**: process-правила могут не работать у не-Apple-подписанных бинарей (sysctl `pcblist` → 48 байт). См. PRD R1. На macOS 15.8 работает; проверять на актуальных версиях перед релизом.
-- **macOS**: helper как LaunchDaemon требует корректной подписи; ad-hoc подпись годится для dev, не для распространения. NetworkExtension требует entitlement и Apple Developer Program.
+- **macOS**: helper как LaunchDaemon требует настоящей подписи (Apple Development/Developer ID); ad-hoc/linker-подпись AMFI убивает (`has no CMS blob`) — проверено на macOS 15.8.2 (2026-11-12). Для обычного приложения ad-hoc годится. NetworkExtension требует entitlement и Apple Developer Program.
 - **macOS 15 + sing-box 1.14**: DNS-правила по процессу для TUN не матчатся — `dns/tls[remote]` остаётся unreferenced, DNS выбранного приложения уходит в локальный resolver. `hijack-dns` и `sniff` это не исправляют; remote DoT через прокси сам по себе работает. Решение — PRD §6.4: два режима, `proxy` (весь DNS через прокси, по умолчанию) и `system` (DNS ОС, с предупреждением); `process` выводится из UI. Подробности — `docs/research.md` §9 и `docs/stage-2-report.md`.
 - **Windows**: TUN требует прав администратора, `wintun.dll` должен быть рядом с ядром; Defender/Firewall может блокировать первый запуск; UDP/QUIC матчинг нестабилен.
 - **Linux**: `systemd-resolved` конфликтует с DNS в туннеле; трей требует `libappindicator` (на Wayland возможны проблемы); AppImage требует FUSE 2 или распаковки; Flatpak/Snap-приложения имеют sandbox-пути.

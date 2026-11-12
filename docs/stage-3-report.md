@@ -1,15 +1,17 @@
 # Отчёт этапа 3 — helper'ы и упаковка
 
 Дата: 2026-11-12. Подцель G3.1: S3-T1 (Rust-helper) и S3-T2 (macOS
-LaunchDaemon). Коммит кода: `d7af3ba`.
+LaunchDaemon). Коммиты кода: `d7af3ba`, `d9da641`.
 
 Короткий вывод: **Rust-helper реализован и проверен** — протокол, права
 сокета, проверка uid, `sing-box check`, запуск/остановка реального sing-box
-1.14.4 без root и без TUN. **macOS-установщик реализован** (plist, бинари,
-`launchctl`, ad-hoc подпись, системный запрос прав), но **реальная установка
-LaunchDaemon в этой сессии не выполнялась**: `sudo` требует пароль, а ставить
-системный сервис без явного подтверждения пользователя нельзя. Чек-лист для
-ручной проверки — §6.
+1.14.4 без root и без TUN. **macOS-установщик реализован и проверен до границы
+подписи.** Реальная установка LaunchDaemon выполнена: файлы и plist встали
+корректно, но macOS 15.8.2 (AMFI) убила helper с ad-hoc/linker-подписью
+(`has no CMS blob`), сервис не загрузился, сокета не было. После проверки всё
+удалено. На машине нет codesigning identity, поэтому S3-T2 **blocked по
+подписи**, а не по коду; установщик теперь проверяет подпись до копирования.
+Чек-лист — §6.
 
 ## 1. Окружение
 
@@ -19,7 +21,7 @@ LaunchDaemon в этой сессии не выполнялась**: `sudo` тр
 | Ядро | sing-box 1.14.4 (pinned, `scripts/core-version.txt`) |
 | Rust | 1.99.1, stable |
 | Node / pnpm | Node 22, pnpm 11.24.0 |
-| Права | обычный пользователь (uid 501); root не использовался |
+| Права | обычный пользователь (uid 501); root — только через системный запрос прав установщика |
 | Helper | `target/debug/splitroute-helper` (Rust) |
 | UI-автоматизация | недоступна |
 
@@ -72,9 +74,10 @@ LaunchDaemon в этой сессии не выполнялась**: `sudo` тр
 
 - Label `com.splitroute.helper`, `RunAtLoad` + `KeepAlive`, аргументы
   `--socket`, `--runtime-dir`, `--sing-box`, `--allow-uid <uid установщика>`.
-- Бинарь helper'а: уже подписанный не трогается; неподписанный в debug получает
-  ad-hoc подпись (`codesign --force --sign -`). В release неподписанный helper —
-  ошибка установки: нужна подпись Developer ID и notarization (R7).
+- Подпись: установщик проверяет helper через `codesign -dv` **до** копирования.
+  Ad-hoc/linker-подпись и отсутствие подписи отклоняются с понятной ошибкой:
+  macOS 15.8.2 (AMFI) не запускает такой LaunchDaemon. Нужен сертификат
+  Apple Development или Developer ID. Ad-hoc подпись из установщика удалена.
 - Привилегированные шаги — `osascript` с `administrator privileges`: пароль
   запрашивает система, установщик его не читает и не хранит. Это и есть
   подтверждение действия пользователя.
@@ -112,7 +115,7 @@ pnpm typecheck && pnpm lint && pnpm test && pnpm build
 
 | Набор | Тестов | Результат |
 |---|---|---|
-| `splitroute` lib (вкл. 9 тестов macOS-установщика) | 75 | ok |
+| `splitroute` lib (вкл. 12 тестов macOS-установщика) | 78 | ok |
 | `splitroute` golden-конфиги | 4 | ok |
 | `splitroute` фикстура подписки | 1 | ok |
 | `splitroute` client ↔ helper round-trip | 1 | ok |
@@ -120,7 +123,7 @@ pnpm typecheck && pnpm lint && pnpm test && pnpm build
 | `splitroute-helper` args | 4 | ok |
 | `splitroute-helper` интеграционные | 11 | ok |
 | `splitroute-protocol` | 16 | ok |
-| **Rust всего** | **131** | **ok** |
+| **Rust всего** | **134** | **ok** |
 | frontend (Vitest) | 24 | ok |
 
 Проверки helper'а покрывают: сериализацию/десериализацию, неизвестную
@@ -142,18 +145,41 @@ pnpm typecheck && pnpm lint && pnpm test && pnpm build
 | `status` до/после старта, `stop` | ✅ | реальные ответы протокола |
 | `stop` завершает ядро и удаляет конфиг | ✅ | `kill(pid, 0)` → ESRCH, файла нет |
 | Реальный `UnixHelperClient` ↔ helper | ✅ | `helper_roundtrip.rs` |
-| Установка LaunchDaemon на macOS | ❌ **не выполнена** | `sudo -n` требует пароль; системный сервис не ставился без явного подтверждения |
-| `launchctl print system/com.splitroute.helper` | ❌ не проверено | нет установленного сервиса |
-| Права `/var/run/splitroute` и сокета в prod | ❌ не проверено | нужен LaunchDaemon |
-| Удаление сервиса и очистка | ❌ не проверено | нужен LaunchDaemon |
-| Кнопка установки в запущенном UI | ❌ не проверено | нет UI-автоматизации |
-| Принятие ad-hoc подписи launchd | ❌ не проверено | нужен реальный запуск сервиса |
+| Установка LaunchDaemon (файлы и plist) | ✅ | файлы скопированы `root:wheel`, plist валиден |
+| Запуск LaunchDaemon | ❌ **blocked** | ядро: `AMFI: ... has no CMS blob?` / `Unrecoverable CT signature issue`; launchd удалил сервис |
+| `launchctl print system/com.splitroute.helper` после установки | ❌ | `Could not find service` |
+| Сокет и права `/var/run/splitroute` в prod | ❌ | helper убит до `bind`; каталог `0711 root:daemon` создан |
+| Удаление установленных файлов | ✅ | plist, helper, sing-box, runtime удалены; процессов нет |
+| Кнопка установки в запущенном UI | ✅ частично | нажатие, пароль и ошибка отработали; успешный запуск blocked подписью |
+| Принятие ad-hoc подписи launchd | ❌ **опровергнуто** | AMFI: `has no CMS blob` |
 | Linux / Windows | ⏭ вне G3.1 | S3-T3, S3-T4 |
 
-После ручных проверок не осталось процессов `splitroute-helper`/`sing-box`,
-сокетов и временных каталогов; порты 1420/10808 свободны.
+Фактический лог попытки:
+
+```text
+AMFI: '/Library/PrivilegedHelperTools/com.splitroute.helper' has no CMS blob?
+AMFI: '/Library/PrivilegedHelperTools/com.splitroute.helper': Unrecoverable CT signature issue, bailing out.
+```
+
+`security find-identity -v -p codesigning` → `0 valid identities found`.
+После неудачной попытки сервис, файлы, `/var/run/splitroute` и процессы
+удалены; порты 1420/10808 свободны.
 
 ## 6. Ручная проверка S3-T2 (выполнить с паролем администратора)
+
+**Предусловие:** helper должен быть подписан сертификатом Apple Development
+или Developer ID. Ad-hoc/linker-подпись не подходит — AMFI убьёт процесс.
+
+```bash
+codesign -dv --verbose=4 target/debug/splitroute-helper 2>&1 | grep -E 'Signature|flags'
+```
+
+Если видно `Signature=adhoc`, установщик отклонит установку до копирования
+файлов. Подписать helper можно так (после получения сертификата):
+
+```bash
+codesign --force --sign "Apple Development: <имя>" target/debug/splitroute-helper
+```
 
 Собрать helper и запустить приложение:
 
@@ -189,7 +215,8 @@ pgrep -fl 'splitroute-helper|sing-box run' || echo "процессов нет"
 ```
 
 Если установка не удалась: `log show --predicate 'process ==
-"splitroute-helper"' --last 5m`, `launchctl print system/com.splitroute.helper`,
+"splitroute-helper"' --last 5m` (ищите `AMFI` и `no CMS blob`),
+`launchctl print system/com.splitroute.helper`,
 `codesign -dv /Library/PrivilegedHelperTools/com.splitroute.helper`.
 
 ## 7. Известные ограничения и риски
@@ -199,9 +226,10 @@ pgrep -fl 'splitroute-helper|sing-box run' || echo "процессов нет"
    dev/MVP это приемлемо, но для релиза нужен SMJobBless/Authorization
    Services или подписанный установщик: иначе остаётся TOCTOU-риск для
    скомпрометированной сессии того же пользователя.
-2. **Ad-hoc подпись.** Применяется только к неподписанному helper'у в debug;
-   уже подписанный бинарь не переподписывается. Годится для dev, не для
-   распространения. Релиз — Developer ID + notarization (R7).
+2. **Подпись helper'а (R7).** Ad-hoc/linker-подпись не годится для LaunchDaemon
+   на macOS 15.8.2: AMFI убивает процесс (`has no CMS blob`). Нужен сертификат
+   Apple Development/Developer ID; без него установка блокируется. Установщик
+   проверяет подпись до копирования. Релиз — Developer ID + notarization.
 3. **Один пользователь.** `--allow-uid` фиксируется при установке; сервис
    обслуживает только установившего пользователя. Многопользовательский
    режим не поддерживается.
@@ -219,8 +247,11 @@ pgrep -fl 'splitroute-helper|sing-box run' || echo "процессов нет"
 
 ## 8. Следующие шаги
 
-- Закрыть ручную проверку S3-T2 по §6 и обновить статус задачи.
+- **S3-T2 blocked по подписи:** для закрытия нужен сертификат Apple
+  Development/Developer ID. После подписи helper'а — пройти §6. Код и тесты
+  готовы; установщик больше не оставляет полусобранный сервис.
 - G3.2: S3-T3 (Linux systemd + polkit, `.deb`/`.rpm`/AppImage) и S3-T4
-  (Windows-служба, named pipe ACL, `wintun.dll`).
+  (Windows-служба, named pipe ACL, `wintun.dll`). Там нет требования AMFI;
+  подпись нужна только для распространения (SmartScreen/Authenticode).
 - G3.3: S3-T5 (полировка установки в UI), S3-T6 (notices/GPL).
 - Реальный smoke на чистых системах — S3-T7.

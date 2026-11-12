@@ -64,12 +64,12 @@
 
 ---
 
-## Этап 3 — helper'ы и упаковка (in-progress: S3-T1 done, S3-T2 код готов — ручная проверка LaunchDaemon pending)
+## Этап 3 — helper'ы и упаковка (in-progress: S3-T1 done, S3-T2 blocked — нужна подпись LaunchDaemon)
 
 | ID | Задача | Владелец | Критерий приёмки |
 |---|---|---|---|
 | S3-T1 | Rust-helper: сокет/пайп, команды, проверка uid/SID, `sing-box check` | platform-native | done — `crates/helper`: Unix-сокет `0600`, uid пира (`getpeereid`/`SO_PEERCRED`), `status/start/stop`, `install`/`uninstall` по сокету запрещены, лимит 1 МиБ и версия протокола, конфиг `0600` + `sing-box check`, остановка ядра по SIGTERM, второй экземпляр не трогает конфиг; 19 lib + 4 args + 11 интеграционных тестов, реальный sing-box 1.14.4 без root, round-trip клиента; коммит `d7af3ba` |
-| S3-T2 | macOS: LaunchDaemon, установка/удаление, ad-hoc dev-подпись | platform-native | **in-progress** — `MacosInstaller`: plist `com.splitroute.helper` в `/Library/LaunchDaemons`, helper в `/Library/PrivilegedHelperTools`, sing-box в `/Library/Application Support/SplitRoute`, `/var/run/splitroute` `0711`, сокет `0600`, ad-hoc подпись, установка/удаление через `osascript` с системным запросом прав; 9 тестов (plist, скрипты `sh -n`, AppleScript `osacompile`). **Реальная установка LaunchDaemon и ручная проверка не выполнены**: нужен пароль администратора, сервис не ставился без явного подтверждения. Чек-лист — `docs/stage-3-report.md` §6; коммит `d7af3ba` |
+| S3-T2 | macOS: LaunchDaemon, установка/удаление, подпись helper'а | platform-native | **blocked** — код и 12 тестов готовы: `MacosInstaller`, plist `com.splitroute.helper`, пути `/Library/{LaunchDaemons,PrivilegedHelperTools}`, `/var/run/splitroute` `0711`, сокет `0600`, установка/удаление через `osascript` с системным запросом прав. Реальная попытка установки: файлы и plist встали, но macOS 15.8.2 AMFI убила ad-hoc/linker-подпись helper'а (`has no CMS blob`), сервис не загрузился, сокета нет; после проверки всё удалено. `security find-identity -v -p codesigning` → 0; нужен Apple Development/Developer ID. Установщик проверяет подпись до копирования (`d9da641`). Чек-лист — `docs/stage-3-report.md` §6 |
 | S3-T3 | Linux: systemd + polkit, `.deb`/`.rpm`/AppImage | platform-native | юнит `splitroute-helper.service`, сокет `/run/splitroute`, установка через `pkexec`; сборки ставятся на CachyOS/Ubuntu |
 | S3-T4 | Windows: служба под SYSTEM, named pipe ACL, `wintun.dll` | platform-native | служба ставится/удаляется, пайп доступен только SID пользователя, TUN работает; smoke на VM |
 | S3-T5 | Проводка установки helper'а в UI | react-ui | `helper_install`/`helper_uninstall` вызывают реальный установщик, статус и ошибки отображаются, пароль не хранится |

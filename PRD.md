@@ -329,7 +329,7 @@
 | R4 | UDP/QUIC: process-правила для UDP нестабильны ([mihomo #1800](https://github.com/MetaCubeX/mihomo/issues/1800)) | Среднее: часть трафика (видео, QUIC) ведёт себя непредсказуемо | Средняя | Тест QUIC в spike; по умолчанию QUIC выбранных приложений блокируется или идёт direct; переключатель после проверки |
 | R5 | Конфликт с другим VPN/Docker/TUN | Высокое: нет сети у пользователя | Средняя | Детект TUN/маршрутов до старта, понятная ошибка, инструкция |
 | R6 | DNS: `systemd-resolved`, Private Relay, разделение DNS по процессу может не работать | Среднее: утечки/медленный резолв | Средняя | Spike DNS-политики; fallback на системный DNS с предупреждением; тесты на всех ОС |
-| R7 | Apple: распространение без notarization/Developer ID, helper через LaunchDaemon | Высокое для релиза | Высокая | Dev — ad-hoc подпись; релиз — Developer ID + notarization; App Store не цель MVP |
+| R7 | Apple: распространение без notarization/Developer ID, helper через LaunchDaemon | Высокое для релиза | Высокая | Для **приложения** dev-сборка — ad-hoc подпись; для **LaunchDaemon helper'а** ad-hoc не работает (AMFI: no CMS blob) — нужен Apple Development/Developer ID даже в dev. Релиз — Developer ID + notarization; App Store не цель MVP |
 | R8 | Windows: wintun, права администратора, firewall/antivirus | Среднее | Средняя | Helper-сервис под SYSTEM, подпись установщика, документация по исключениям |
 | R9 | Linux: различия дистрибутивов, Wayland-трей, AppImage/FUSE | Среднее | Средняя | Пакеты `.deb`/`.rpm` + AppImage; libappindicator; проверка на CachyOS/Ubuntu/Fedora |
 | R10 | Flatpak/Snap-приложения не матчатся по ожидаемому пути | Низкое-среднее | Средняя | Помечать правила как «может не сработать», документировать, добавить каталог после MVP |
@@ -353,6 +353,10 @@
   `proxy` (по умолчанию, DNS через прокси) и `system` (DNS ОС с предупреждением).
   Утечки через `systemd-resolved` и Private Relay по-прежнему не проверены.
 - **R5**, **R13** — не проверялись; конкретные механизмы появятся на этапе 2.
+- **R7** — на этапе 3 подтверждено на macOS 15.8.2: ad-hoc/linker-подпись
+  helper'а AMFI убивает (`has no CMS blob`), LaunchDaemon не запускается.
+  Для dev и релиза нужен Apple Development/Developer ID; без сертификата
+  установка helper'а блокируется (`docs/stage-3-report.md` §5).
 - TUN целиком (маршрутизация, внешний IP, очистка) на этапе 1 не проверен: нет root
   и реальной подписки в окружении спайка.
 

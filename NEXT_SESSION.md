@@ -9,12 +9,16 @@
 - **S3-T1 (Rust-helper) — done.** Коммит `d7af3ba`. Бинарь
   `splitroute-helper`: Unix-сокет `0600`, uid пира, `status/start/stop`,
   `sing-box check`, остановка ядра по SIGTERM, защита от второго экземпляра.
-- **S3-T2 (macOS LaunchDaemon) — код готов, ручная проверка pending.**
+- **S3-T2 (macOS LaunchDaemon) — blocked по подписи, код готов.**
   `MacosInstaller` ставит helper в `/Library/PrivilegedHelperTools`, sing-box в
   `/Library/Application Support/SplitRoute`, plist в `/Library/LaunchDaemons`,
-  сокет `/var/run/splitroute/helper.sock`. Реальная установка сервиса в этой
-  сессии **не выполнялась**: `sudo -n` требует пароль, системный сервис не
-  ставился без явного подтверждения. Чек-лист — `docs/stage-3-report.md` §6.
+  сокет `/var/run/splitroute/helper.sock`. Реальная установка выполнялась:
+  файлы и plist встали, но macOS 15.8.2 (AMFI) убила ad-hoc/linker-подписанный
+  helper (`has no CMS blob`), сервис не загрузился, сокета не было. После
+  проверки всё удалено. `security find-identity -v -p codesigning` → 0; нужен
+  Apple Development/Developer ID. Установщик теперь проверяет подпись до
+  копирования (`d9da641`); ad-hoc подпись из него удалена. Чек-лист —
+  `docs/stage-3-report.md` §6.
 - Ветка: `main`. Отчёт: [docs/stage-3-report.md](./docs/stage-3-report.md).
   Факты: [docs/research.md §10](./docs/research.md).
 - Системные сервисы, сокеты и процессы после проверок не остались.
@@ -30,10 +34,12 @@
 - **Права.** Сокет `0600`, под root владелец — `--allow-uid`; runtime-каталог
   под root `0711` (обход без листинга), конфиг/лог `0600` root. Проверка uid
   пира: `getpeereid` (macOS), `SO_PEERCRED` (Linux).
-- **macOS-установщик.** `MacosInstaller`: копирование бинарей, ad-hoc подпись,
-  plist, `launchctl bootout/bootstrap/enable/kickstart`, удаление сервиса и
+- **macOS-установщик.** `MacosInstaller`: проверка подписи helper'а до
+  копирования, копирование бинарей, plist,
+  `launchctl bootout/bootstrap/enable/kickstart`, удаление сервиса и
   runtime-каталога. Привилегированные шаги — `osascript` с системным запросом
-  прав; пароль не хранится.
+  прав; пароль не хранится. Ad-hoc/linker-подпись отклоняется: macOS не
+  запускает такой LaunchDaemon.
 - **UI.** Кнопки «Установить/Удалить» в Настройках уже вызывали
   `helper_install`/`helper_uninstall`; теперь за ними реальный установщик.
   Полировка статусов/ошибок — S3-T5, экраны не менялись.
@@ -44,8 +50,9 @@
 
 - `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -D warnings`
   — чисто.
-- `cargo test --workspace` — 131 тест: `splitroute` 75 + golden 4 + фикстура 1 +
-  round-trip 1, helper 19 + args 4 + интеграционные 11, protocol 16.
+- `cargo test --workspace` — 134 теста: `splitroute` 78 (вкл. 12 тестов
+  установщика) + golden 4 + фикстура 1 + round-trip 1, helper 19 + args 4 +
+  интеграционные 11, protocol 16.
 - `pnpm typecheck && pnpm lint && pnpm test && pnpm build` — 24 теста, чисто.
 - Скрипты установщика проверены `sh -n`, AppleScript — `osacompile`
   (без выполнения привилегированных команд).
@@ -55,15 +62,21 @@
 - **Реальный `UnixHelperClient` ↔ helper:** `status/start/stop` по сокету.
 - Второй экземпляр helper'а завершается с ошибкой и не удаляет конфиг
   работающего.
+- **Попытка установки LaunchDaemon:** кнопка, пароль и ошибка отработали;
+  plist/файлы скопированы, но AMFI убила ad-hoc helper; сервис не загрузился,
+  сокета не было. Uninstall удалил всё, процессов не осталось.
 
 ### Не проверено (причина)
 
-- **Установка LaunchDaemon, `launchctl print system/com.splitroute.helper`,
-  права `/var/run/splitroute`, удаление сервиса** — нужен пароль администратора;
-  сервис не ставился без явного подтверждения.
-- **Кнопка установки в запущенном приложении** — нет UI-автоматизации.
-- **Принятие ad-hoc подписи launchd** — нужен реальный запуск сервиса.
-- **Linux и Windows** — S3-T3, S3-T4 (следующая подцель).
+- **Успешный запуск LaunchDaemon, `launchctl print`, права сокета в prod,
+  старт/стоп через установленный сервис** — blocked: ad-hoc/linker-подпись
+  helper'а убивается AMFI (`has no CMS blob`), на машине 0 codesigning
+  identities. Нужен Apple Development/Developer ID.
+- **Кнопка установки в запущенном приложении: успешный сценарий** — блокирован
+  подписью; нажатие, пароль и ошибка проверены.
+- **Принятие ad-hoc подписи launchd** — опровергнуто.
+- **Linux и Windows** — S3-T3, S3-T4 (следующая подцель); там нет требования
+  AMFI к user-mode службе/демону.
 - **Сон/пробуждение, смена сети, Chrome/Telegram** — ручная проверка, этап 2.
 
 ### Важные факты окружения
@@ -72,6 +85,11 @@
 - macOS 15.8.2 arm64, Rust 1.99.1, sing-box 1.14.4 (pinned).
 - `sudo -n true` **не проходит**: нужен пароль. Системные сервисы не ставить
   без явного действия пользователя.
+- **macOS 15.8.2 + AMFI:** ad-hoc/linker-подпись helper'а не запускается как
+  LaunchDaemon (`has no CMS blob`). Нужен сертификат Apple Development или
+  Developer ID. `security find-identity -v -p codesigning` сейчас → 0.
+- Установщик проверяет подпись helper'а до копирования и отклоняет ad-hoc;
+  ad-hoc подпись из него удалена (`d9da641`).
 - Helper собирается отдельно: `cargo build -p splitroute-helper` →
   `target/debug/splitroute-helper`.
 - Debug-сборка приложения ищет сокет в `$TMPDIR/splitroute-helper.sock`.
@@ -101,12 +119,23 @@ pgrep -fl 'splitroute-helper|sing-box run' || echo "процессов нет"
 
 ---
 
-## Ручная проверка S3-T2 (перед следующей подцелью, если есть возможность)
+## Ручная проверка S3-T2 (только при наличии сертификата)
+
+**Сейчас blocked:** ad-hoc/linker-подпись helper'а убивается AMFI
+(`has no CMS blob`), `security find-identity -v -p codesigning` → 0. Без
+сертификата Apple Development/Developer ID успешный сценарий не пройти.
+Если сертификат появится — сначала подписать helper:
+
+```bash
+codesign --force --sign "Apple Development: <имя>" target/debug/splitroute-helper
+codesign -dv --verbose=4 target/debug/splitroute-helper 2>&1 | grep -E 'Signature|flags'
+```
+
+В выводе не должно быть `Signature=adhoc`. Дальше:
 
 ```bash
 cd app
 export PATH="$HOME/.cargo/bin:$PATH"
-cargo build -p splitroute-helper
 SPLITROUTE_HELPER_SOCKET=/var/run/splitroute/helper.sock pnpm tauri dev
 ```
 
@@ -135,13 +164,17 @@ SPLITROUTE_HELPER_SOCKET=/var/run/splitroute/helper.sock pnpm tauri dev
 Результат отразить в `TASKS.md` (S3-T2 → done) и в
 `docs/stage-3-report.md` §5–§6.
 
+Фактический результат 2026-11-12 (без сертификата): установка скопировала
+plist и файлы, но AMFI убила ad-hoc helper; `launchctl print` → «Could not
+find service», сокета не было; Uninstall удалил всё, процессов не осталось.
+
 ---
 
 ## Промпт следующей подцели: G3.2 (S3-T3, S3-T4)
 
 Скопируйте текст ниже целиком в новую сессию. Запускайте из каталога `app/`.
-Сначала, если возможно, закройте ручную проверку S3-T2 выше — она не блокирует
-G3.2, но статус в `TASKS.md` должен быть честным.
+S3-T2 **blocked по подписи** (ad-hoc убивается AMFI, сертификата нет); без
+нового сертификата не тратьте на него время. Статус в `TASKS.md` уже честный.
 
 ```text
 Ты — оркестратор разработки SplitRoute (per-app VPN на Tauri 2 + React 19 + TS + Rust + sing-box).
@@ -160,7 +193,7 @@ G3.2, но статус в `TASKS.md` должен быть честным.
 - NEXT_SESSION.md (этот файл), docs/stage-3-report.md, docs/research.md §10.
 - Текущее состояние: crates/helper (Unix), crates/protocol (IPC),
   src-tauri/src/privileged/{client,installer,macos,mock,mod}.rs.
-- S3-T1 done; S3-T2 код готов, ручная проверка LaunchDaemon может быть pending.
+- S3-T1 done; S3-T2 blocked по подписи (AMFI/ad-hoc, сертификата нет).
 
 КОНТРАКТ, КОТОРЫЙ НЕЛЬЗЯ ЛОМАТЬ
 - crates/protocol — единственный источник типов IPC: Request/Response,
@@ -232,10 +265,20 @@ G3.2, но статус в `TASKS.md` должен быть честным.
 - Открытые пункты этапа 3: S3-T3 (Linux), S3-T4 (Windows), S3-T5 (полировка
   установки в UI), S3-T6 (notices/GPL), S3-T7 (smoke на чистых системах),
   S3-T8 (отчёт и handoff этапа 4).
-- **S3-T2 не закрыт**: реальная установка LaunchDaemon и `launchctl print` не
-  проверены. Это нужно сделать перед S3-T7.
+- **S3-T2 blocked по подписи.** Реальная установка проверена и выявила:
+  ad-hoc/linker-подпись не запускается как LaunchDaemon на macOS 15.8.2
+  (AMFI: `has no CMS blob`). На машине 0 codesigning identities. Установщик
+  теперь проверяет подпись до копирования (`d9da641`) и не оставляет
+  полусобранный сервис. Для закрытия нужен Apple Development/Developer ID.
+- **S3-T5:** `errorText` в UI подменяет сообщение установщика общей строкой
+  `errors.INSTALLER`, поэтому пользователь не видит причину (например, про
+  подпись). Нужно показывать `error.message` или отдельный код.
+- **Windows/Linux:** требования AMFI нет; user-mode служба/демон запускается
+  локально без сертификата. Подпись нужна для распространения: Authenticode /
+  SmartScreen (Windows) и подпись пакетов (Linux); `wintun.dll` брать официальный
+  подписанный.
 - Известные ограничения G3.1: osascript-скрипт во временном каталоге
   (TOCTOU — для релиза нужен SMJobBless/Authorization Services или подписанный
-  установщик); ad-hoc подпись только для dev (R7); `--allow-uid` фиксирует
-  одного пользователя; helper не включён в Tauri-бандл (упаковка — S3-T6).
+  установщик); `--allow-uid` фиксирует одного пользователя; helper не включён в
+  Tauri-бандл (упаковка — S3-T6).
 - Реальная подписка и root для TUN не требуются в G3.2; TUN уже покрыт S2-T8.
