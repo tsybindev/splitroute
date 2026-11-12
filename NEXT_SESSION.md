@@ -5,12 +5,23 @@
 ## Состояние
 
 - Этап 0 завершён: PRD, AGENTS.md, TASKS.md, research, лицензия GPL-3.0, git-репозиторий в `app/`.
+- Репозиторий: https://github.com/tsybindev/splitroute (private), remote `origin`.
 - Ветка: `main`. История — `git log --oneline` в `app/`.
 - Код ещё не создан: на этапе 0 только документация и проектные субагенты.
 - Решения: название SplitRoute, лицензия GPL-3.0, HWID — случайные 16 hex на установку, kill switch — не в MVP, allowlist по умолчанию, sing-box как ядро, Tauri 2 + React + Rust.
 - Главный технический риск: process-правила на macOS 26/27 (mihomo #3355). Этап 1 должен дать однозначный ответ.
 - Dev-машина: macOS 15.8.2 arm64, Xcode CLT, Node 22, pnpm; Rust нужно установить по AGENTS.md §4.
 - Вторая машина: CachyOS (проверить окружение по AGENTS.md §5).
+
+---
+
+## С чего начать в новой сессии
+
+1. `cd app && git pull --ff-only`. На другой машине: `gh repo clone tsybindev/splitroute` (репозиторий приватный, нужен `gh auth login`).
+2. `./scripts/sync-agents.sh` — подтянуть роли субагентов в каталог харнесса.
+3. Если Rust ещё не установлен — AGENTS.md §4 (`rustup`, targets); проверить `node -v` (22+) и `pnpm -v`.
+4. Прочитать `AGENTS.md` §17–18, `TASKS.md` и `PRD.md` (особенно §10, риски R1–R6). Реальную подписку в репозиторий не добавлять.
+5. Запустить первую цель из раздела «Рекомендуемые цели»: `S1-T1…S1-T3`. После коммита и обновления `NEXT_SESSION.md` — `/goal clear` и следующая цель.
 
 ---
 
