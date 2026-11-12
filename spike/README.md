@@ -17,7 +17,17 @@ spike/
 └── configs/                   # сгенерированные конфиги sing-box, проверены `sing-box check`
     ├── profile-1-testovaya-lokatsiya-a.json
     └── profile-2-testovaya-lokatsiya-b-fragment.json
+
+spike/macos/                   # S1-T4…T5: process-правила без root, отчёт и стенд
+├── README.md                  # методика, результаты, что осталось непроверенным
+├── process_rules_test.py      # стенд: path_regex, process_name, Chrome
+└── socksprobe.go              # SOCKS5-клиент, копируется под разными именами/путями
 ```
+
+Успешное выполнение `process_rules_test.py` на macOS 15.8.2 подтверждает
+`process_name` и `process_path_regex` для TCP, включая helper-процессы Chrome.
+TUN, macOS 26/27, Linux и Windows этим стендом **не** покрываются — см.
+`spike/macos/README.md`.
 
 ## Задачи, к которым относится каталог
 
