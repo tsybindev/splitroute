@@ -173,7 +173,8 @@ macOS-ветка сохранила прежнее поведение; суще�
 
 - `tauri.linux.conf.json`: `deb`/`rpm`/`appimage`, зависимости
   `webkit2gtk-4.1`/`gtk3`/`polkit`, `externalBin` = sing-box + helper.
-- `tauri.windows.conf.json`: NSIS `perMachine`, `externalBin` = sing-box + helper.
+- `tauri.windows.conf.json`: NSIS `perMachine`, `externalBin` = sing-box + helper,
+  `resources` = `{"binaries/wintun.dll": "wintun.dll"}`.
 - `externalBin` намеренно **отсутствует** в базовом `tauri.conf.json`:
   `tauri-build` ищет sidecar уже на `cargo check`, а бинари в `.gitignore` —
   чистый клон не собрался бы. Инвариант закреплён тестами
@@ -181,6 +182,25 @@ macOS-ветка сохранила прежнее поведение; суще�
 - `scripts/build-helper-sidecar.sh` собирает helper и кладёт его под именем
   `splitroute-helper-<triple>` (Tauri ждёт суффикс тройки);
   `scripts/package.sh` выбирает цели по ОС и проверяет наличие sing-box.
+- `scripts/fetch-wintun.sh` качает закреплённую wintun 0.14.1 с проверкой
+  SHA256; `scripts/portable.sh` собирает архив «распаковал и запустил».
+
+### 2.7. Дефекты, найденные при подготовке ручной проверки (S3-T4)
+
+Обе ошибки видны только на Windows, но проявлялись бы как «не работает на
+чистой машине», поэтому исправлены до передачи на проверку (`3bf04e9`).
+
+1. **`wintun.dll` не попадал в пакет.** Был только `externalBin`, а установщик
+   ищет библиотеку рядом с исполняемым файлом — сборка NSIS падала бы в
+   `MissingBinary`. На Windows `$RESOURCE` — это каталог экзешника (проверено по
+   документации `PathResolver::resource_dir`), поэтому ресурс раскладывается в
+   корень, а не в подкаталог. Закреплено тестом
+   `windows_config_bundles_wintun_next_to_core`.
+2. **Helper умел работать только под диспетчером служб.** Запуск из консоли
+   возвращал 1063 (`ERROR_FAILED_SERVICE_CONTROLLER_CONNECT`), хотя AGENTS.md §7
+   обещал dev-режим без установки службы. Добавлена подкоманда `console`:
+   запуск от администратора без регистрации службы. Разбор подкоманд вынесен в
+   `args::split_subcommand`, чтобы тесты выполнялись на macOS (5 тестов).
 
 ## 3. Протокол и совместимость
 
@@ -204,7 +224,7 @@ cargo test --workspace
 pnpm typecheck && pnpm lint && pnpm test && pnpm build
 ```
 
-Результат на 2026-11-12 (после G3.2):
+Результат на 2026-11-12 (после G3.2 и исправлений S3-T4):
 
 | Набор | Тестов | Результат |
 |---|---|---|
@@ -212,12 +232,11 @@ pnpm typecheck && pnpm lint && pnpm test && pnpm build
 | `splitroute` golden-конфиги | 4 | ok |
 | `splitroute` фикстура подписки | 1 | ok |
 | `splitroute` client ↔ helper round-trip | 1 | ok |
-| `splitroute` конфигурация упаковки | 6 | ok |
-| `splitroute-helper` lib | 26 | ok |
-| `splitroute-helper` args | в составе lib | ok |
+| `splitroute` конфигурация упаковки | 7 | ok |
+| `splitroute-helper` lib (вкл. 5 тестов подкоманд) | 31 | ok |
 | `splitroute-helper` интеграционные | 11 | ok |
 | `splitroute-protocol` | 16 | ok |
-| **Rust всего** | **173** | **ok** |
+| **Rust всего** | **179** | **ok** |
 | frontend (Vitest) | 24 | ok |
 
 Проверки helper'а покрывают: сериализацию/десериализацию, неизвестную
@@ -241,6 +260,9 @@ pnpm typecheck && pnpm lint && pnpm test && pnpm build
 - Пакет: реальная сборка `pnpm tauri build` на macOS → `SplitRoute.app`
   (96.7 МиБ) и `.dmg` (32.8 МиБ); `sing-box` и `splitroute-helper` лежат в
   `Contents/MacOS/` рядом с основным бинарём.
+- Portable-архив: `./scripts/portable.sh` → `SplitRoute-portable-macos-arm64.tar.gz`
+  (33 МиБ). Распакован и проверен: `sing-box version` → 1.14.4,
+  `splitroute-helper --help` показывает подкоманды `service`/`console`.
 
 ## 5. Ручные проверки
 
@@ -295,7 +317,8 @@ AMFI: '/Library/PrivilegedHelperTools/com.splitroute.helper': Unrecoverable CT s
 | `sc.exe create/start`, служба под SYSTEM | — | ❌ **blocked** | нет Windows VM |
 | Права `/run/splitroute` и сокета в prod | ❌ **blocked** | — | нет Linux-машины |
 | Доступ к pipe с чужого SID | — | ❌ **blocked** | нужно две учётные записи на Windows |
-| TUN через службу, `wintun.dll` | — | ❌ **blocked** | нет Windows VM; TUN на macOS проверен в S2-T8 |
+| TUN через службу, `wintun.dll` | — | ❌ **blocked** | нет Windows VM; `wintun.dll` теперь попадает в пакет (`3bf04e9`), но фактический TUN на Windows проверен в S3-T7; на macOS TUN проверен в S2-T8 |
+| Portable-архив распаковывается и стартует | ✅ | `portable.sh` на macOS: sing-box 1.14.4, helper с `service`/`console`; Windows-архив не собирался |
 | Сборка `.deb`/`.rpm`/AppImage | ❌ **blocked** | — | нужен Linux; `linuxdeploy`/`fakeroot` не ставились |
 | Сборка NSIS | — | ❌ **blocked** | нужен Windows; кросс-сборка не поддерживается |
 | Сборка `.app` + `.dmg` со sidecar | — | — | ✅ на macOS: 96.7 МиБ и 32.8 МиБ |

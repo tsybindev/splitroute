@@ -172,6 +172,44 @@ find service», сокета не было; Uninstall удалил всё, пр�
 но установка служб, права и TUN не проверялись. Привилегированные действия —
 только по явному подтверждению пользователя.
 
+**Важно:** Windows-бинарь нельзя собрать на macOS — `ring` требует MSVC-заголовки,
+NSIS не кросс-компилируется. Сборка только на Windows.
+
+### Windows: portable-архив («распаковал и запустил»)
+
+На Windows 10/11 x64 с VS Build Tools, Rust MSVC, Node 22 + pnpm, WebView2 и
+**Git for Windows** (скрипты — POSIX sh, запускать в Git Bash):
+
+```bash
+cd app
+rustup target add x86_64-pc-windows-msvc
+./scripts/fetch-core.sh          # sing-box + sha256
+./scripts/fetch-wintun.sh        # wintun.dll + sha256
+./scripts/portable.sh            # target/portable/SplitRoute-portable-windows-x64.tar.gz
+```
+
+Распаковать архив и запустить `start.bat` — он поднимет helper в консоли через
+UAC (подкоманда `console`) и откроет приложение. Затем в UI: Настройки → Helper →
+«Установить».
+
+Проверки:
+
+```powershell
+sc.exe query splitroute-helper-service
+Get-ChildItem "$env:ProgramFiles\SplitRoute"
+Get-ChildItem "$env:ProgramData\SplitRoute"
+```
+
+Ожидается: служба `RUNNING` под SYSTEM; рядом с `sing-box.exe` лежит
+`wintun.dll`; pipe доступен только SID пользователя; TUN поднимается и выбранное
+приложение идёт через прокси.
+
+### Windows: NSIS-установщик
+
+```bash
+./scripts/package.sh     # требует wintun.dll, собирает .exe установщика
+```
+
 ### Linux
 
 ```bash
