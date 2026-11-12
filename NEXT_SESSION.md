@@ -1,92 +1,97 @@
 # NEXT_SESSION.md — handoff
 
-> Файл перезаписывается в конце каждого этапа. Ниже — состояние и готовый промпт для следующей сессии.
+> Файл перезаписывается в конце каждого этапа или подцели. Ниже — состояние и готовый промпт для следующей сессии.
 
 ## Состояние
 
-- Этап 0 завершён: PRD, AGENTS.md, TASKS.md, research, лицензия GPL-3.0, git-репозиторий в `app/`.
-- Репозиторий: https://github.com/tsybindev/splitroute (private), remote `origin`.
-- Ветка: `main`. История — `git log --oneline` в `app/`.
-- Код ещё не создан: на этапе 0 только документация и проектные субагенты.
-- Решения: название SplitRoute, лицензия GPL-3.0, HWID — случайные 16 hex на установку, kill switch — не в MVP, allowlist по умолчанию, sing-box как ядро, Tauri 2 + React + Rust.
-- Главный технический риск: process-правила на macOS 26/27 (mihomo #3355). Этап 1 должен дать однозначный ответ.
-- Dev-машина: macOS 15.8.2 arm64, Xcode CLT, Node 22, pnpm; Rust нужно установить по AGENTS.md §4.
-- Вторая машина: CachyOS (проверить окружение по AGENTS.md §5).
+- Этап 0 завершён. Этап 1 в работе: подцель `S1-T1…S1-T3` закрыта.
+- Последний коммит: `3a7bb98` — `feat: добавлены pinned sing-box, фикстура подписки и конвертер в sing-box`.
+- Ветка: `main`. Репозиторий: https://github.com/tsybindev/splitroute (private).
+- Сделано:
+  - `scripts/core-version.txt` — pinned sing-box **1.14.4**, sha256 по darwin/linux/windows × arm64/amd64.
+  - `scripts/fetch-core.sh` — скачивание, проверка sha256 до распаковки, кэш в `.cache/core/`, распаковка в `src-tauri/binaries/sing-box-<triple>`, сверка `sing-box version`. Есть `--verify`.
+  - `spike/fixtures/subscription.json` — 2 профиля VLESS/Reality/TCP, служебные outbound'ы `direct`, `block`, `fragment-out`; все значения синтетические (TEST-NET-3, `example.com`/`example.net`).
+  - `spike/convert.py` — Xray → sing-box outbound + полный конфиг (TUN, mixed, DNS, route). Оба конфига проходят `sing-box check`.
+  - `spike/test_convert.py` — 10 тестов (stdlib unittest): маппинг, пропуски, golden-воспроизводимость, ошибки входа.
+  - `spike/configs/profile-1-*.json`, `profile-2-*.json` — проверенные ядром конфиги.
+- Не сделано: `S1-T4…S1-T12` (см. `TASKS.md`).
+- Окружение: macOS 15.8.2 arm64, Node 22, pnpm, Python 3.14, бинарь ядра скачан в `src-tauri/binaries/` (в git не попадает).
+- Реальная подписка не скачивалась: `SUBSCRIPTION_URL`/`SUBSCRIPTION_HWID` в сессии не заданы, в репозитории их нет.
 
----
+### Важные факты для следующей сессии
 
-## С чего начать в новой сессии
+- Готовый вход для проверок TUN/process-правил: `spike/configs/profile-1-testovaya-lokatsiya-a.json` и `profile-2-*.json`. В route уже есть правила `process_name: ["curl"]` и `process_path_regex` для Chrome, `final: direct`.
+- Ядро: `./src-tauri/binaries/sing-box-aarch64-apple-darwin` (1.14.4). Для TUN на macOS нужен `sudo`.
+- Адреса в конфиге — TEST-NET-3 (`203.0.113.10:443`), реального сервера нет. Для живого теста нужен реальный профиль: положить его во временный файл вне репозитория (см. `spike/fixtures/README.md`) и прогнать `python3 spike/convert.py --input <tmp> --out-dir <tmp> --check`.
+- **Секреты не коммитить.** Реальный профиль — только во `$TMPDIR`, после проверки удалить.
 
-1. `cd app && git pull --ff-only`. На другой машине: `gh repo clone tsybindev/splitroute` (репозиторий приватный, нужен `gh auth login`).
-2. `./scripts/sync-agents.sh` — подтянуть роли субагентов в каталог харнесса.
-3. Если Rust ещё не установлен — AGENTS.md §4 (`rustup`, targets); проверить `node -v` (22+) и `pnpm -v`.
-4. Прочитать `AGENTS.md` §17–18, `TASKS.md` и `PRD.md` (особенно §10, риски R1–R6). Реальную подписку в репозиторий не добавлять.
-5. Запустить первую цель из раздела «Рекомендуемые цели»: `S1-T1…S1-T3`. После коммита и обновления `NEXT_SESSION.md` — `/goal clear` и следующая цель.
+### Что проверять первым делом
+
+```bash
+cd app
+./scripts/fetch-core.sh --verify
+python3 -m unittest discover -s spike -p 'test_*.py'
+./src-tauri/binaries/sing-box-aarch64-apple-darwin check -c spike/configs/profile-1-testovaya-lokatsiya-a.json
+```
 
 ---
 
 ## Промпт следующей сессии
 
-Скопируй текст ниже в новую сессию Command Code. Запускай сессию из каталога `app/`, чтобы подхватился `AGENTS.md`. Роли субагентов лежат в `agents/`; для Command Code выполни `./scripts/sync-agents.sh` перед стартом (каталог `.commandcode/` в git не попадает).
+Скопируй текст ниже в новую сессию Command Code. Запускай сессию из каталога `app/`, чтобы подхватился `AGENTS.md`.
 
 ```text
 Ты — оркестратор разработки проекта SplitRoute (per-app VPN клиент на Tauri 2 + React + Rust + sing-box).
 
 Рабочий каталог: /Users/tsybin_d/Documents/Dev/Backend/vpn_client/app
-Цель текущей сессии: выполнить этап 1 из TASKS.md — технический spike архитектуры.
+Цель текущей сессии: выполнить S1-T4…S1-T7 из TASKS.md — проверить TUN и process-правила на macOS 15, macOS 26/27, CachyOS и Windows VM. Остановись после коммита отчётов и обновления NEXT_SESSION.md.
 
 Сначала прочитай:
-- AGENTS.md (правила, архитектура, процесс этапов, оркестрация);
-- PRD.md (требования, риски, особенно R1, R2, R4, R6);
-- TASKS.md (задачи S1-T1…S1-T12, критерии приёмки);
-- docs/research.md (проверенные факты и что осталось проверить);
-- agents/ (роли и зоны ответственности субагентов).
+- AGENTS.md (§10 архитектура, §13 DoD, §14 правила для агентов, §18 оркестрация);
+- PRD.md §6.2 (TUN и маршрутизация), §6.3 (allowlist), §10 риски R1, R2, R3, R4;
+- TASKS.md (S1-T4…S1-T7 и их критерии приёмки);
+- docs/research.md (§1, §2, §3 — per-app на macOS, mihomo #3355, NetworkExtension);
+- spike/README.md, spike/fixtures/README.md, spike/convert.py.
 
-Задачи этапа 1:
-1. S1-T1 — pinned sing-box: scripts/core-version.txt и scripts/fetch-core.sh с проверкой SHA256.
-2. S1-T2 — санитизированная фикстура подписки в spike/fixtures (без реальных URL, HWID, UUID и адресов серверов).
-3. S1-T3 — конвертация Xray-профиля в sing-box outbound (VLESS + Reality + TCP) и проверка `sing-box check`.
-4. S1-T4 — macOS 15.8.2: TUN + process-правила для Chrome, Telegram и curl; проверить, что выбранные процессы идут через прокси, а невыбранные — напрямую (по внешнему IP).
-5. S1-T5 — macOS 26/27: проверить, воспроизводится ли ограничение process-правил (mihomo #3355). Если ОС недоступна — честно зафиксировать как непроверенное.
-6. S1-T6 — Linux CachyOS: тот же эксперимент, зафиксировать пакеты и права.
-7. S1-T7 — Windows VM (если доступна): TUN + wintun + process-правила; иначе зафиксировать отсутствие среды.
-8. S1-T8 — DNS-политика: разделение DNS по процессу, поведение с systemd-resolved и Private Relay, выбор fallback.
-9. S1-T9 — QUIC/UDP: проходит ли трафик выбранного приложения, нужна ли блокировка QUIC.
-10. S1-T10 — прототип helper'а для macOS LaunchDaemon и Linux systemd: сокет, права, только start/stop/status.
-11. S1-T11 — отчёт docs/spikes/stage-1.md: методика, версии ОС и ядра, логи, результат go/no-go по платформам, вывод по macOS.
-12. S1-T12 — обновить TASKS.md (статусы) и NEXT_SESSION.md (промпт этапа 2).
+Что уже готово:
+- pinned sing-box 1.14.4 скачивается через ./scripts/fetch-core.sh, бинарь лежит в src-tauri/binaries/;
+- конвертер spike/convert.py и проверенные конфиги spike/configs/*.json (TUN + process_name curl + process_path_regex Chrome + mixed 127.0.0.1:10808);
+- тесты: python3 -m unittest discover -s spike -p 'test_*.py'.
+
+Задачи:
+1. S1-T4 — macOS 15.x: поднять TUN через sing-box, проверить, что curl (allowlist) идёт через прокси, а невыбранный процесс — напрямую, по внешнему IP. Зафиксировать в spike/macos/README.md методику и логи.
+2. S1-T5 — macOS 26/27: проверить, воспроизводится ли ограничение R1 (process-правила у не-Apple-подписанных бинарей). Если ОС недоступна — честно записать «не проверено» с причиной.
+3. S1-T6 — CachyOS: тот же эксперимент, зафиксировать пакеты, права, TUN и результаты.
+4. S1-T7 — Windows VM (если доступна): TUN + wintun.dll + process-правила; иначе зафиксировать отсутствие среды.
+5. Обнови TASKS.md (статусы S1-T4…S1-T7) и NEXT_SESSION.md для следующей подцели S1-T8…S1-T10.
 
 Ограничения:
-- Продакшн-код не пишем: эксперименты только в spike/, отчёт — в docs/spikes/.
-- Реальную подписку не коммитим. URL и HWID, если нужны, берутся из переменных окружения SUBSCRIPTION_URL и SUBSCRIPTION_HWID и не попадают в файлы, логи и отчёты.
-- Не менять архитектурные решения PRD без обсуждения; новые факты — в docs/research.md.
-- Комментарии в коде на русском, имена — английские.
-- Субагенты не коммитят и не правят PRD/AGENTS/TASKS/NEXT_SESSION; это делает только оркестратор.
-- Не выполнять разрушительные команды и не оставлять запущенные TUN/helper/dev-процессы.
+- Продакшн-код не пишем: только spike/ и docs/spikes/.
+- Реальную подписку не коммитим: SUBSCRIPTION_URL и SUBSCRIPTION_HWID берутся из окружения, реальные UUID/адреса — только во $TMPDIR и удаляются после проверки. В отчётах — обезличенные наблюдения.
+- Не оставлять запущенные TUN, sing-box и helper-процессы; после экспериментов всё останавливать.
+- Не выполнять разрушительные команды; не менять архитектурные решения PRD без обсуждения.
+- Комментарии в коде на русском, идентификаторы английские.
+- Субагенты не коммитят и не правят PRD/AGENTS/TASKS/NEXT_SESSION — это делает только оркестратор.
 
 Как работать:
-1. Разбей задачи по владельцам из agents/: rust-core (S1-T1…S1-T3), platform-native (S1-T4…S1-T10), verifier (проверка отчёта и отсутствия секретов).
-2. Сначала зафиксируй контракты: формат конфига, env-переменные, структуру spike/ и формат отчёта.
-3. Параллельно запускай не больше 3–4 субагентов, без пересечения файлов.
-4. Собери результаты, прогони проверки и вручную подтверди поведение на macOS.
-5. Сделай коммит(ы) с кодом и тестами, затем отдельный коммит `docs:` с PRD/AGENTS/research/TASKS/NEXT_SESSION.
-6. Обнови NEXT_SESSION.md для этапа 2 и остановись, не начиная этап 2.
+1. Зафиксируй методику проверки (как измеряем внешний IP для выбранного и невыбранного процесса) до запуска.
+2. Параллельно запускай не больше 3 субагентов без пересечения файлов; macOS и Linux эксперименты — в разных каталогах (spike/macos, spike/linux, spike/windows).
+3. После сборки результатов прогони проверки и вручную подтверди поведение на macOS.
+4. Коммит(ы) с отчётами и скриптами spike, затем отдельный коммит docs: с TASKS.md и NEXT_SESSION.md.
+5. Обнови NEXT_SESSION.md под S1-T8…S1-T10 и остановись.
 
-Критерии готовности этапа:
-- Есть воспроизводимые скрипты и конфиги в spike/.
-- Для macOS получен однозначный ответ по process-правилам (работает / не работает / почему).
-- Зафиксировано решение по DNS и QUIC.
-- Есть go/no-go по каждой доступной платформе и обновлённые риски PRD.
-- TASKS.md и NEXT_SESSION.md актуальны, секретов в репозитории нет.
+Критерии готовности подцели:
+- Для каждой доступной ОС есть воспроизводимая методика и логи.
+- Явно зафиксировано, работают ли process-правила на macOS 15.x и на 26/27.
+- Недоступные среды помечены как непроверенные, без выдуманных результатов.
+- Секретов в репозитории нет, запущенных TUN/процессов не осталось.
 ```
+
+---
 
 ## Рекомендуемые цели для этапа 1
 
 Не запускай весь этап одной целью — лимит итераций `/goal` фиксированный. Иди последовательно: после каждой цели коммит и обновление этого файла, затем `/goal clear` и следующая цель.
-
-```text
-/goal Выполни S1-T1…S1-T3 из TASKS.md: pinned sing-box, фикстура подписки, конвертация в sing-box и sing-box check. Остановись после коммита кода и обновления NEXT_SESSION.md.
-```
 
 ```text
 /goal Выполни S1-T4…S1-T7 из TASKS.md: проверка TUN и process-правил на macOS 15, macOS 26/27, CachyOS и Windows VM. Остановись после коммита отчётов и обновления NEXT_SESSION.md.
@@ -99,4 +104,3 @@
 ```text
 /goal Выполни S1-T11…S1-T12 из TASKS.md: итоговый отчёт этапа 1, go/no-go по платформам, обновление рисков PRD и handoff для этапа 2. Остановись после коммита документации.
 ```
-
