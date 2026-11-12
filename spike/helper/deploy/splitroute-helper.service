@@ -1,0 +1,20 @@
+# S1-T10: ЧЕРНОВИК systemd-юнита для продакшн-helper'а SplitRoute.
+# НЕ устанавливается в этой сессии. Пути — заглушки до этапа 3.
+# Сокет: /run/splitroute/helper.sock, каталог создаётся через RuntimeDirectory.
+[Unit]
+Description=SplitRoute privileged helper
+After=network.target
+Documentation=https://github.com/tsybindev/splitroute
+
+[Service]
+Type=simple
+ExecStart=/usr/local/lib/splitroute/helper --socket /run/splitroute/helper.sock --runtime-dir /run/splitroute --sing-box /usr/local/lib/splitroute/sing-box
+Restart=on-failure
+RuntimeDirectory=splitroute
+RuntimeDirectoryMode=0700
+UMask=0077
+# Helper работает от root: только фиксированные команды, конфиг пишет сам.
+User=root
+
+[Install]
+WantedBy=multi-user.target

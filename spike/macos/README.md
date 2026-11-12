@@ -74,6 +74,46 @@ Headless Chrome через SOCKS5-proxy sing-box падает на этапе п
 `--proxy-server=http://127.0.0.1:<port>`. Это особенность headless-Chrome, а не
 process-правил: в продуктовой схеме Chrome ходит через TUN, без явного прокси.
 
+## S1-T9: UDP и process-правила
+
+`python3 spike/macos/udp_rules_test.py` — код возврата 0.
+
+UDP проверяется через mixed-inbound и SOCKS5 UDP ASSOCIATE (`socksprobe -udp`),
+маршрут различается route-правилами с `override_address`/`override_port`
+(в 1.13+ это замена удалённым override-полям outbound).
+
+| Кейс | Ожидание | Факт |
+|---|---|---|
+| `process_name["socksprobe"]`, UDP | `UDP-PROXY` | `UDP-PROXY` ✅ |
+| другой процесс (`socksprobe-b`), UDP | `UDP-DIRECT` | `UDP-DIRECT` ✅ |
+
+Вывод: process-правила применяются и к UDP, UDP проходит через ядро. Это
+позитивный сигнал по риску R4 (для UDP на macOS 15.8.2), но **QUIC поверх TUN и
+реального VLESS-сервера не проверялся**. Решение для MVP: не блокировать QUIC
+выбранных приложений по умолчанию, но предусмотреть переключатель «блокировать
+QUIC» как страховку от деградации; окончательно — после TUN-теста на реальном
+сервере.
+
+## S1-T8: DNS-политика
+
+`python3 spike/macos/dns_rules_test.py` — код возврата 0.
+
+Два фейковых UDP-DNS-сервера записывают имена, которые у них спросили. В конфиге
+`dns.rules`: `process_name["socksprobe"]` → `remote`, `final` → `local`. Запрос на
+домен идёт через mixed-inbound, route-правило `action: resolve` заставляет ядро
+сходить в DNS.
+
+| Кейс | Ожидание | Факт |
+|---|---|---|
+| выбранный процесс | `remote` получил запрос, `local` — нет | `remote=['dns-selected.invalid']`, `local=[]` ✅ |
+| невыбранный процесс | `local` получил запрос, `remote` — нет | `local=['dns-other.invalid']`, `remote=[]` ✅ |
+
+Вывод: DNS-правила с process-матчингом принимаются и применяются ядром на macOS
+15.8.2 — на уровне DNS-модуля. **Не проверено:** перехват DNS через TUN,
+взаимодействие с Private Relay (macOS 26) и `systemd-resolved` (Linux). Для них
+нужны root/соответствующие ОС; по PRD §6.4 при провале — fallback на системный DNS
+с предупреждением в UI, без молчаливых утечек.
+
 ## Что НЕ проверено и почему
 
 | Задача | Статус | Причина |
@@ -84,9 +124,10 @@ process-правил: в продуктовой схеме Chrome ходит ч�
 | S1-T6, CachyOS | **не проверено** | машины с CachyOS нет; Docker-демон OrbStack не запущен (частичный тест в контейнере не делался) |
 | S1-T7, Windows VM | **не проверено** | VM/UTM/Parallels/VirtualBox/qemu в системе отсутствуют |
 
-Вывод по G1: **process-правила на macOS 15 подтверждены для TCP**, включая
-helper-процессы Chrome. Маршрутизация TUN, DNS/QUIC через TUN и поведение на
-macOS 26/27, Linux и Windows остаются непроверенными по указанным причинам.
+Вывод по G1–G2: **на macOS 15.8.2 подтверждены process-правила для TCP и UDP,
+матчинг helper-процессов Chrome и разделение DNS по процессу**. Маршрутизация TUN,
+DNS/QUIC через TUN и поведение на macOS 26/27, Linux и Windows остаются
+непроверенными по указанным причинам.
 
 ## Воспроизвести
 
@@ -101,6 +142,12 @@ python3 spike/macos/process_rules_test.py
 # только path_regex/process_name, без Chrome
 python3 spike/macos/process_rules_test.py --no-chrome
 
+# UDP + process-правила (S1-T9)
+python3 spike/macos/udp_rules_test.py
+
+# DNS по процессу (S1-T8)
+python3 spike/macos/dns_rules_test.py
+
 # доказательство, что TUN без root не поднимается
 ./src-tauri/binaries/sing-box-aarch64-apple-darwin run \
   -c spike/configs/profile-1-testovaya-lokatsiya-a.json   # operation not permitted
@@ -108,9 +155,9 @@ python3 spike/macos/process_rules_test.py --no-chrome
 
 ## Чистота системы
 
-Тест не требует root и не меняет маршруты/интерфейсы. Скрипт сам:
-останавливает sing-box по завершении, закрывает фейковые SOCKS5-серверы, пишет
-временные конфиги и логи в `$TMPDIR`, не трогает `spike/configs/`.
+Все стенды не требуют root и не меняют маршруты/интерфейсы. Скрипты сами
+останавливают sing-box по завершении, закрывают фейковые SOCKS5/UDP-серверы, пишут
+временные конфиги и логи в `$TMPDIR`, не трогают `spike/configs/`.
 Проверить, что ничего не осталось:
 
 ```bash
@@ -119,5 +166,8 @@ pgrep -fl 'sing-box run' || echo "sing-box не запущен"
 
 ## Файлы
 
-- `process_rules_test.py` — стенд (stdlib Python; собирает `socksprobe`).
-- `socksprobe.go` — SOCKS5-клиент, копируется под разными именами/путями.
+- `process_rules_test.py` — TCP-стенд (stdlib Python; собирает `socksprobe`).
+- `udp_rules_test.py` — UDP-стенд (S1-T9).
+- `dns_rules_test.py` — DNS-стенд (S1-T8): два фейковых DNS-сервера.
+- `socksprobe.go` — SOCKS5-клиент (TCP и UDP ASSOCIATE), копируется под разными
+  именами/путями.

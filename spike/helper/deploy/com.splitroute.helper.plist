@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  S1-T10: ЧЕРНОВИК LaunchDaemon для продакшн-helper'а SplitRoute.
+  НЕ устанавливается в этой сессии. Пути и бинарь — заглушки до этапа 3.
+  Правильная установка: /Library/LaunchDaemons/com.splitroute.helper.plist,
+  владелец root:wheel, права 0644; бинарь — /Library/PrivilegedHelperTools/.
+  Сокет: /var/run/splitroute/helper.sock, каталог 0700 root, сокет 0600.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.splitroute.helper</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Library/PrivilegedHelperTools/com.splitroute.helper</string>
+    <string>--socket</string>
+    <string>/var/run/splitroute/helper.sock</string>
+    <string>--runtime-dir</string>
+    <string>/var/run/splitroute</string>
+    <string>--sing-box</string>
+    <string>/Library/Application Support/SplitRoute/sing-box</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Interactive</string>
+</dict>
+</plist>

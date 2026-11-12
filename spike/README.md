@@ -18,16 +18,24 @@ spike/
     ├── profile-1-testovaya-lokatsiya-a.json
     └── profile-2-testovaya-lokatsiya-b-fragment.json
 
-spike/macos/                   # S1-T4…T5: process-правила без root, отчёт и стенд
+spike/macos/                   # S1-T4…T9: process-правила/DNS/UDP без root
 ├── README.md                  # методика, результаты, что осталось непроверенным
-├── process_rules_test.py      # стенд: path_regex, process_name, Chrome
-└── socksprobe.go              # SOCKS5-клиент, копируется под разными именами/путями
+├── process_rules_test.py      # TCP: path_regex, process_name, Chrome
+├── udp_rules_test.py          # UDP + process-правила (S1-T9)
+├── dns_rules_test.py          # разделение DNS по процессу (S1-T8)
+└── socksprobe.go              # SOCKS5-клиент (TCP и UDP), копируется под разными именами
+
+spike/helper/                  # S1-T10: прототип helper'а
+├── README.md                  # протокол, безопасность, dev-режим, что не проверено
+├── helper.py                  # Unix-сокет 0600, только start/stop/status
+├── test_helper.py             # 6 тестов: права, lifecycle, ошибки протокола
+└── deploy/                    # черновики LaunchDaemon plist и systemd unit (НЕ ставились)
 ```
 
-Успешное выполнение `process_rules_test.py` на macOS 15.8.2 подтверждает
-`process_name` и `process_path_regex` для TCP, включая helper-процессы Chrome.
-TUN, macOS 26/27, Linux и Windows этим стендом **не** покрываются — см.
-`spike/macos/README.md`.
+Успешное выполнение стендов на macOS 15.8.2 подтверждает `process_name` и
+`process_path_regex` для TCP и UDP, helper-процессы Chrome по `.app` и разделение
+DNS по процессу. TUN, macOS 26/27, Linux и Windows этими стендами **не**
+покрываются — см. `spike/macos/README.md`.
 
 ## Задачи, к которым относится каталог
 
@@ -36,6 +44,9 @@ TUN, macOS 26/27, Linux и Windows этим стендом **не** покрыв
 | S1-T2 | `fixtures/subscription.json` — санитизированная фикстура подписки, 2 профиля, лишние outbound'ы (`direct`, `block`, `fragment-out`) |
 | S1-T3 | `convert.py` + `configs/` — конвертация VLESS/Reality/TCP в outbound sing-box, проверка `sing-box check` |
 | S1-T4…T7 | используют `configs/*.json` как готовый вход для TUN и process-правил на macOS/Linux/Windows |
+| S1-T8 | `macos/dns_rules_test.py` — разделение DNS по процессу (без TUN) |
+| S1-T9 | `macos/udp_rules_test.py` — UDP и process-правила (без TUN) |
+| S1-T10 | `helper/` — прототип helper'а: сокет 0600, только start/stop/status, конфиг через `sing-box check` |
 
 ## Воспроизвести
 
