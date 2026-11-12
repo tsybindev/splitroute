@@ -214,3 +214,28 @@ Go 1.27.0; без root. Полный отчёт — [docs/spikes/stage-1.md](./s
 и ожидаемые права — `docs/stage-3-report.md` §6. Debug-сборка приложения
 использует `$TMPDIR/splitroute-helper.sock`; для установленного LaunchDaemon
 нужен `SPLITROUTE_HELPER_SOCKET=/var/run/splitroute/helper.sock`.
+
+## 11. Результаты этапа 3, подцель G3.2 (проверено 2026-11-12)
+
+Окружение: macOS 15.8.2 arm64, Rust 1.99.1, установлены цели
+`x86_64-pc-windows-msvc` и `x86_64-unknown-linux-gnu`. Linux-машины и Windows VM
+нет — всё, что требует целевой ОС, помечено **blocked**. Подробности и матрица —
+[docs/stage-3-report.md](./stage-3-report.md) §5.1.
+
+| Утверждение | Статус | Как проверено |
+|---|---|---|
+| `tauri-build` ищет `externalBin` уже на этапе `cargo check` и падает, если файла нет (`resource path ... doesn't exist`) | **подтверждено** | добавили `externalBin` в базовый конфиг → `cargo check` упал; убрали → собралось. Поэтому `externalBin` только в платформенных конфигах |
+| `externalBin` в `tauri.linux.conf.json` не влияет на сборку хоста (macOS) | **подтверждено** | `cargo check -p splitroute` на macOS с этим файлом прошёл |
+| Tauri ждёт sidecar с суффиксом target triple (`<name>-<triple>[.exe]`) | **подтверждено** | `tauri-utils::resources::external_binaries` строит имя по тройке; без суффикса сборка не находит файл |
+| Собранный macOS-бандл содержит sidecar'ы рядом с основным бинарём | **подтверждено** | `SplitRoute.app/Contents/MacOS/`: `splitroute`, `sing-box`, `splitroute-helper` — все три на месте |
+| Реальная сборка `.app` и `.dmg` на этой машине проходит | **подтверждено** | 96.7 МиБ и 32.8 МиБ; `pnpm tauri build --bundles app,dmg --config <overlay>` |
+| `cargo check -p splitroute --target x86_64-pc-windows-msvc` возможен на macOS | **опровергнуто** | `ring` падает: `fatal error: 'assert.h' file not found` — нет MSVC-заголовков |
+| `cargo check -p splitroute --target x86_64-unknown-linux-gnu` возможен на macOS | **опровергнуто** | `gio-sys`/`glib-sys`/`gdk-sys`: `pkg-config has not been configured to support cross-compilation` |
+| `cargo check`/`clippy` чистых Rust-крейтов под обе тройки работает | **подтверждено** | `splitroute-helper` целиком под windows и linux; `windows.rs`/`linux.rs`/`client.rs` — изолированно, `-D warnings` |
+| `windows-sys` 0.61 даёт нужные API для pipe/службы/SID | **подтверждено** | `ConnectNamedPipe` требует `Win32_System_IO`; `ConvertSidToStringSidW`/SDDL — `Win32_Security_Authorization`; `OpenProcessToken`/`GetCurrentProcess` — `Win32_System_Threading`; `GetTokenInformation`/`TokenUser` — `Win32_Security` |
+| `SERVICE_STATUS_HANDLE` (`*mut c_void`) не `Send`/`Sync` | **подтверждено** | компилятор требует `unsafe impl Send/Sync` для хранения в `static`; обёрнут в `StatusHandle` |
+| Буфер `Vec<u8>` под `TOKEN_USER` не гарантирует выравнивание | **подтверждено логикой типов** | заменён на `Vec<u64>`; иначе чтение `TOKEN_USER` из `Vec<u8>` — UB |
+| Блокирующий `ConnectNamedPipe` нельзя прервать из другого потока | **принято за факт** | режим: ожидание клиента в отдельном потоке, главный ждёт с таймаутом и проверяет флаг STOP; иначе `SERVICE_CONTROL_STOP` подвисал бы |
+| `sc.exe create ... binPath= "path with spaces" service --pipe ...` регистрирует службу | **опровергнуто рассуждением** | `sc.exe` разбирает argv: значение кончается на закрывающей кавычке, `service` — «неизвестный параметр». Нужен один экранированный токен (`cf26d1a`) |
+| Установка службы, `pkexec`, UAC, `systemctl`, `sc.exe` | **blocked** | нет Linux-машины и Windows VM; выполнять автоматически запрещено |
+| Права `/run/splitroute`/pipe и TUN на целевых ОС | **blocked** | нужны реальные системы; на macOS TUN проверен в S2-T8 |

@@ -76,6 +76,8 @@ app/
 ├── scripts/
 │   ├── core-version.txt         # версия sing-box + sha256 по платформам
 │   ├── fetch-core.sh
+│   ├── build-helper-sidecar.sh  # helper под именем <triple> для externalBin
+│   ├── package.sh               # пакет текущей ОС (deb/rpm/appimage, nsis, app/dmg)
 │   ├── dev-helper.sh
 │   ├── sync-agents.sh           # проекция agents/ в каталог харнесса
 │   └── check-config.sh
@@ -225,16 +227,24 @@ pnpm tauri dev
 Сборка пакетов:
 
 ```bash
-pnpm tauri build                # .deb/.rpm/AppImage по доступным bundler'ам
+./scripts/package.sh            # deb/rpm/appimage + sidecar helper'а; только на Linux
 ```
 
+- `scripts/package.sh` сам собирает sidecar helper'а (`scripts/build-helper-sidecar.sh`)
+  и выбирает цели по ОС. Перед ним нужен `./scripts/fetch-core.sh`.
+- `externalBin` живёт только в `tauri.linux.conf.json`/`tauri.windows.conf.json`:
+  `tauri-build` ищет sidecar на `cargo check`, а бинари в `.gitignore` — в базовом
+  конфиге чистый клон не собрался бы.
 - Для запуска AppImage может понадобиться `fuse2` (`sudo pacman -S fuse2`) или `--appimage-extract-and-run`.
 - Для сборки AppImage — `linuxdeploy` и `patchelf`; если bundler ругается, проверить `pnpm tauri info`.
 
 ### 5.5. Права на Linux (production)
 
-- Helper — systemd-юнит `splitroute-helper.service` под root, сокет `/run/splitroute/helper.sock`, доступ по группе/uid.
-- Установка юнита — через polkit (`pkexec`) из UI с подтверждением; ручное удаление — `systemctl disable --now splitroute-helper`.
+- Helper — systemd-юнит `splitroute-helper.service` под root (`User=root`,
+  `RuntimeDirectory=splitroute` `0711`, `UMask=0077`, `Restart=on-failure`),
+  сокет `/run/splitroute/helper.sock`, доступ по uid (`--allow-uid`).
+- Установка юнита — через polkit (`pkexec`) из UI с подтверждением; ручное
+  удаление — `systemctl disable --now splitroute-helper`.
 - TUN требует `/dev/net/tun` и прав; проверка: `ls -l /dev/net/tun`.
 - Для ручной отладки допустим запуск helper'а под `sudo`, но UI не должен хранить root-пароль.
 
@@ -277,9 +287,11 @@ corepack enable && corepack prepare pnpm@latest --activate
 - Visual Studio Build Tools с workload «Desktop development with C++», Windows SDK.
 - Rust MSVC: `rustup default stable-msvc`, target `x86_64-pc-windows-msvc`.
 - WebView2 Runtime (в Windows 11 встроен; для Windows 10 — установить).
-- `wintun.dll` кладётся рядом с `sing-box.exe` в бандле; версия фиксируется вместе с ядром.
-- Dev-helper: запуск консоли от администратора, без установки службы; production — Windows-сервис под SYSTEM и named pipe `\\.\pipe\splitroute-helper` с ACL на SID пользователя.
-- Кросс-компиляция MSI с macOS/Linux не поддерживается штатно — использовать Windows-раннер или VM.
+- `wintun.dll` кладётся рядом с `sing-box.exe` в бандле; версия фиксируется вместе с ядром. Официальная подписанная библиотека — `src-tauri/binaries/wintun.dll` (`SPLITROUTE_WINTUN_DLL` переопределяет путь).
+- Dev-helper: запуск консоли от администратора, без установки службы; production — служба `splitroute-helper-service` под SYSTEM и named pipe `\\.\pipe\splitroute-helper` с ACL на SID пользователя. Helper стартует как `splitroute-helper.exe service --pipe ... --allow-sid <SID>`.
+- Установка/удаление службы — установщик приложения через UAC (`Start-Process -Verb RunAs`), не сокет: helper не умеет `install`/`uninstall`.
+- `sc.exe create` требует `binPath` одним экранированным аргументом, иначе `service` и флаги отвергаются как неизвестные параметры.
+- Кросс-компиляция NSIS с macOS/Linux не поддерживается штатно — использовать Windows-раннер или VM. Полный `cargo check -p splitroute --target x86_64-pc-windows-msvc` на macOS тоже не проходит (`ring` без MSVC-заголовков); проверяйте `splitroute-helper` и модули установщика.
 
 ---
 
@@ -314,8 +326,16 @@ cargo test --workspace
 cargo build -p splitroute-helper
 
 ./scripts/fetch-core.sh
+./scripts/build-helper-sidecar.sh   # helper под именем <triple> для externalBin
+./scripts/package.sh                # пакет текущей ОС (deb/rpm/appimage, nsis, app/dmg)
 ./scripts/check-config.sh path/to/config.json
 ```
+
+Кросс-проверка кода под другие ОС (без целевой машины): полный `cargo check -p
+splitroute --target ...` на macOS невозможен (ring/gio требуют sysroot и
+MSVC-заголовки), но `cargo check`/`clippy` для `splitroute-helper` и
+платформенных модулей установщика работает — так проверяются windows/linux
+ветки, пока нет Linux-машины и Windows VM.
 
 Правило: перед коммитом — `pnpm typecheck && pnpm lint && cargo fmt --all --check && cargo clippy ... && cargo test --workspace` (или соответствующий CI-job).
 
