@@ -53,8 +53,8 @@
 |---|---|---|---|
 | S2-T1 | Tauri 2 скелет, workspace, CI-команды | оркестратор | `pnpm tauri dev` запускается на macOS и CachyOS — **macOS 15.8.2: done**, `pnpm tauri dev` стартует (Vite + окно); CachyOS **не проверено** (нет машины) |
 | S2-T2 | `crates/protocol`: типы IPC и общие модели | rust-core | done — Request/Response/Command/ErrorCode, HelperStatus, Profile, AppRule, Settings; 13 тестов, clippy чистый |
-| S2-T3 | Парсер подписки + фикстуры + тесты | rust-core | Покрыты валидный JSON, пустой список, нет `proxy`, битый JSON |
-| S2-T4 | Генератор sing-box конфига + golden-тесты | rust-core | Allowlist, direct, IPv6 on/off, DNS-режимы |
+| S2-T3 | Парсер подписки + фикстуры + тесты | rust-core | done — `src-tauri/src/subscription/`: VLESS+Reality/TLS+TCP → `Profile`, пропуски с причинами; тесты на валидный/пустой/нет proxy/битый JSON/неподдерживаемый транспорт + фикстура `spike/fixtures/subscription.json` |
+| S2-T4 | Генератор sing-box конфига + golden-тесты | rust-core | done — `src-tauri/src/config/`: TUN, DNS по процессу/системный, allowlist, IPv6 on/off, блок IPv6 для выбранных; golden-файлы + интеграционный `sing-box check` |
 | S2-T5 | Клиент helper'а (mock + реальный), установка/удаление | platform-native | start/stop/status идемпотентны, ошибки типизированы |
 | S2-T6 | Экраны: Главная, Локации, Приложения, Настройки, Логи | react-ui | Все состояния и ошибки из PRD, русский UI |
 | S2-T7 | Трей, автозапуск, single instance | react-ui | Статус и меню соответствуют PRD |
