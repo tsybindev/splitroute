@@ -148,11 +148,28 @@ pnpm --version
 cd app
 pnpm install
 ./scripts/fetch-core.sh          # скачает sing-box под текущую платформу
-./scripts/dev-helper.sh          # dev-режим helper'а (попросит sudo)
-pnpm tauri dev
+pnpm tauri dev                   # UI + ядро; helper берётся из сокета (§4.5)
 ```
 
-На этапе 0 в репозитории есть только документация: `package.json`, `scripts/` и код появятся на этапе 1. Пока ориентир — целевая структура из §2.
+Пока helper не установлен (этап 3), подключение можно проверить в debug-сборке
+без root и TUN — `MockHelperClient`:
+
+```bash
+SPLITROUTE_MOCK_HELPER=1 pnpm tauri dev
+```
+
+Прототип helper'а из спайка запускается отдельно:
+
+```bash
+python3 spike/helper/helper.py \
+  --socket "$TMPDIR/splitroute-helper.sock" \
+  --runtime-dir "$TMPDIR/splitroute-helper" \
+  --sing-box ./src-tauri/binaries/sing-box-aarch64-apple-darwin
+```
+
+`SPLITROUTE_HELPER_SOCKET` переопределяет путь сокета; в debug по умолчанию —
+`$TMPDIR/splitroute-helper.sock`. Состояние приложения —
+`<config>/splitroute/state.json` (права `0600`).
 
 ### 4.5. Подпись и helper в dev
 

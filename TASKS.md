@@ -47,28 +47,34 @@
 
 ---
 
-## Этап 2 — ядро MVP (in-progress; закрыты G2.1–G2.4, остался S2-T8)
+## Этап 2 — ядро MVP (done: G2.1–G2.5; S2-T9 blocked — нет машины с CachyOS)
 
 | ID | Задача | Владелец | Критерий приёмки |
 |---|---|---|---|
 | S2-T1 | Tauri 2 скелет, workspace, CI-команды | оркестратор | `pnpm tauri dev` запускается на macOS и CachyOS — **macOS 15.8.2: done**, `pnpm tauri dev` стартует (Vite + окно); CachyOS **не проверено** (нет машины) |
-| S2-T2 | `crates/protocol`: типы IPC и общие модели | rust-core | done — Request/Response/Command/ErrorCode, HelperStatus, Profile, AppRule, Settings; 13 тестов, clippy чистый |
+| S2-T2 | `crates/protocol`: типы IPC и общие модели | rust-core | done — Request/Response/Command/ErrorCode, HelperStatus, Profile, AppRule, Settings; 14 тестов, clippy чистый |
 | S2-T3 | Парсер подписки + фикстуры + тесты | rust-core | done — `src-tauri/src/subscription/`: VLESS+Reality/TLS+TCP → `Profile`, пропуски с причинами; тесты на валидный/пустой/нет proxy/битый JSON/неподдерживаемый транспорт + фикстура `spike/fixtures/subscription.json` |
 | S2-T4 | Генератор sing-box конфига + golden-тесты | rust-core | done — `src-tauri/src/config/`: TUN, DNS по процессу/системный, allowlist, IPv6 on/off, блок IPv6 для выбранных; golden-файлы + интеграционный `sing-box check` |
-| S2-T5 | Клиент helper'а (mock + реальный), установка/удаление | platform-native | done — `src-tauri/src/privileged/`: трейт `HelperClient`, Unix-транспорт (JSON-строки, лимит, таймаут, версия), mock, типизированные ошибки; `Installer`-заглушка (установка — этап 3); tests 8+3+1 |
-| S2-T6 | Экраны: Главная, Локации, Приложения, Настройки, Логи | react-ui | done — экраны по PRD §7, i18n ru, все состояния и ошибки; обёртки в `src/shared/api`, состояние в Zustand; тесты 18 (Vitest) |
-| S2-T7 | Трей, автозапуск, single instance | react-ui | done — меню трея (статус, подключить/отключить, открыть, выход), `tauri-plugin-autostart`, `tauri-plugin-single-instance`, закрытие в трей; трей визуально **не проверен** (headless), автозапуск в системе не регистрировался |
-| S2-T8 | Сквозной сценарий: подписка → локация → подключение → allowlist | оркестратор | Ручная матрица PRD на macOS и CachyOS |
+| S2-T5 | Клиент helper'а (mock + реальный), установка/удаление | platform-native | done — `src-tauri/src/privileged/`: трейт `HelperClient`, Unix-транспорт (JSON-строки, лимит, таймаут, версия), mock, типизированные ошибки; `Installer`-заглушка (установка — этап 3); tests 9+4+1 |
+| S2-T6 | Экраны: Главная, Локации, Приложения, Настройки, Логи | react-ui | done — экраны по PRD §7, i18n ru, все состояния и ошибки; обёртки в `src/shared/api`, состояние в Zustand; тесты 22 (Vitest) |
+| S2-T7 | Трей, автозапуск, single instance | react-ui | done — меню трея (статус, подключить/отключить, открыть, выход), `tauri-plugin-autostart`, `tauri-plugin-single-instance`, закрытие в трей; single instance проверен headless; трей визуально **не проверен**, автозапуск в системе не регистрировался |
+| S2-T8 | Сквозной сценарий на macOS: подписка → локация → подключение → allowlist | оркестратор | done — отчёт `docs/stage-2-report.md`: пустое состояние, ошибки подписки (401/403/404/JSON/пусто/нет профилей), 2 профиля и автовыбор, сохранение выбора после перезапуска, правила `process_name`/`path_regex` и выключение, connect/disconnect через mock helper, время сессии; реальный TUN/IP и трей **не проверены** (нет root/подписки/UI-автоматизации) |
+| S2-T9 | Сквозной сценарий на CachyOS | platform-native | **blocked** — машины с CachyOS нет; перенесено в этап 3 (S3-T7) |
 
 ---
 
 ## Этап 3 — helper'ы и упаковка (todo)
 
-- macOS: LaunchDaemon, установка/удаление, ad-hoc dev-подпись.
-- Windows: служба под SYSTEM, named pipe ACL, `wintun.dll`.
-- Linux: systemd + polkit, `.deb`/`.rpm`/AppImage.
-- Установщики и smoke-тесты на чистых системах.
-- `THIRD_PARTY_NOTICES`, проверка GPL-3.0-обязательств.
+| ID | Задача | Владелец | Критерий приёмки |
+|---|---|---|---|
+| S3-T1 | Rust-helper: сокет/пайп, команды, проверка uid/SID, `sing-box check` | platform-native | `crates/helper` реализует `status/start/stop`, лимит сообщения, версию протокола; тесты сериализации, прав сокета, чужого uid и невалидного конфига |
+| S3-T2 | macOS: LaunchDaemon, установка/удаление, ad-hoc dev-подпись | platform-native | plist в `/Library/LaunchDaemons`, сокет `/var/run/splitroute` `0600`, установка/удаление через UI с подтверждением; ручная проверка на macOS |
+| S3-T3 | Linux: systemd + polkit, `.deb`/`.rpm`/AppImage | platform-native | юнит `splitroute-helper.service`, сокет `/run/splitroute`, установка через `pkexec`; сборки ставятся на CachyOS/Ubuntu |
+| S3-T4 | Windows: служба под SYSTEM, named pipe ACL, `wintun.dll` | platform-native | служба ставится/удаляется, пайп доступен только SID пользователя, TUN работает; smoke на VM |
+| S3-T5 | Проводка установки helper'а в UI | react-ui | `helper_install`/`helper_uninstall` вызывают реальный установщик, статус и ошибки отображаются, пароль не хранится |
+| S3-T6 | `THIRD_PARTY_NOTICES`, GPL-3.0-обязательства | оркестратор | `LICENSE` и notices в бандле, ссылка на исходники sing-box, проверка списка зависимостей |
+| S3-T7 | Smoke на чистых системах + CachyOS-сценарий (S2-T9) | platform-native | установка, запуск, подключение/отключение и allowlist на macOS, CachyOS и Windows; результаты в отчёте |
+| S3-T8 | Отчёт этапа 3 и handoff этапа 4 | оркестратор | `docs/stage-3-report.md`, обновлённые `TASKS.md` и `NEXT_SESSION.md` |
 
 ## Этап 4 — полировка (todo)
 
@@ -92,3 +98,6 @@
 - Импорт по QR.
 - Несколько подписок одновременно.
 - IPv6-маршрутизация выбранных приложений (после решения PRD).
+- Применять `connect_on_start` при запуске: настройка сохраняется, но пока не используется.
+- Автообновление подписки по `auto_update_hours` (M1) и индикация следующего обновления.
+- Проверка задержки локаций (M2).
