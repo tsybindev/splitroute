@@ -4,44 +4,63 @@
 
 ## Состояние
 
-- Этап 1 завершён. Этап 2: закрыты **G2.1** (S2-T1, T2), **G2.2** (S2-T3, T4), **G2.3** (S2-T5).
+- Этап 1 завершён. Этап 2: закрыты **G2.1** (S2-T1, T2), **G2.2** (S2-T3, T4),
+  **G2.3** (S2-T5), **G2.4** (S2-T6, T7).
 - Ветка: `main`. Репозиторий: https://github.com/tsybindev/splitroute (private).
-- Последние коммиты: код G2.3 (`feat:`/`test:`), документация G2.3 (`docs:`).
+- Последние коммиты G2.4: `097eeef` (бэкенд), `7fe3a12` (UI), затем `docs:`.
 
-### Сделано в G2.3
+### Сделано в G2.4
 
-- `src-tauri/src/privileged/`:
-  - `HelperClient` (status/start/stop) + `HelperClientError` (NotInstalled, Unavailable,
-    Timeout, Protocol, Helper{code,message}, InvalidPayload).
-  - `UnixHelperClient`: Unix-сокет, JSON по строке, лимит `MAX_MESSAGE_BYTES`,
-    таймаут (по умолчанию 10 с), проверка версии протокола, путь сокета из
-    `SPLITROUTE_HELPER_SOCKET` / dev `$TMPDIR` / prod `/var/run/splitroute/`.
-  - `MockHelperClient` — идемпотентные start/stop/status.
-  - `Installer`-трейт + `UnsupportedInstaller` (установка сервиса — этап 3).
-- `src-tauri/src/commands/`: `AppState`, команды `helper_status`, `connect`,
-  `disconnect`, `helper_install`, `helper_uninstall`; зарегистрированы в `run()`.
-- Тесты: 8 клиента (включая версию/ошибку/таймаут/битый payload), 3 mock, 1 installer.
+- Бэкенд:
+  - `subscription_fetch` (reqwest + rustls, заголовки `X-HWID`, `Accept`, `User-Agent`);
+    типизированные ошибки `MISSING_URL/NETWORK/UNAUTHORIZED/FORBIDDEN/NOT_FOUND/
+    HTTP_ERROR/INVALID_JSON/EMPTY/NO_PROFILES`; кэш последнего успешного ответа.
+  - `src-tauri/src/store/`: настройки (подписка, сеть, поведение), профили,
+    выбранная локация, правила; файл в пользовательском каталоге, права `0600`.
+  - `profiles_list`, `profile_select`, `rules_list`, `rules_upsert`, `rules_delete`,
+    `settings_get`, `settings_update`, `hwid_generate`, `logs_list`, `diagnostics_get`.
+  - `connect`/`disconnect` больше не принимают конфиг из UI: конфиг собирается в ядре.
+  - `logging`: кольцевой буфер логов; диагностика без URL/HWID/UUID. Ответы в UI не
+    содержат исходный JSON профиля (`raw`).
+- Трей и система:
+  - меню: статус, подключить/отключить, открыть, выход; статус обновляется из меню и
+    из UI через событие `connection-changed`;
+  - `tauri-plugin-single-instance` (повторный запуск показывает окно);
+  - `tauri-plugin-autostart` (флаг применяется при сохранении настроек);
+  - закрытие окна в трей по `close_to_tray`, старт свёрнутым по `launch_minimized`;
+  - capabilities: `autostart:default` и window-права.
+- UI (`src/`):
+  - экраны Главная, Локации, Приложения, Настройки, Логи по PRD §7;
+  - все строки в `src/shared/i18n/ru.ts`; состояния «нет подписки / ошибка / пусто»;
+  - Zustand-состояние `src/shared/state/appStore.ts`, обёртки в `src/shared/api`;
+  - UI не формирует конфиг и не вызывает `invoke` напрямую.
 
 ### Проверено
 
 - `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
-  `cargo test --workspace` — ok (30 тестов в lib splitroute, 13 protocol, 4+1 integration).
-- `pnpm typecheck`, `pnpm lint`, `pnpm test` — ok.
+  `cargo test --workspace` — ok (57 тестов lib splitroute, 13 protocol, 4+1 integration).
+- `pnpm typecheck`, `pnpm lint`, `pnpm test` (18 тестов), `pnpm build` — ok.
+- `pnpm tauri dev` — приложение собирается и стартует, процесс работает без падений;
+  после проверки остановлено, порт 1420 свободен.
 
-### Не проверено
+### Не проверено (причина)
 
-- Реальная установка helper'а и работа под root — этап 3.
-- Реальная подписка/сервер — нет; фикстура синтетическая.
-- TUN — нет root; CachyOS/Windows — нет машин.
+- Визуальный трей (иконка/меню/клики) — headless-проверка невозможна.
+- Реальная регистрация автозапуска в системе — не включалась специально.
+- Single instance визуально (второй запуск) — не проверялось.
+- Подключение через TUN — нет root; проверялся mock helper, без реального туннеля.
+- Реальная подписка/сервер — нет; используются `spike/fixtures/subscription.json`.
+- CachyOS/Windows, реальная установка helper'а — нет машин, этап 3.
 
 ### Важные факты окружения
 
 - `export PATH="$HOME/.cargo/bin:$PATH"` в каждом shell.
 - `NODE_ENV=production` в окружении; React-тестам задан `env: { NODE_ENV: "test" }`.
-- TypeScript 6.0.3 (typescript-eslint не поддерживает 7).
-- ESLint игнорирует `target/`, `src-tauri/`, `crates/`, `spike/`.
-- Путь Unix-сокета ограничен `SUN_LEN` (~104 байта) — в тестах использовать короткие имена.
-- Golden-конфиги: `UPDATE_GOLDEN=1 cargo test -p splitroute --test config_golden`.
+- TypeScript 6.x (typescript-eslint не поддерживает 7).
+- rustls собран с провайдером `ring`; провайдер регистрируется в `run()`.
+- Состояние приложения: `<config>/splitroute/state.json` (macOS —
+  `~/Library/Application Support/splitroute/state.json`).
+- Путь Unix-сокета helper'а ограничен `SUN_LEN` (~104 байта).
 
 ### Проверка перед стартом
 
@@ -55,7 +74,7 @@ pnpm typecheck && pnpm lint && pnpm test
 
 ---
 
-## Промпт следующей подцели: G2.4 (S2-T6, S2-T7)
+## Промпт следующей подцели: G2.5 (S2-T8)
 
 Скопируй текст ниже целиком в новую сессию. Запускай из каталога `app/`.
 
@@ -64,87 +83,62 @@ pnpm typecheck && pnpm lint && pnpm test
 Рабочий каталог: /Users/tsybin_d/Documents/Dev/Backend/vpn_client/app
 Перед командами: export PATH="$HOME/.cargo/bin:$PATH"
 
-ЦЕЛЬ: подцель G2.4 этапа 2 — S2-T6 (экраны) и S2-T7 (трей, автозапуск,
-single instance). После подцели остановись: коммит кода, отдельный коммит
-документации, обновление NEXT_SESSION.md. Следующую подцель не начинай.
+ЦЕЛЬ: подцель G2.5 этапа 2 — S2-T8, сквозной сценарий «подписка → локация →
+подключение → allowlist» на macOS. После подцели остановись: коммит кода (если он
+менялся), отдельный коммит документации, обновление NEXT_SESSION.md. Этап 3 не начинай.
 
 ПРОЧИТАЙ СНАЧАЛА
-- AGENTS.md §2 (структура src/), §10, §12, §13, §14, §18.
-- PRD.md §5 (M1–M10), §6.1 (подписка), §6.3 (allowlist), §6.5 (трей/автозапуск),
-  §6.6 (настройки), §6.7 (логи), §7 (UX, состояния и ошибки).
-- TASKS.md: S2-T6, S2-T7.
-- crates/protocol — Profile, AppRule, Settings, HelperStatus.
-- src-tauri/src/{subscription,config,privileged,commands} — что уже есть.
+- AGENTS.md §10, §12–§14, §17–§18.
+- PRD.md §6.1, §6.3, §6.5, §7, §11, §13.
+- TASKS.md: S2-T8, этапы 2–3.
 - NEXT_SESSION.md (этот файл).
+- Текущее состояние: src-tauri/src/{commands,store,subscription,config,privileged,tray,logging},
+  src/shared/{api,state,i18n}, src/features/*.
 
 СРЕДА И ОГРАНИЧЕНИЯ
-- TUN без root недоступен; подключение проверять через mock helper или dev-режим
-  spike/helper/helper.py (без TUN).
-- Реальной подписки нет: использовать spike/fixtures/subscription.json; в UI
-  предусмотреть состояния «нет подписки», «ошибка», «пустая подписка».
+- Реальной подписки нет: использовать spike/fixtures/subscription.json и временный
+  локальный HTTP-сервер (`python3 -m http.server`) или прямой вызов с mock fetcher.
+- TUN без root недоступен: подключение проверять через MockHelperClient или
+  dev-режим spike/helper/helper.py (без TUN). Реальный туннель и внешний IP —
+  «не проверено» с причиной.
+- Не устанавливать автозапуск и системные сервисы; реальную регистрацию отмечать
+  как «не проверено».
 - Секреты (URL подписки, HWID, UUID) не логировать и не коммитить.
-- Не устанавливать автозапуск и сервисы в системе при тестах; проверять код и
-  конфигурацию, а реальную регистрацию отмечать как «не проверено».
+- NODE_ENV=production в окружении не убирать; TypeScript 6.x.
 
 ЗАДАЧИ
-
-S2-T6, экраны (React + TS + Zustand + i18n ru):
-- Главная: большая кнопка подключения, статус (helper/подписка/DNS/allowlist),
-  текущая локация, время сессии, переход к локациям.
-- Локации: список Profile, выбор активного, протокол/адрес, кнопка обновления,
-  пустое состояние.
-- Приложения: список правил AppRule, переключатель enabled, добавление вручную
-  (process_name / путь / regex), пояснение про процессы и дочерние процессы.
-- Настройки: URL подписки, HWID (генерация/редактирование), User-Agent, MTU,
-  IPv6, mixed-inbound (порт), DNS-режим, уровень логов, статус helper.
-- Логи: список строк, фильтр по уровню, копирование диагностики без секретов.
-- Все состояния и ошибки из PRD §7; тексты через словарь i18n (ru), без
-  захардкоженных строк в компонентах.
-- Обёртки Tauri commands/events в src/shared/api; UI не формирует config.
-
-Бэкенд-команды, которых не хватает для UI (добавить тонко, без бизнес-логики в UI):
-- получение подписки: `subscription_fetch(url, hwid, user_agent)` — HTTP через
-  reqwest с rustls, парсинг `subscription::parse_subscription`, кэш последнего
-  успешного ответа; ошибки типизированы (сеть, 401/403/404, невалидный JSON,
-  пустой список);
-- хранение активных Profile/Settings/AppRule в состоянии приложения (в памяти +
-  файл в пользовательском каталоге; без секретов в логах);
-- `profiles_list`, `rules_list`, `rules_upsert`, `rules_delete`, `settings_get`,
-  `settings_update`.
-Секреты — только в пользовательском конфиге, не в git и не в диагностике.
-
-S2-T7, трей и системная интеграция:
-- Иконка и меню трея: статус, подключить/отключить, открыть, выход; иконка
-  отражает состояние.
-- Автозапуск: tauri-plugin-autostart; опции «старт свёрнутым» и «подключаться
-  при старте» (только сохранение и передача флага; авто-подключение — позже).
-- Single instance: tauri-plugin-single-instance.
-- Обнови capabilities/permissions для плагинов.
-- Закрытие окна сворачивает в трей (настраивается).
+1. Прогнать сквозной сценарий на macOS:
+   - пустое состояние: нет подписки → экран Локации и Главная показывают подсказки;
+   - ошибки подписки: 401/403/404, невалидный JSON, пустой список — понятные тексты
+     и повтор;
+   - успешное обновление из фикстуры: 2 профиля, первый выбран автоматически;
+   - выбор второй локации, сохранение выбора после перезапуска приложения;
+   - добавление правила allowlist (process_name и path_regex), выключение правила;
+   - подключение/отключение через mock helper, статус и время сессии на Главной;
+   - закрытие окна в трей и повторный запуск (single instance) — если headless не
+     подтверждается, зафиксировать «не проверено» с причиной.
+2. Исправить найденные дефекты минимальными правками; каждое исправление — с тестом,
+   если это логика, а не только проводка.
+3. Обновить ручную матрицу в отчёте: что проверено, что нет и почему.
+4. Коммит: feat:/fix:/test: для кода и тестов, отдельный docs: для TASKS и NEXT_SESSION.
+5. NEXT_SESSION.md: итог этапа 2, готовый промпт этапа 3 (helper'ы и упаковка).
 
 ПРОВЕРКИ
-- pnpm typecheck && pnpm lint && pnpm test (Vitest + Testing Library, ключевые
-  состояния экранов; api замокать).
-- cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings
-  && cargo test --workspace.
-- pnpm build.
-- `pnpm tauri dev` — приложение стартует, окно открывается; трей в headless-проверке
-  не подтвердить — отметить как «не проверено» с причиной.
-
-ПОРЯДОК
-1. Контракты команд и типы (при необходимости — в crates/protocol).
-2. Бэкенд-команды + тесты, затем UI + тесты.
-3. Коммит кода: feat:/test:/refactor:. Отдельный коммит docs: (TASKS + NEXT_SESSION).
-4. NEXT_SESSION.md: состояние и промпт G2.5 (S2-T8 сквозной сценарий).
+- pnpm typecheck && pnpm lint && pnpm test && pnpm build
+- cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
+- pnpm tauri dev: старт приложения; после проверки остановить, порт 1420 освободить.
+- Не оставлять временные HTTP-серверы, helper'ы и TUN-интерфейсы.
 
 ЧЕСТНОСТЬ
 - Не выдавай непроверенное за проверенное; недоступное — «не проверено» с причиной.
-- Не оставлять запущенные процессы и временные файлы; секреты не коммитить.
+- Если сценарий упирается в отсутствие root/подписки, оформи это как ограничение
+  среды, а не как дефект кода.
 ```
 
 ---
 
 ## Заметки
 
-- Дальше: G2.5 (S2-T8 сквозной сценарий на macOS; CachyOS — если машина появится).
-- Реальная установка helper'а и подпись — этап 3, не раньше.
+- Дальше: G2.5 (S2-T8). Реальная установка helper'а, подпись и TUN — этап 3.
+- После этапа 2 в отчёте должно быть явно: какие пункты матрицы PRD не проверены
+  из-за отсутствия root, реальной подписки и машин с CachyOS/Windows.

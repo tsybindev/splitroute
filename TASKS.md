@@ -47,7 +47,7 @@
 
 ---
 
-## Этап 2 — ядро MVP (todo)
+## Этап 2 — ядро MVP (in-progress; закрыты G2.1–G2.4, остался S2-T8)
 
 | ID | Задача | Владелец | Критерий приёмки |
 |---|---|---|---|
@@ -56,8 +56,8 @@
 | S2-T3 | Парсер подписки + фикстуры + тесты | rust-core | done — `src-tauri/src/subscription/`: VLESS+Reality/TLS+TCP → `Profile`, пропуски с причинами; тесты на валидный/пустой/нет proxy/битый JSON/неподдерживаемый транспорт + фикстура `spike/fixtures/subscription.json` |
 | S2-T4 | Генератор sing-box конфига + golden-тесты | rust-core | done — `src-tauri/src/config/`: TUN, DNS по процессу/системный, allowlist, IPv6 on/off, блок IPv6 для выбранных; golden-файлы + интеграционный `sing-box check` |
 | S2-T5 | Клиент helper'а (mock + реальный), установка/удаление | platform-native | done — `src-tauri/src/privileged/`: трейт `HelperClient`, Unix-транспорт (JSON-строки, лимит, таймаут, версия), mock, типизированные ошибки; `Installer`-заглушка (установка — этап 3); tests 8+3+1 |
-| S2-T6 | Экраны: Главная, Локации, Приложения, Настройки, Логи | react-ui | Все состояния и ошибки из PRD, русский UI |
-| S2-T7 | Трей, автозапуск, single instance | react-ui | Статус и меню соответствуют PRD |
+| S2-T6 | Экраны: Главная, Локации, Приложения, Настройки, Логи | react-ui | done — экраны по PRD §7, i18n ru, все состояния и ошибки; обёртки в `src/shared/api`, состояние в Zustand; тесты 18 (Vitest) |
+| S2-T7 | Трей, автозапуск, single instance | react-ui | done — меню трея (статус, подключить/отключить, открыть, выход), `tauri-plugin-autostart`, `tauri-plugin-single-instance`, закрытие в трей; трей визуально **не проверен** (headless), автозапуск в системе не регистрировался |
 | S2-T8 | Сквозной сценарий: подписка → локация → подключение → allowlist | оркестратор | Ручная матрица PRD на macOS и CachyOS |
 
 ---
