@@ -146,13 +146,15 @@ pub fn pipe_path() -> String {
 /// Команда создания службы: SYSTEM, автозапуск, фиксированные аргументы.
 ///
 /// `sc.exe` требует пробел после `=`, поэтому ключи записаны как `binPath= ...`.
-/// Значение `binPath` приходит уже экранированным из [`service_bin_path`]:
-/// вложенное экранирование применяется ровно один раз.
+/// Значение `binPath` целиком берётся в кавычки с экранированием внутренних:
+/// `sc.exe` разбирает командную строку на аргументы, и без внешних кавычек
+/// `"C:\Program Files\..." service --pipe ...` распалось бы на несколько
+/// аргументов, а `service` был бы отвергнут как неизвестный параметр.
 pub fn service_create_command(paths: &InstallPaths) -> String {
     format!(
-        "sc.exe create {SERVICE_NAME} binPath= {} start= auto obj= LocalSystem DisplayName= {}",
-        service_bin_path(paths),
-        quote(SERVICE_DISPLAY_NAME),
+        "sc.exe create {SERVICE_NAME} binPath= {bin_path} start= auto obj= LocalSystem DisplayName= {display}",
+        bin_path = quote(&service_bin_path(paths)),
+        display = quote(SERVICE_DISPLAY_NAME),
     )
 }
 
@@ -648,6 +650,21 @@ mod tests {
     }
 
     #[test]
+    fn service_create_command_quotes_whole_bin_path() {
+        // `sc.exe` разбирает строку на аргументы: значение binPath должно быть
+        // одним токеном, иначе `service` и флаги станут «неизвестными параметрами».
+        let command = service_create_command(&paths());
+        let quoted = quote(&service_bin_path(&paths()));
+        assert!(
+            command.contains(&format!("binPath= {quoted} ")),
+            "binPath должен быть одним экранированным токеном: {command}"
+        );
+        // Внутренние кавычки пути экранированы, а не оставлены как есть.
+        assert!(quoted.starts_with("\"\\\""));
+        assert!(quoted.contains("Program Files"));
+    }
+
+    #[test]
     fn service_commands_address_fixed_service_name() {
         assert_eq!(
             service_start_command(),
@@ -765,6 +782,9 @@ mod tests {
 
     #[test]
     fn quotes_in_paths_are_escaped() {
+        // В имени файла Windows кавычки невозможны, но `InstallPaths` публична:
+        // проверяем, что кавычка не вырвется из-под экранирования и не разорвёт
+        // значение binPath на аргументы.
         let escaped = InstallPaths {
             helper: PathBuf::from(r#"C:\Pro"gram\splitroute-helper.exe"#),
             sing_box: PathBuf::from(r#"C:\Pro"gram\sing-box.exe"#),
@@ -772,12 +792,21 @@ mod tests {
             runtime_dir: PathBuf::from(r#"C:\Pro"gramData"#),
             allowed_sid: "S-1-5-21-1-2-3-1001".to_string(),
         };
-        let command = service_create_command(&escaped);
-        assert!(command.contains(r#"C:\Pro\"gram\splitroute-helper.exe"#));
+        let bin_path = service_bin_path(&escaped);
         assert!(
-            !command.contains(r#""C:\Pro"gram"#),
+            bin_path.contains(r#"C:\Pro\"gram\splitroute-helper.exe"#),
+            "кавычка в пути экранируется: {bin_path}"
+        );
+        assert!(
+            !bin_path.contains(r#""C:\Pro"gram"#),
             "неэкранированная кавычка разорвёт binPath"
         );
+        // Каждая кавычка внутри значения либо экранирована, либо закрывает токен.
+        let unbalanced = bin_path
+            .match_indices('"')
+            .filter(|(index, _)| *index == 0 || bin_path.as_bytes()[index - 1] != b'\\')
+            .count();
+        assert_eq!(unbalanced % 2, 0, "кавычки должны быть парными: {bin_path}");
 
         // SID тоже попадает в командную строку службы: посторонние символы не пройдут.
         assert!(validate_sid(&escaped.allowed_sid).is_ok());
