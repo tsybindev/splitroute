@@ -4,6 +4,9 @@
 конфиг ядра и запускает sing-box. Это **спайк**: продакшн-helper будет на Rust
 (AGENTS.md §2–§3), а здесь Python, потому что в окружении спайка нет Rust-тулчейна.
 
+Продакшн-helper реализован в `crates/helper` (S3-T1), macOS-установщик — в
+`src-tauri/src/privileged/macos.rs` (S3-T2); см. `docs/stage-3-report.md`.
+
 ## Что проверено
 
 `python3 -m unittest spike/helper/test_helper.py -v` — 9 тестов, все зелёные:

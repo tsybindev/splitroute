@@ -1,10 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  S1-T10: ЧЕРНОВИК LaunchDaemon для продакшн-helper'а SplitRoute.
-  НЕ устанавливается в этой сессии. Пути и бинарь — заглушки до этапа 3.
+  S1-T10: исторический черновик LaunchDaemon для helper'а SplitRoute.
+  Актуальный plist генерирует MacosInstaller (src-tauri/src/privileged/macos.rs,
+  S3-T2): тот же Label, добавлен --allow-uid, runtime-каталог 0711.
   Правильная установка: /Library/LaunchDaemons/com.splitroute.helper.plist,
   владелец root:wheel, права 0644; бинарь — /Library/PrivilegedHelperTools/.
-  Сокет: /var/run/splitroute/helper.sock, каталог 0700 root, сокет 0600.
+  Сокет: /var/run/splitroute/helper.sock, каталог 0711 root, сокет 0600.
 -->
 <plist version="1.0">
 <dict>
