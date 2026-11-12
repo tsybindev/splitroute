@@ -33,6 +33,20 @@ describe("ConnectScreen", () => {
     expect(screen.getByText("Локация не выбрана")).toBeInTheDocument();
     expect(screen.getByText(/Подписка не добавлена/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Подключить" })).toBeDisabled();
+    expect(
+      screen.getByText(/Разделение DNS по процессу не подтверждено/),
+    ).toBeInTheDocument();
+  });
+
+  it("не показывает предупреждение о DNS в системном режиме", () => {
+    const settings = makeSettings();
+    settings.network.dns_mode = "system";
+    useAppStore.setState({ settings, helperStatus: stoppedStatus });
+    render(<ConnectScreen />);
+
+    expect(
+      screen.queryByText(/Разделение DNS по процессу не подтверждено/),
+    ).not.toBeInTheDocument();
   });
 
   it("подключается и показывает статус и локацию", async () => {

@@ -74,6 +74,14 @@ describe("SettingsScreen", () => {
     );
   });
 
+  it("предупреждает о неподтверждённом разделении DNS", () => {
+    useAppStore.setState({ settings: makeSettings() });
+    render(<SettingsScreen />);
+    expect(
+      screen.getByText(/разделение DNS по процессу не подтверждено/i),
+    ).toBeInTheDocument();
+  });
+
   it("показывает ошибку установки helper'а", async () => {
     const user = userEvent.setup();
     apiMock.helperInstall.mockRejectedValue({

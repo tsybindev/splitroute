@@ -150,6 +150,14 @@ pub(crate) fn connect_inner(state: &AppState) -> Result<HelperStatus, CommandErr
         })?;
 
     let config = build_config(&data.settings.network, profile, &data.rules)?;
+    #[cfg(target_os = "macos")]
+    if data.settings.network.dns_mode == splitroute_protocol::DnsMode::ProcessSplit {
+        state.logs.push(
+            LogLevel::Warn,
+            "DNS: разделение по процессу не подтверждено на macOS 15 / sing-box 1.14; \
+             возможна утечка в локальный resolver",
+        );
+    }
     let status = state.helper.start(config)?;
     state
         .logs
@@ -641,6 +649,26 @@ mod tests {
         .unwrap();
         let entries = state.logs.list(None, 10);
         assert!(!entries.is_empty());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn connect_warns_about_unverified_dns_split() {
+        let state = state_with(Ok(fixture()));
+        subscription_fetch_inner(
+            &state,
+            Some("https://example.invalid/sub".to_string()),
+            None,
+            None,
+        )
+        .unwrap();
+        connect_inner(&state).unwrap();
+
+        let warnings = state.logs.list(Some(LogLevel::Warn), 10);
+        assert!(
+            warnings.iter().any(|entry| entry.message.contains("DNS")),
+            "на macOS должно быть предупреждение о непроверенном разделении DNS"
+        );
     }
 
     #[test]

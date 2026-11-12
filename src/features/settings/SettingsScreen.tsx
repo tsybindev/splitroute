@@ -217,6 +217,11 @@ function SettingsForm({ initial }: { initial: AppSettings }) {
               </option>
               <option value="system">{t("settings.network.dns.system")}</option>
             </select>
+            {form.network.dns_mode === "process" ? (
+              <span className="text-xs text-amber-300">
+                {t("settings.network.dns.processHint")}
+              </span>
+            ) : null}
           </Field>
           <Field
             label={t("settings.network.mixedPort")}

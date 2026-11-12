@@ -124,11 +124,18 @@ export function ConnectScreen() {
           </Badge>
         </Card>
         <Card title={t("connect.dns")}>
-          <Badge tone="info">
+          <Badge
+            tone={settings?.network.dns_mode === "system" ? "info" : "warn"}
+          >
             {settings?.network.dns_mode === "system"
               ? t("connect.dns.system")
               : t("connect.dns.process")}
           </Badge>
+          {settings?.network.dns_mode === "process" ? (
+            <p className="mt-2 text-xs text-amber-300">
+              {t("connect.dns.processWarning")}
+            </p>
+          ) : null}
         </Card>
         <Card title={t("connect.allowlist")}>
           <Badge tone={activeRules > 0 ? "success" : "neutral"}>

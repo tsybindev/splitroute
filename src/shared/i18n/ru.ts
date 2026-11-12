@@ -39,6 +39,8 @@ export const ru = {
   "connect.dns": "DNS",
   "connect.dns.process": "Раздельный по процессам",
   "connect.dns.system": "Системный",
+  "connect.dns.processWarning":
+    "Разделение DNS по процессу не подтверждено на macOS 15 / sing-box 1.14: DNS выбранных приложений может уходить в локальный resolver.",
   "connect.allowlist": "Приложений через прокси",
   "connect.noSubscription": "Подписка не добавлена. Добавьте URL подписки в настройках.",
   "connect.goProfiles": "Перейти к локациям",
@@ -92,6 +94,8 @@ export const ru = {
   "settings.network.dns": "DNS-режим",
   "settings.network.dns.process": "Раздельный по процессам",
   "settings.network.dns.system": "Системный",
+  "settings.network.dns.processHint":
+    "На macOS 15 / sing-box 1.14 разделение DNS по процессу не подтверждено: возможна утечка DNS в локальный resolver. Системный режим использует DNS ОС.",
   "settings.network.logLevel": "Уровень логов",
   "settings.app.title": "Приложение",
   "settings.app.autostart": "Запускать при входе в систему",
