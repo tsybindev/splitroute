@@ -1,0 +1,110 @@
+# Техническое исследование
+
+Дата проверки: 2026-11-12. Документ фиксирует факты, на которых построены PRD и AGENTS.md. Всё, что не проверено запуском, помечено как гипотеза и входит в план spike'а (этап 1).
+
+---
+
+## 1. Per-app маршрутизация в ядрах
+
+| Утверждение | Статус | Источник |
+|---|---|---|
+| sing-box поддерживает `process_name`, `process_path`, `process_path_regex` в route-правилах | Подтверждено документацией | [Route Rule — sing-box](https://sing-box.sagernet.org/configuration/route/rule/) |
+| Эти поля поддерживаются на Linux, Windows и macOS | Подтверждено документацией | там же |
+| В Apple-клиентах sing-box (SFI/SFM/SFT) process-правила не работают, потому что трафик идёт через NetworkExtension | Подтверждено обсуждением мейнтейнера | [sing-box #1533](https://github.com/SagerNet/sing-box/issues/1533) |
+| CLI-ядро sing-box с process-правилами на macOS работает при наличии прав | Подтверждено обсуждением; требует проверки на целевых версиях macOS | [sing-box #1533](https://github.com/SagerNet/sing-box/issues/1533) |
+| mihomo также умеет process-правила, но на macOS 27 у не-Apple-подписанных бинарей они не матчатся | Подтверждено issue с воспроизведением | [mihomo #3355](https://github.com/MetaCubeX/mihomo/issues/3355) |
+| Process-правила и UDP работают нестабильно (пример: mihomo, Windows, iperf3) | Подтверждено issue | [mihomo #1800](https://github.com/MetaCubeX/mihomo/issues/1800) |
+
+**Вывод.** sing-box — подходящее ядро для MVP: не нужно писать свой packet-стек, per-app задаётся декларативно. Но на macOS способ зависит от версии ОС и подписи бинаря, поэтому нужен spike и план Б в виде NetworkExtension.
+
+---
+
+## 2. macOS: почему process-правила под угрозой
+
+Issue [mihomo #3355](https://github.com/MetaCubeX/mihomo/issues/3355) (macOS 27.0.1, arm64):
+
+- `sysctlbyname("net.inet.tcp.pcblist_n")` возвращает корректный размер таблицы, но буферизованное чтение у не-Apple-подписанных процессов возвращает только 48 байт (два заголовка `xinpgen`) с `rc=0` и без ошибки.
+- Apple-подписанные процессы получают полную таблицу.
+- Итог: `findProcessName()` перебирает ноль записей, `PROCESS-NAME`/`PROCESS-PATH` не срабатывают ни в system-proxy, ни (предположительно) в TUN-режиме.
+- Автор проверял на mihomo v1.19.32 и alpha; воспроизведение — 30/30.
+
+**Следствия для нас:**
+
+1. На текущей dev-машине (macOS 15.8.2) риск не проявляется, но релизная поддержка macOS 26/27 обязательна.
+2. Способ проверки в spike: запустить sing-box с правилом `process_name` для тестового процесса, пройти через TUN и посмотреть, применяется ли правило. Проверить на macOS 15.x и на актуальной 26/27.
+3. Если не работает — варианты:
+   - деградация: локальный mixed-inbound + запуск браузера с `--proxy-server`, CLI через переменные окружения, ручные настройки приложений;
+   - NetworkExtension (правильный путь): Packet Tunnel / App Proxy / Transparent Proxy, требует entitlement `com.apple.developer.networking.networkextension` и Apple Developer Program.
+
+---
+
+## 3. macOS: «правильный» per-app
+
+- Apple поддерживает два механизма per-app: Packet Tunnel Provider (весь трафик приложения в VPN) и App Proxy Provider (трафик приложения в прозрачный прокси). Требуется entitlement и подпись.
+- NEFilterDataProvider даёт доступ к метаданным потока, включая приложение-источник, и может использоваться как content filter.
+- Официальный клиент sing-box для Apple использует NetworkExtension; именно поэтому в нём нет process-правил.
+- Источники: [Routing your VPN network traffic](https://developer.apple.com/documentation/networkextension/routing-your-vpn-network-traffic), [Network Extension](https://developer.apple.com/documentation/networkextension), [sing-box for Apple platforms](https://sing-box.sagernet.org/clients/apple/).
+
+**Вывод.** NetworkExtension — этап 5 roadmap, не MVP. Для MVP используем CLI-ядро + root helper с честным предупреждением о риске.
+
+---
+
+## 4. Формат подписки (проверено запросом 2026-11-12)
+
+Запрос с заголовками из `vpn_to_xray.py` (`User-Agent: Happ/4.1.0`, `X-HWID`, `Accept: application/json`) вернул JSON-массив.
+
+Наблюдения:
+
+- 2 профиля: `🇬🇧 Великобритания`, `🇳🇱 Нидерланды [Fragment]`.
+- Все outbound'ы с реальным подключением: `vless`, `security: reality`, `network: tcp`.
+- Теги outbound'ов в профиле: `proxy`, `direct`, `block`, `fragment-out`.
+- Ключи профиля: `remarks`, `dns`, `inbounds`, `routing`, `outbounds`, `burstObservatory`.
+- Inbounds в профиле: `socks`, `http` (порты 10808/10809 в шаблоне скрипта).
+- В `xray-all.json` скрипт кладёт полный конфиг, подменяя `outbounds[0]` на `proxy`; профили без тега `proxy` пропускаются.
+
+**Вывод для парсера.** MVP обязан поддерживать `VLESS + Reality + TCP`. Наличие `fragment-out` означает, что в подписке могут быть дополнительные outbound'ы, которые не нужно тащить в наше ядро. Парсер не должен падать на незнакомых протоколах — только помечать профиль как неподдерживаемый.
+
+---
+
+## 5. Стек и экосистема
+
+| Факт | Источник |
+|---|---|
+| Tauri 2 требует WebKitGTK 4.1 и набор dev-пакетов на Linux; точные списки зависят от дистрибутива | [Tauri: Prerequisites](https://v2.tauri.app/start/prerequisites/) |
+| Clash Verge Rev — Tauri 2 + Rust + sidecar mihomo, GPL-3.0; хороший архитектурный референс | [GitHub](https://github.com/clash-verge-rev/clash-verge-rev) |
+| FlClash — Flutter, GPL-3.0; референс UX выбора приложений | [GitHub](https://github.com/chen08209/FlClash) |
+| sing-box распространяется под GPL-3.0 | [GitHub](https://github.com/SagerNet/sing-box) |
+| Happ — проприетарный клиент; используем только UX-идеи | — |
+
+**Вывод.** Tauri 2 + React + Rust + sing-box sidecar — популярный, лёгкий и проверенный на практике стек (Clash Verge Rev). Лицензия проекта должна быть совместима с GPL-3.0.
+
+---
+
+## 6. Окружение разработки (проверено 2026-11-12)
+
+| Параметр | Значение |
+|---|---|
+| macOS | 15.8.2 (24H232), arm64 |
+| Xcode Command Line Tools | установлены (`/Applications/Xcode.app/Contents/Developer`) |
+| Node.js | v22.23.2 |
+| pnpm | установлен |
+| Go | установлен (`/opt/homebrew/bin/go`) — для проекта не нужен |
+| Rust / Cargo | не установлены — ставим по AGENTS.md |
+| Python 3 | установлен (`/opt/homebrew/bin/python3`) — используется только исходным скриптом |
+
+На CachyOS окружение проверяется на этапе 1 по инструкции AGENTS.md; результаты добавить сюда.
+
+---
+
+## 7. Что осталось проверить (spike, этап 1)
+
+1. **Process-правила на macOS 15.x**: TUN + `process_name`/`process_path_regex` для Chrome, Telegram, CLI-утилиты.
+2. **Process-правила на macOS 26/27**: воспроизводится ли ограничение #3355 для sing-box; если да — зафиксировать и включить план Б.
+3. **UDP/QUIC**: проходит ли QUIC выбранного приложения через прокси, не ломается ли при `process_name`; решение по блокировке QUIC.
+4. **DNS**: разделение DNS по процессу (выбранные → remote, остальные → local) на всех ОС; поведение с `systemd-resolved` и Private Relay.
+5. **Root helper**: минимальный прототип на macOS (LaunchDaemon) и Linux (systemd), проверка сокета и прав.
+6. **Windows**: TUN + `process_name`, `wintun.dll`, поведение службы под SYSTEM.
+7. **Конвертация профилей**: VLESS/Reality из Xray-конфига в sing-box outbound, сверка с `sing-box check`.
+8. **Размер и потребление**: бандл и RAM после сборки MVP.
+
+Результаты каждого пункта — с датой, версиями ОС/ядра и ссылками на логи.

@@ -1,0 +1,43 @@
+# Зависимости и сборка фронтенда
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Rust / Tauri
+src-tauri/target/
+target/
+src-tauri/binaries/
+src-tauri/gen/
+
+# Секреты и локальные конфиги
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.mobileprovision
+
+# Артефакты сборки
+*.dmg
+*.msi
+*.exe
+*.AppImage
+*.deb
+*.rpm
+*.app
+*.snap
+*.zip
+*.tar.gz
+
+# Логи и кэш
+*.log
+logs/
+.cache/
+
+# ОС и IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+!.vscode/extensions.json

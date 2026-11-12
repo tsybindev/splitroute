@@ -1,0 +1,432 @@
+# AGENTS.md — разработка SplitRoute
+
+Документ для разработчиков и AI-агентов. Здесь: стек, архитектура, поднятие среды на macOS и Linux, соглашения и Definition of Done. Продуктовые требования — в [PRD.md](./PRD.md), проверенные технические факты — в [docs/research.md](./docs/research.md).
+
+**Главное правило:** сначала меняем PRD (если меняется поведение продукта), затем код. PRD и AGENTS.md не должны противоречить друг другу.
+
+---
+
+## 1. Что за проект
+
+Кроссплатформенный клиент VLESS/Reality с выборочной маршрутизацией: выбранные приложения ходят через прокси, остальные — напрямую. UI на Tauri 2 + React, системная часть на Rust, ядро — sing-box как sidecar-процесс, запускаемый привилегированным helper'ом.
+
+Рабочее название `SplitRoute`. Идентификаторы пакетов/сервисов до фиксации имени: `splitroute`.
+
+---
+
+## 2. Целевая структура репозитория
+
+Создаётся по мере этапов; на этапе 0 существует только документация.
+
+```
+app/
+├── PRD.md
+├── AGENTS.md
+├── README.md
+├── docs/
+│   └── research.md
+├── package.json                 # фронтенд + скрипты
+├── pnpm-lock.yaml
+├── vite.config.ts
+├── tsconfig.json
+├── index.html
+├── src/                         # React + TypeScript
+│   ├── main.tsx
+│   ├── app/                     # App, провайдеры, навигация по вкладкам
+│   ├── features/
+│   │   ├── connect/             # главный экран, статус, таймер
+│   │   ├── profiles/            # подписка, локации, задержки
+│   │   ├── apps/                # allowlist, каталог приложений
+│   │   ├── settings/
+│   │   └── logs/
+│   └── shared/
+│       ├── api/                 # обёртки Tauri commands и событий
+│       ├── ui/                  # базовые компоненты
+│       ├── lib/                 # утилиты
+│       └── i18n/                # словари ru (en позже)
+├── src-tauri/
+│   ├── Cargo.toml
+│   ├── tauri.conf.json
+│   ├── capabilities/
+│   ├── binaries/                # sing-box-<target-triple>, НЕ в git
+│   ├── src/
+│   │   ├── main.rs
+│   │   ├── lib.rs
+│   │   ├── commands/            # тонкие Tauri commands
+│   │   ├── core/                # состояние, запуск ядра, health
+│   │   ├── subscription/        # загрузка и парсинг Happ JSON
+│   │   ├── routing/             # AppRule -> правила sing-box
+│   │   ├── config/              # генератор конфига
+│   │   ├── privileged/          # клиент helper'а, установка
+│   │   └── logging.rs
+│   └── tests/                   # golden-тесты конфигов, парсера
+├── crates/
+│   ├── protocol/                # типы IPC app <-> helper
+│   └── helper/                  # привилегированный helper
+├── scripts/
+│   ├── core-version.txt         # версия sing-box + sha256 по платформам
+│   ├── fetch-core.sh
+│   ├── dev-helper.sh
+│   └── check-config.sh
+├── Cargo.toml                   # workspace: src-tauri, crates/*
+└── .gitignore
+```
+
+Правила раскладки:
+
+- UI не содержит системной логики и не знает про sing-box напрямую.
+- Вся привилегированная работа — только в `crates/helper`.
+- Общие типы IPC — только в `crates/protocol`, без дублирования структур.
+- Секреты и сгенерированные конфиги — в пользовательских каталогах, не в репозитории.
+
+---
+
+## 3. Стек и зависимости
+
+**Frontend:** React 19, TypeScript, Vite, Tailwind CSS 4, Zustand (состояние), lucide-react (иконки). UI-примитивы — точечно Radix, без тяжёлых kit'ов. Роутера нет: одна окно и вкладки. Тесты — Vitest + Testing Library.
+
+**Rust:** `tauri` 2, `tokio`, `serde`/`serde_json`, `reqwest` (rustls), `sysinfo`, `thiserror`, `anyhow`, `tracing`/`tracing-subscriber`, `uuid`, `directories`, `tokio-util`. Для helper: `interprocess` или нативные Unix socket / named pipe, `windows-service` (Windows), `libc`/`nix` (Unix). Версии фиксируются в lock-файлах и в `scripts/core-version.txt` для ядра.
+
+**Ядро:** sing-box, версия закреплена, бинарь скачивается скриптом с проверкой SHA256. В git бинарники не коммитим.
+
+**Чего не добавляем без обоснования:** Electron, ORM/БД, тяжёлые UI-kit'ы, state-менеджеры-комбайны, i18n-фреймворки, собственный packet-стек, второй VPN-протокол «на всякий случай».
+
+---
+
+## 4. Поднятие среды: macOS
+
+Проверено на macOS 15.8.2 arm64 (Xcode CLT, Node 22 и pnpm уже установлены). Минимально: macOS 13+.
+
+### 4.1. Базовые инструменты
+
+```bash
+xcode-select --install        # если ещё не установлено
+xcode-select -p               # должно вывести путь к Developer dir
+```
+
+### 4.2. Rust
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+rustup default stable
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+rustc --version && cargo --version
+```
+
+### 4.3. Node и pnpm
+
+```bash
+# вариант через fnm (рекомендуется)
+brew install fnm
+eval "$(fnm env)"
+fnm install 22 && fnm use 22
+
+# или использовать уже установленный Node 22
+node --version                  # 22.x
+corepack enable
+corepack prepare pnpm@latest --activate
+pnpm --version
+```
+
+### 4.4. Зависимости проекта и запуск
+
+```bash
+cd app
+pnpm install
+./scripts/fetch-core.sh          # скачает sing-box под текущую платформу
+./scripts/dev-helper.sh          # dev-режим helper'а (попросит sudo)
+pnpm tauri dev
+```
+
+На этапе 0 в репозитории есть только документация: `package.json`, `scripts/` и код появятся на этапе 1. Пока ориентир — целевая структура из §2.
+
+### 4.5. Подпись и helper в dev
+
+- Локальная сборка: ad-hoc подпись `codesign --force --deep --sign - <app>`; для Tauri это делается в конфиге бандла.
+- Dev-режим helper'а: отдельный процесс под `sudo`, сокет в `/tmp/splitroute-helper.sock`, без установки LaunchDaemon.
+- Production-режим: LaunchDaemon в `/Library/LaunchDaemons`, сокет в `/var/run/splitroute/`, права `0600` для пользователя-владельца. Установка/удаление — только через UI и с явным подтверждением.
+- Если helper не устанавливается: проверить подпись (`codesign -dv`), путь plist, `launchctl print system/<label>`, логи `log show --predicate 'process == "splitroute-helper"' --last 5m`.
+
+---
+
+## 5. Поднятие среды: CachyOS / Arch Linux
+
+### 5.1. Системные зависимости Tauri 2
+
+```bash
+sudo pacman -Syu --needed base-devel curl wget file openssl git \
+  webkit2gtk-4.1 gtk3 libsoup3 libappindicator-gtk3 librsvg patchelf \
+  nodejs npm
+```
+
+### 5.2. Rust
+
+```bash
+sudo pacman -S --needed rustup
+rustup default stable
+rustc --version
+```
+
+Не используем `pacman -S rust`, если нужен актуальный toolchain: через rustup управлять версиями проще.
+
+### 5.3. Node и pnpm
+
+```bash
+node --version                  # 22+
+corepack enable
+corepack prepare pnpm@latest --activate
+```
+
+Если corepack отсутствует: `sudo npm install -g corepack` или установить Node через `fnm`.
+
+### 5.4. Запуск и сборка
+
+```bash
+cd app
+pnpm install
+./scripts/fetch-core.sh
+sudo ./scripts/dev-helper.sh    # dev-режим, без установки systemd-юнита
+pnpm tauri dev
+```
+
+Сборка пакетов:
+
+```bash
+pnpm tauri build                # .deb/.rpm/AppImage по доступным bundler'ам
+```
+
+- Для запуска AppImage может понадобиться `fuse2` (`sudo pacman -S fuse2`) или `--appimage-extract-and-run`.
+- Для сборки AppImage — `linuxdeploy` и `patchelf`; если bundler ругается, проверить `pnpm tauri info`.
+
+### 5.5. Права на Linux (production)
+
+- Helper — systemd-юнит `splitroute-helper.service` под root, сокет `/run/splitroute/helper.sock`, доступ по группе/uid.
+- Установка юнита — через polkit (`pkexec`) из UI с подтверждением; ручное удаление — `systemctl disable --now splitroute-helper`.
+- TUN требует `/dev/net/tun` и прав; проверка: `ls -l /dev/net/tun`.
+- Для ручной отладки допустим запуск helper'а под `sudo`, но UI не должен хранить root-пароль.
+
+---
+
+## 6. Поднятие среды: Ubuntu и Fedora
+
+### Ubuntu 22.04 / 24.04
+
+```bash
+sudo apt update
+sudo apt install -y build-essential curl wget file git pkg-config \
+  libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+  libxdo-dev libssl-dev
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env" && rustup default stable
+# Node 22: через fnm/nvm или NodeSource; затем
+corepack enable && corepack prepare pnpm@latest --activate
+```
+
+Если `libwebkit2gtk-4.1-dev` недоступен (старый релиз) — обновиться до 24.04 или использовать официальный репозиторий Tauri; не подменять на 4.0 молча.
+
+### Fedora 40+
+
+```bash
+sudo dnf install -y webkit2gtk4.1-devel openssl-devel curl wget file git \
+  libappindicator-gtk3-devel librsvg2-devel gcc gcc-c++ make
+sudo dnf group install -y "C Development Tools and Libraries"
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env" && rustup default stable
+corepack enable && corepack prepare pnpm@latest --activate
+```
+
+---
+
+## 7. Windows (сборка и проверка)
+
+Разработка ведётся на macOS/CachyOS, но сборку и smoke-тесты Windows нужно уметь воспроизводить (VM или CI).
+
+- Visual Studio Build Tools с workload «Desktop development with C++», Windows SDK.
+- Rust MSVC: `rustup default stable-msvc`, target `x86_64-pc-windows-msvc`.
+- WebView2 Runtime (в Windows 11 встроен; для Windows 10 — установить).
+- `wintun.dll` кладётся рядом с `sing-box.exe` в бандле; версия фиксируется вместе с ядром.
+- Dev-helper: запуск консоли от администратора, без установки службы; production — Windows-сервис под SYSTEM и named pipe `\\.\pipe\splitroute-helper` с ACL на SID пользователя.
+- Кросс-компиляция MSI с macOS/Linux не поддерживается штатно — использовать Windows-раннер или VM.
+
+---
+
+## 8. Ядро sing-box
+
+- Версия и sha256 — в `scripts/core-version.txt`; обновление — отдельный коммит `chore: обновлён sing-box до X.Y.Z` с прогоном golden-тестов.
+- `scripts/fetch-core.sh` определяет target triple, скачивает архив с официальных релизов, проверяет контрольную сумму, распаковывает в `src-tauri/binaries/sing-box-<triple>` и делает `chmod +x`.
+- Tauri sidecar: `externalBin: ["binaries/sing-box"]`, имя файла с triple.
+- Перед запуском helper обязан выполнить `sing-box check -c <config>`; невалидный конфиг не запускается.
+- Конфиг пишется только в root-каталог helper'а, права `0600`, удаляется при остановке.
+- Inbounds sing-box слушают только `127.0.0.1` (mixed-inbound), TUN — штатный интерфейс.
+- Логи ядра: helper читает stdout/stderr, отдаёт приложению по подписке; в файл — с ротацией.
+
+---
+
+## 9. Команды
+
+Из корня `app/`:
+
+```bash
+pnpm install                 # зависимости фронтенда
+pnpm dev                     # только Vite, без Tauri
+pnpm tauri dev               # приложение в dev-режиме
+pnpm tauri build             # сборка бандла
+pnpm typecheck               # tsc --noEmit
+pnpm lint                    # eslint
+pnpm test                    # vitest
+
+cargo fmt --all
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cargo build -p splitroute-helper
+
+./scripts/fetch-core.sh
+./scripts/check-config.sh path/to/config.json
+```
+
+Правило: перед коммитом — `pnpm typecheck && pnpm lint && cargo fmt --all --check && cargo clippy ... && cargo test --workspace` (или соответствующий CI-job).
+
+---
+
+## 10. Архитектурные правила
+
+1. **Разделение ответственности.** UI → Tauri commands → Rust core → helper → sing-box. UI не формирует конфиг, не знает путей ядра и не работает с root.
+2. **Минимальная привилегированная поверхность.** Helper принимает только `install`, `uninstall`, `start`, `stop`, `status`. Никаких `exec`, произвольных путей и shell-команд.
+3. **Аутентификация IPC.** Unix socket: `0600`, владелец — пользователь, helper проверяет peer uid через `SO_PEERCRED`/`getpeereid`. Windows: named pipe с ACL на SID пользователя, проверка клиента. Сообщения — JSON с версией протокола и лимитом размера.
+4. **Конфиг — данные, не код.** Генератор возвращает `serde_json::Value`; helper не исполняет пользовательские строки. Все внешние строки (имена профилей, пути) экранируются при логировании.
+5. **Секреты.** URL подписки, HWID, UUID и приватные параметры не попадают в git, логи и диагностику. В пользовательском конфиге — с правами `0600`.
+6. **Чистые функции и тесты.** `parse_subscription(&str) -> Result<Vec<Profile>>` и `build_config(&Settings, &Profile, &[AppRule]) -> Result<Value>` тестируются golden-файлами.
+7. **Ошибки.** В библиотеках — `thiserror`, на границе Tauri commands — `anyhow` с контекстом; пользователю — типизированный код ошибки + русский текст.
+8. **Состояние.** Единый источник истины в Rust; UI — проекция через события. Никаких двух независимых «подключено/отключено».
+9. **Платформенный код.** `#[cfg(target_os = ...)]` изолирован в `privileged/` и `apps/`, не размазан по бизнес-логике.
+10. **Никакой телеметрии.** Внешние запросы только: подписка, проверка задержки, прокси-соединение.
+
+---
+
+## 11. Протокол helper'а (черновик)
+
+```json
+{ "protocol": 1, "id": "uuid", "command": "start", "payload": { "config": { } } }
+{ "protocol": 1, "id": "uuid", "ok": true, "payload": { "pid": 1234, "state": "running" } }
+{ "protocol": 1, "id": "uuid", "ok": false, "error": { "code": "CONFIG_INVALID", "message": "..." } }
+```
+
+- `status` возвращает состояние, pid, версию ядра, время старта.
+- `stop` идемпотентен.
+- Таймаут на ответ — 10 с; helper не блокируется на одном клиенте.
+- Версия протокола проверяется; несовпадение → helper считается устаревшим и предлагается переустановка.
+
+---
+
+## 12. Соглашения проекта
+
+### Код
+
+- Комментарии — **на русском**. Имена переменных, функций, файлов, типов — английские.
+- Комментарии только там, где логика неочевидна; не дублировать код.
+- Форматирование: `cargo fmt`, Prettier. Линт: `clippy -D warnings`, ESLint без отключений без причины.
+- Публичные функции ядра — с короткой документацией `///` на русском.
+- Не добавлять зависимости «на будущее»; каждая новая — с обоснованием в PR/коммите.
+
+### Git
+
+- Ветка по умолчанию — `main`. Рабочие ветки: `feat/...`, `fix/...`, `chore/...`.
+- Коммиты: `<type>: <описание на русском>`, тип — английский.
+  - `feat: добавлен выбор приложений в allowlist`
+  - `fix: исправлено падение парсера без outbound proxy`
+  - `docs: обновлён раздел про macOS NetworkExtension`
+  - `chore: обновлён sing-box до 1.12.x`
+  - `test: добавлены golden-тесты генератора конфига`
+- Заголовок до 72 символов, без точки в конце; тело — по желанию, на русском.
+- Один коммит — одна логическая задача. Не смешивать рефакторинг и фичу.
+- Секреты, бинарники ядра и артефакты сборки в git не попадают.
+- Коммит создаётся по завершении задачи, если пользователь не попросил иначе.
+
+### Документация
+
+- Изменение поведения → правка PRD.md в том же коммите.
+- Новый платформенный факт/ограничение → запись в docs/research.md с датой и ссылкой.
+- AGENTS.md обновляется при изменении команд, структуры или среды.
+
+---
+
+## 13. Тестирование и Definition of Done
+
+### Автотесты
+
+- Парсер подписки: валидный JSON, пустой массив, отсутствующий `proxy`, битый JSON, HTTP-ошибки (мокать клиент).
+- Генератор конфига: golden-файлы для allowlist, direct-правил, IPv6 on/off, DNS-режимов.
+- Протокол helper'а: сериализация/десериализация, неизвестная команда, несовпадение версии.
+- UI: ключевые экраны и состояния (Vitest + Testing Library), без скриншотных тестов в MVP.
+
+### Ручная матрица (минимум)
+
+| Проверка | macOS | CachyOS | Ubuntu | Windows |
+|---|---|---|---|---|
+| Подключение/отключение | ✓ | ✓ | ✓ | ✓ |
+| Выбранное приложение идёт через прокси | ✓ | ✓ | ✓ | ✓ |
+| Невыбранное приложение идёт напрямую | ✓ | ✓ | ✓ | ✓ |
+| Браузер (Chrome/Safari/Firefox) | ✓ | ✓ | ✓ | ✓ |
+| Telegram | ✓ | ✓ | ✓ | ✓ |
+| CLI-утилита из терминала | ✓ | ✓ | ✓ | ✓ |
+| DNS без утечек | ✓ | ✓ | ✓ | ✓ |
+| Сон/пробуждение, смена сети | ✓ | ✓ | ✓ | ✓ |
+| Выход без зависших TUN/процессов | ✓ | ✓ | ✓ | ✓ |
+| Ошибка подписки и восстановление | ✓ | ✓ | ✓ | ✓ |
+
+Проверка «невыбранное напрямую»: сравнить внешний IP процесса с IP прокси (например, `curl ifconfig.me` внутри выбранного и невыбранного приложения/процесса).
+
+### Definition of Done
+
+- [ ] Поведение соответствует PRD; при изменении — PRD обновлён.
+- [ ] Есть тесты (или объяснение, почему их нет) и они зелёные.
+- [ ] `pnpm typecheck`, `pnpm lint`, `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test` проходят.
+- [ ] Проверено на целевой ОС вручную по релевантным пунктам матрицы.
+- [ ] Логи не содержат секретов; ошибки понятны пользователю.
+- [ ] Обновлены AGENTS.md/research.md, если менялись команды, среда или платформенные факты.
+- [ ] Коммит оформлен по соглашениям.
+
+---
+
+## 14. Правила для AI-агентов
+
+1. **Не начинай с кода, если меняется продукт.** Сначала предложи правку PRD, дождись согласования.
+2. **Спайк перед платформенным риском.** Для macOS process-правил, DNS, QUIC, helper'ов — сначала минимальный эксперимент, результат в docs/research.md, потом реализация.
+3. **Не добавляй зависимости и не меняй архитектуру молча.** Обоснуй, покажи альтернативы, выбери минимальную.
+4. **Не трогай сторонние бинарники.** sing-box только скачивается pinned-версией, без патчей в репозитории.
+5. **Не коммить секреты.** Проверяй diff на URL подписки, HWID, UUID, токены.
+6. **Не выполняй разрушительные команды** (`rm -rf`, `git reset --hard`, удаление сервисов, `systemctl disable`) без явного запроса; для установки helper'а — только через предусмотренный интерфейс.
+7. **Не оставляй грязную среду.** Запущенные dev-серверы, helper'ы и TUN-интерфейсы останавливаются после проверки.
+8. **Следуй комментариям и коммитам на русском**; идентификаторы — английские.
+9. **Обновляй документы в том же изменении**, а не отдельным «когда-нибудь».
+10. **Если факт не проверен — помечай как гипотезу** и не выдавай за требование.
+
+---
+
+## 15. Известные платформенные грабли
+
+- **macOS 27+**: process-правила могут не работать у не-Apple-подписанных бинарей (sysctl `pcblist` → 48 байт). См. PRD R1. На macOS 15.8 работает; проверять на актуальных версиях перед релизом.
+- **macOS**: helper как LaunchDaemon требует корректной подписи; ad-hoc подпись годится для dev, не для распространения. NetworkExtension требует entitlement и Apple Developer Program.
+- **Windows**: TUN требует прав администратора, `wintun.dll` должен быть рядом с ядром; Defender/Firewall может блокировать первый запуск; UDP/QUIC матчинг нестабилен.
+- **Linux**: `systemd-resolved` конфликтует с DNS в туннеле; трей требует `libappindicator` (на Wayland возможны проблемы); AppImage требует FUSE 2 или распаковки; Flatpak/Snap-приложения имеют sandbox-пути.
+- **Все ОС**: другие VPN/Docker создают TUN-интерфейсы и маршруты — нужен детект конфликта; смена сети и сон/пробуждение ломают существующий туннель, нужен reconnect.
+- **Дочерние процессы**: правило матчится по процессу-владельцу сокета, а не по «терминалу»; для CLI используем конкретные пути/каталоги.
+- **GPL-3.0**: при поставке sing-box и заимствовании кода из Clash Verge Rev/FlClash проект распространяется под GPL-3.0; нужны LICENSE, THIRD_PARTY_NOTICES и предложение исходников.
+
+---
+
+## 16. Troubleshooting среды
+
+| Симптом | Что проверить |
+|---|---|
+| `webkit2gtk` не найден на Linux | установлен ли `webkit2gtk-4.1` (не 4.0), `pkg-config --modversion webkit2gtk-4.1` |
+| Белое/чёрное окно WebKit | `WEBKIT_DISABLE_DMABUF_RENDERER=1 pnpm tauri dev` |
+| Нет иконки в трее Linux | `libappindicator-gtk3`/`libayatana-appindicator3`, расширение AppIndicator в DE |
+| `pnpm: command not found` | `corepack enable && corepack prepare pnpm@latest --activate` |
+| Rust-сборка падает на OpenSSL | использовать rustls-фичи, проверить `openssl`/`pkg-config` |
+| Helper не отвечает | сокет существует и права `0600`, процесс запущен, версия протокола совпадает, логи `tracing` |
+| TUN не создаётся | права root/CAP_NET_ADMIN, `/dev/net/tun`, не занят ли TUN другим VPN |
+| macOS: process-правило не срабатывает | проверить версию macOS (риск R1), имя процесса и путь через `ps`/`lsof`, лог матчинга |
+| Windows: нет трафика через TUN | `wintun.dll` рядом с ядром, запущен ли helper от SYSTEM, исключения Firewall |
+| Сборка AppImage падает | `fuse2`, `linuxdeploy`, `patchelf`, `pnpm tauri info` |
