@@ -26,7 +26,7 @@
 
 ---
 
-## Этап 1 — spike: TUN + process-правила (todo)
+## Этап 1 — spike: TUN + process-правила (done с оговорками)
 
 Цель: доказать или опровергнуть, что выбранная архитектура (sing-box sidecar + TUN + process-правила + root-helper) работает на целевых ОС, и зафиксировать ограничения. Продакшн-код на этом этапе не пишется: только воспроизводимые эксперименты в `spike/` и отчёт.
 
@@ -42,8 +42,8 @@
 | S1-T8 | DNS-политика: разделение по процессу, `systemd-resolved`, Private Relay | platform-native | S1-T4, S1-T6 | `docs/spikes/stage-1.md` | in-progress — разделение DNS по процессу подтверждено без TUN (`spike/macos/dns_rules_test.py`); утечки через TUN, `systemd-resolved` и Private Relay **не проверены** |
 | S1-T9 | QUIC/UDP: проходит ли трафик выбранного приложения, нужна ли блокировка | platform-native | S1-T4 | `docs/spikes/stage-1.md` | in-progress — UDP и process-правила для UDP подтверждены (`spike/macos/udp_rules_test.py`); QUIC поверх TUN не проверен, предварительное решение в `spike/macos/README.md` |
 | S1-T10 | Прототип helper: macOS LaunchDaemon и Linux systemd, сокет и права | platform-native | S1-T4, S1-T6 | `spike/helper/` | done — прототип: сокет 0600, uid пира, только start/stop/status, конфиг через `sing-box check`, 6 тестов (`spike/helper/README.md`); установка сервисов и подпись — этап 3 |
-| S1-T11 | Отчёт этапа: go/no-go по платформам, риски, решение по macOS | оркестратор | S1-T4…S1-T10 | `docs/spikes/stage-1.md` | Отчёт содержит результаты, логи, версии, вывод и обновлённые риски PRD |
-| S1-T12 | Handoff этапа 2 | оркестратор | S1-T11 | `NEXT_SESSION.md`, `TASKS.md` | Промпт следующей сессии самодостаточен, статусы задач обновлены |
+| S1-T11 | Отчёт этапа: go/no-go по платформам, риски, решение по macOS | оркестратор | S1-T4…S1-T10 | `docs/spikes/stage-1.md` | done — отчёт: методика, версии, результаты, go/no-go, обновлённые риски (`docs/spikes/stage-1.md`) |
+| S1-T12 | Handoff этапа 2 | оркестратор | S1-T11 | `NEXT_SESSION.md`, `TASKS.md` | done — `NEXT_SESSION.md` содержит самодостаточный промпт этапа 2, статусы обновлены |
 
 ---
 

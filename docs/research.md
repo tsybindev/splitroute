@@ -108,3 +108,29 @@ Issue [mihomo #3355](https://github.com/MetaCubeX/mihomo/issues/3355) (macOS 27.
 8. **Размер и потребление**: бандл и RAM после сборки MVP.
 
 Результаты каждого пункта — с датой, версиями ОС/ядра и ссылками на логи.
+
+---
+
+## 8. Результаты этапа 1 (проверено 2026-11-12)
+
+Окружение: macOS 15.8.2 (24H232), arm64; sing-box 1.14.4 (pinned); Python 3.14.7;
+Go 1.27.0; без root. Полный отчёт — [docs/spikes/stage-1.md](./spikes/stage-1.md).
+
+| Утверждение | Статус | Как проверено |
+|---|---|---|
+| `process_name` и `process_path_regex` работают для TCP на macOS 15 | **подтверждено** | `spike/macos/process_rules_test.py`, 5/5 кейсов |
+| helper-процессы Chrome матчатся по `process_path_regex` `.app` | **подтверждено** | лог `router: found process path: …/Google Chrome Helper (Aperitif)…` |
+| Процесс матчится по себе, а не по родителю (R2) | **подтверждено** | дочерний `socksprobe`/`curl` матчится собственным путём |
+| Process-правила работают для UDP | **подтверждено** | `spike/macos/udp_rules_test.py`, 2/2 |
+| Разделение DNS по процессу применяется ядром | **подтверждено** | `spike/macos/dns_rules_test.py`, 2/2 (два разных DNS-сервера) |
+| TUN поднимается без root | **опровергнуто (ожидаемо)** | `configure tun interface: operation not permitted` |
+| macOS 26/27 и R1 | **не проверено** | ОС недоступна |
+| CachyOS / Linux | **не проверено** | машины нет, Docker-демон не запущен |
+| Windows | **не проверено** | VM отсутствует |
+| QUIC поверх TUN, DNS-утечки через TUN | **не проверено** | нужны root и реальный сервер |
+| `override_address` у direct-outbound | **удалён в 1.13+** | ошибка декодера sing-box; заменён route-правилом |
+| Прототип helper'а (сокет 0600, start/stop/status) | **подтверждено** | `spike/helper/test_helper.py`, 6/6 |
+
+Практические следствия для этапа 2: пути процессов на macOS канонизировать
+(`/private/var/...`); для TUN нужен root/helper; непроверенные платформы нельзя
+объявлять поддерживаемыми до отдельных прогонов.
