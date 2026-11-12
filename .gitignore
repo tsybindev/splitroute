@@ -18,6 +18,9 @@ src-tauri/gen/
 *.p12
 *.mobileprovision
 
+# Харнесс-специфичные проекции субагентов (источник — agents/)
+.commandcode/
+
 # Артефакты сборки
 *.dmg
 *.msi
