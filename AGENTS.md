@@ -158,12 +158,13 @@ pnpm tauri dev                   # UI + ядро; helper берётся из с�
 SPLITROUTE_MOCK_HELPER=1 pnpm tauri dev
 ```
 
-Прототип helper'а из спайка запускается отдельно:
+Прототип helper'а из спайка запускается отдельно. Для TUN — под `sudo`; сокет
+передаётся пользователю через `SUDO_UID`/`SUDO_GID`, клиент с его uid допускается:
 
 ```bash
-python3 spike/helper/helper.py \
-  --socket "$TMPDIR/splitroute-helper.sock" \
-  --runtime-dir "$TMPDIR/splitroute-helper" \
+sudo python3 spike/helper/helper.py \
+  --socket /tmp/sr-helper.sock \
+  --runtime-dir /tmp/sr-helper \
   --sing-box ./src-tauri/binaries/sing-box-aarch64-apple-darwin
 ```
 
@@ -447,6 +448,7 @@ cargo build -p splitroute-helper
 
 - **macOS 27+**: process-правила могут не работать у не-Apple-подписанных бинарей (sysctl `pcblist` → 48 байт). См. PRD R1. На macOS 15.8 работает; проверять на актуальных версиях перед релизом.
 - **macOS**: helper как LaunchDaemon требует корректной подписи; ad-hoc подпись годится для dev, не для распространения. NetworkExtension требует entitlement и Apple Developer Program.
+- **macOS 15 + sing-box 1.14**: DNS-правила по процессу для TUN не матчатся — `dns/tls[remote]` остаётся unreferenced, DNS выбранного приложения уходит в локальный resolver. `hijack-dns` и `sniff` это не исправляют; remote DoT через прокси сам по себе работает. Fallback — PRD §6.4, подробности — `docs/research.md` §9 и `docs/stage-2-report.md`. В UI и логе показывается предупреждение.
 - **Windows**: TUN требует прав администратора, `wintun.dll` должен быть рядом с ядром; Defender/Firewall может блокировать первый запуск; UDP/QUIC матчинг нестабилен.
 - **Linux**: `systemd-resolved` конфликтует с DNS в туннеле; трей требует `libappindicator` (на Wayland возможны проблемы); AppImage требует FUSE 2 или распаковки; Flatpak/Snap-приложения имеют sandbox-пути.
 - **Все ОС**: другие VPN/Docker создают TUN-интерфейсы и маршруты — нужен детект конфликта; смена сети и сон/пробуждение ломают существующий туннель, нужен reconnect.

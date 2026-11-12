@@ -47,7 +47,7 @@
 
 ---
 
-## Этап 2 — ядро MVP (done: G2.1–G2.5; S2-T9 blocked — нет машины с CachyOS)
+## Этап 2 — ядро MVP (done: G2.1–G2.5; S2-T9 blocked — нет CachyOS; S2-T10 todo — DNS-политика)
 
 | ID | Задача | Владелец | Критерий приёмки |
 |---|---|---|---|
@@ -56,10 +56,11 @@
 | S2-T3 | Парсер подписки + фикстуры + тесты | rust-core | done — `src-tauri/src/subscription/`: VLESS+Reality/TLS+TCP → `Profile`, пропуски с причинами; тесты на валидный/пустой/нет proxy/битый JSON/неподдерживаемый транспорт + фикстура `spike/fixtures/subscription.json` |
 | S2-T4 | Генератор sing-box конфига + golden-тесты | rust-core | done — `src-tauri/src/config/`: TUN, DNS по процессу/системный, allowlist, IPv6 on/off, блок IPv6 для выбранных; golden-файлы + интеграционный `sing-box check` |
 | S2-T5 | Клиент helper'а (mock + реальный), установка/удаление | platform-native | done — `src-tauri/src/privileged/`: трейт `HelperClient`, Unix-транспорт (JSON-строки, лимит, таймаут, версия), mock, типизированные ошибки; `Installer`-заглушка (установка — этап 3); tests 9+4+1 |
-| S2-T6 | Экраны: Главная, Локации, Приложения, Настройки, Логи | react-ui | done — экраны по PRD §7, i18n ru, все состояния и ошибки; обёртки в `src/shared/api`, состояние в Zustand; тесты 22 (Vitest) |
+| S2-T6 | Экраны: Главная, Локации, Приложения, Настройки, Логи | react-ui | done — экраны по PRD §7, i18n ru, все состояния и ошибки; обёртки в `src/shared/api`, состояние в Zustand; тесты 24 (Vitest) |
 | S2-T7 | Трей, автозапуск, single instance | react-ui | done — меню трея (статус, подключить/отключить, открыть, выход), `tauri-plugin-autostart`, `tauri-plugin-single-instance`, закрытие в трей; single instance проверен headless; трей визуально **не проверен**, автозапуск в системе не регистрировался |
-| S2-T8 | Сквозной сценарий на macOS: подписка → локация → подключение → allowlist | оркестратор | done — отчёт `docs/stage-2-report.md`: пустое состояние, ошибки подписки (401/403/404/JSON/пусто/нет профилей), 2 профиля и автовыбор, сохранение выбора после перезапуска, правила `process_name`/`path_regex` и выключение, connect/disconnect через mock helper, время сессии; реальный TUN/IP и трей **не проверены** (нет root/подписки/UI-автоматизации) |
+| S2-T8 | Сквозной сценарий на macOS: подписка → локация → подключение → allowlist | оркестратор | done — отчёт `docs/stage-2-report.md`: реальная подписка (Happ UA → 2 профиля VLESS+Reality/TCP), реальный TUN, выбранный `curl` через прокси, невыбранный `python3` напрямую, выключение правила, очистка TUN/маршрутов; ошибки подписки и UI-состояния покрыты тестами. **DNS-утечка выявлена** (см. S2-T10), трей визуально **не проверен** (нет UI-автоматизации) |
 | S2-T9 | Сквозной сценарий на CachyOS | platform-native | **blocked** — машины с CachyOS нет; перенесено в этап 3 (S3-T7) |
+| S2-T10 | DNS-политика: fallback при неработающем per-process DNS | rust-core + react-ui | **todo** — на macOS 15 / sing-box 1.14 process-правила DNS для TUN не матчатся, `dns/tls[remote]` не используется; в UI/логе уже предупреждение. Нужно выбрать: системный DNS для всех (PRD §6.4) или весь DNS через прокси, обновить PRD и конфиг, добавить тест |
 
 ---
 

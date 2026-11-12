@@ -6,7 +6,7 @@
 
 ## Что проверено
 
-`python3 -m unittest spike/helper/test_helper.py -v` — 6 тестов, все зелёные:
+`python3 -m unittest spike/helper/test_helper.py -v` — 9 тестов, все зелёные:
 
 | Проверка | Результат |
 |---|---|
@@ -19,12 +19,16 @@
 | Несовпадение версии протокола → `PROTOCOL_MISMATCH` | ok |
 | Невалидный JSON → `BAD_REQUEST` | ok |
 | Сообщение > 1 МиБ → `TOO_LARGE` | ok |
+| Под root разрешён uid из `SUDO_UID` | ok |
+| Без `SUDO_UID` под root — текущий uid | ok |
+| Не-root — текущий uid | ok |
 
 После тестов `pgrep -fl 'sing-box run'` пуст — зависших ядер нет.
 
 ## Безопасность в прототипе
 
-- Unix-сокет `AF_UNIX`, права `0600`, владелец — текущий пользователь.
+- Unix-сокет `AF_UNIX`, права `0600`, владелец — текущий пользователь; под `sudo`
+  владелец — `SUDO_UID`, и этому uid разрешено подключение.
 - uid пира проверяется: `getpeereid` на macOS, `SO_PEERCRED` на Linux.
 - Набор команд фиксирован: `start`, `stop`, `status`. Никаких `exec`, произвольных
   путей, shell и т.п.
@@ -47,6 +51,8 @@
 
 ## Dev-режим
 
+Без TUN (только команды и конфиг):
+
 ```bash
 cd app
 python3 spike/helper/helper.py \
@@ -55,8 +61,18 @@ python3 spike/helper/helper.py \
   --sing-box ./src-tauri/binaries/sing-box-aarch64-apple-darwin
 ```
 
-Сокет и runtime-каталог — во `$TMPDIR`, сервис не устанавливается. Остановить:
-Ctrl+C (helper сам останавливает ядро и удаляет сокет).
+С TUN — под `sudo` (сокет передаётся пользователю через `SUDO_UID`/`SUDO_GID`):
+
+```bash
+sudo python3 spike/helper/helper.py \
+  --socket /tmp/sr-helper.sock \
+  --runtime-dir /tmp/sr-helper \
+  --sing-box ./src-tauri/binaries/sing-box-aarch64-apple-darwin
+```
+
+Сервис не устанавливается. Остановить: Ctrl+C (helper сам останавливает ядро и
+удаляет сокет); runtime-каталог и лог могут остаться root'овыми —
+`sudo rm -rf /tmp/sr-helper`.
 
 ## Файлы установки (черновики, НЕ устанавливались)
 
@@ -70,8 +86,9 @@ Ctrl+C (helper сам останавливает ядро и удаляет со
 
 ## Что НЕ проверено
 
-- Реальная установка LaunchDaemon/systemd и работа под root — нужны права и
-  подпись; не выполнялось.
-- Проверка конфига с TUN под root — TUN в сессии недоступен.
+- Реальная установка LaunchDaemon/systemd и подпись — этап 3; не выполнялось.
+- TUN под root проверен 2026-11-12 на macOS 15.8.2 / sing-box 1.14.4:
+  выбранный процесс через прокси, невыбранный напрямую, очистка после `stop`
+  (см. `docs/stage-2-report.md`). DNS-разделение по процессу не работает.
 - Поведение при падении ядра, автоперезапуск — не реализовано в прототипе
   (описано как задача этапа 3).
