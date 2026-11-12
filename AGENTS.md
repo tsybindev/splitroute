@@ -26,8 +26,12 @@ app/
 ├── NEXT_SESSION.md              # готовый промпт для следующей сессии
 ├── README.md
 ├── LICENSE
-├── .commandcode/
-│   └── agents/                  # проектные субагенты (rust-core, react-ui, ...)
+├── agents/                      # переносимые описания субагентов (источник истины)
+│   ├── rust-core.md
+│   ├── react-ui.md
+│   ├── platform-native.md
+│   └── verifier.md
+├── .commandcode/                # локальная проекция агентов, не в git
 ├── docs/
 │   ├── research.md
 │   └── spikes/                  # отчёты этапа 1
@@ -73,6 +77,7 @@ app/
 │   ├── core-version.txt         # версия sing-box + sha256 по платформам
 │   ├── fetch-core.sh
 │   ├── dev-helper.sh
+│   ├── sync-agents.sh           # проекция agents/ в каталог харнесса
 │   └── check-config.sh
 ├── Cargo.toml                   # workspace: src-tauri, crates/*
 └── .gitignore
@@ -498,4 +503,4 @@ cargo build -p splitroute-helper
 9. **Цель формулируется проверяемо.** `/goal` должен ссылаться на этап и задачи из `TASKS.md`, а не на «сделать хорошо».
 10. **Без бесконечного цикла.** Если субагент не уложился в задачу — оркестратор уменьшает объём, а не повторяет тот же промпт.
 
-Проектные субагенты лежат в `.commandcode/agents/` и загружаются из рабочего каталога, поэтому сессию запускаем из `app/`. Пример цели: `/goal Выполни этап 1 из TASKS.md согласно AGENTS.md`. Промпт для новой сессии всегда берём из `NEXT_SESSION.md`.
+Описания субагентов лежат в `agents/` — это источник истины в обычном Markdown, не привязанный к харнессу. Для Command Code выполни `./scripts/sync-agents.sh`: он создаст локальную проекцию в `.commandcode/agents/` (в git не попадает). Для другого харнесса укажи путь явно, например `./scripts/sync-agents.sh .claude/agents`, либо используй файлы ролей как системные промпты. Сессию запускаем из `app/`, чтобы подхватился `AGENTS.md`. Пример цели: `/goal Выполни этап 1 из TASKS.md согласно AGENTS.md`. Промпт для новой сессии всегда берём из `NEXT_SESSION.md`.
