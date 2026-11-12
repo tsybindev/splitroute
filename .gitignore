@@ -36,6 +36,9 @@ src-tauri/gen/
 # Логи и кэш
 *.log
 logs/
+# ...кроме каталога исходников с экраном логов (иначе правило выше его скрывает)
+!src/features/logs/
+!src/features/logs/**
 .cache/
 __pycache__/
 
