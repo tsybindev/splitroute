@@ -1,16 +1,28 @@
 //! Клиент и установщик привилегированного helper'а.
 //!
-//! Транспорт — Unix-сокет, JSON по одной строке. Установка сервиса на macOS —
-//! LaunchDaemon через `MacosInstaller`; на остальных платформах пока заглушка.
+//! Транспорт — Unix-сокет, JSON по одной строке. Установка сервиса: на macOS —
+//! LaunchDaemon через `MacosInstaller`, на Linux — systemd-юнит через
+//! `LinuxInstaller`; на остальных платформах пока заглушка.
 
 pub mod installer;
 pub mod mock;
 
-#[cfg(unix)]
+// Клиент собирается на всех ОС: протокол общий, транспорт выбирается внутри
+// по `cfg` (Unix-сокет или named pipe), тесты обмена гоняются на любой ОС.
 pub mod client;
 
 #[cfg(target_os = "macos")]
 pub mod macos;
+
+// Windows-установщик тоже собирается в тестовой конфигурации: генерация команд
+// `sc.exe`, bat-скриптов и путей — чистые функции, тесты гоняются на любой ОС.
+#[cfg(any(target_os = "windows", test))]
+pub mod windows;
+
+// Linux-установщик собирается и в тестовой конфигурации: генерация юнита и
+// скриптов — чистые функции, тесты гоняются на любой ОС.
+#[cfg(any(target_os = "linux", test))]
+pub mod linux;
 
 use serde_json::Value;
 use splitroute_protocol::{ErrorCode, HelperStatus, ProtocolError};
@@ -21,8 +33,17 @@ pub use mock::MockHelperClient;
 #[cfg(unix)]
 pub use client::{default_socket_path, UnixHelperClient};
 
+#[cfg(windows)]
+pub use client::{default_pipe_path, WindowsPipeClient};
+
 #[cfg(target_os = "macos")]
 pub use macos::MacosInstaller;
+
+#[cfg(target_os = "windows")]
+pub use windows::WindowsInstaller;
+
+#[cfg(target_os = "linux")]
+pub use linux::LinuxInstaller;
 
 /// Ошибка клиента helper'а (не зависит от платформы).
 #[derive(Debug, thiserror::Error)]

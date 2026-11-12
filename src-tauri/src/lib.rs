@@ -28,7 +28,16 @@ fn default_helper() -> Arc<dyn HelperClient> {
     Arc::new(privileged::UnixHelperClient::from_env())
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn default_helper() -> Arc<dyn HelperClient> {
+    if mock_helper_enabled() {
+        return Arc::new(privileged::MockHelperClient::new());
+    }
+    Arc::new(privileged::WindowsPipeClient::from_env())
+}
+
+// Прочие цели (мобильные): helper'а нет, работает mock.
+#[cfg(not(any(unix, windows)))]
 fn default_helper() -> Arc<dyn HelperClient> {
     Arc::new(privileged::MockHelperClient::new())
 }
@@ -38,7 +47,15 @@ fn default_installer() -> Arc<dyn HelperInstaller> {
     {
         Arc::new(privileged::MacosInstaller::new())
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        Arc::new(privileged::LinuxInstaller::new())
+    }
+    #[cfg(target_os = "windows")]
+    {
+        Arc::new(privileged::WindowsInstaller::new())
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {
         Arc::new(privileged::UnsupportedInstaller)
     }
