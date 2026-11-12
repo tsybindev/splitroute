@@ -1,14 +1,16 @@
+import type { MessageKey } from "../shared/i18n/ru";
+
 export type TabId = "connect" | "profiles" | "apps" | "settings" | "logs";
 
 export interface Tab {
   id: TabId;
-  label: string;
+  labelKey: MessageKey;
 }
 
 export const tabs: readonly Tab[] = [
-  { id: "connect", label: "Главная" },
-  { id: "profiles", label: "Локации" },
-  { id: "apps", label: "Приложения" },
-  { id: "settings", label: "Настройки" },
-  { id: "logs", label: "Логи" },
+  { id: "connect", labelKey: "nav.connect" },
+  { id: "profiles", labelKey: "nav.profiles" },
+  { id: "apps", labelKey: "nav.apps" },
+  { id: "settings", labelKey: "nav.settings" },
+  { id: "logs", labelKey: "nav.logs" },
 ] as const;

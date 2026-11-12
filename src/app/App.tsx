@@ -1,10 +1,13 @@
-import { useState } from "react";
+import { useEffect } from "react";
 import { tabs, type TabId } from "./tabs";
 import { ConnectScreen } from "../features/connect/ConnectScreen";
 import { ProfilesScreen } from "../features/profiles/ProfilesScreen";
 import { AppsScreen } from "../features/apps/AppsScreen";
 import { SettingsScreen } from "../features/settings/SettingsScreen";
 import { LogsScreen } from "../features/logs/LogsScreen";
+import { t } from "../shared/i18n/ru";
+import { useAppStore } from "../shared/state/appStore";
+import { StatusBadge } from "../shared/ui/StatusBadge";
 
 const screens: Record<TabId, () => React.JSX.Element> = {
   connect: ConnectScreen,
@@ -15,14 +18,33 @@ const screens: Record<TabId, () => React.JSX.Element> = {
 };
 
 export function App() {
-  const [active, setActive] = useState<TabId>("connect");
+  const active = useAppStore((state) => state.activeTab);
+  const setActive = useAppStore((state) => state.setActiveTab);
   const Screen = screens[active];
+
+  useEffect(() => {
+    const store = useAppStore.getState();
+    void store.initialize();
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    void store.subscribe().then((stop) => {
+      if (cancelled) {
+        stop();
+      } else {
+        unlisten = stop;
+      }
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
 
   return (
     <div className="flex h-full flex-col bg-neutral-950 text-neutral-100">
       <header className="flex items-center justify-between border-b border-neutral-800 px-6 py-4">
-        <h1 className="text-lg font-semibold tracking-tight">SplitRoute</h1>
-        <span className="text-sm text-neutral-400">Не подключено</span>
+        <h1 className="text-lg font-semibold tracking-tight">{t("app.name")}</h1>
+        <StatusBadge />
       </header>
 
       <nav className="flex gap-1 border-b border-neutral-800 px-4 py-2">
@@ -37,7 +59,7 @@ export function App() {
                 : "text-neutral-400 hover:text-neutral-200"
             }`}
           >
-            {tab.label}
+            {t(tab.labelKey)}
           </button>
         ))}
       </nav>
