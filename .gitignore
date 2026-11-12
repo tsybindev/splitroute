@@ -37,6 +37,7 @@ src-tauri/gen/
 *.log
 logs/
 .cache/
+__pycache__/
 
 # ОС и IDE
 .DS_Store

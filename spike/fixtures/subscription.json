@@ -1,0 +1,225 @@
+[
+  {
+    "remarks": "🇬🇧 Тестовая локация A",
+    "dns": {
+      "queryStrategy": "UseIP",
+      "servers": ["203.0.113.53", "203.0.113.54"]
+    },
+    "inbounds": [
+      {
+        "tag": "socks-in",
+        "protocol": "socks",
+        "listen": "127.0.0.1",
+        "port": 10808,
+        "settings": { "auth": "noauth", "udp": true },
+        "sniffing": { "enabled": true, "destOverride": ["http", "tls", "quic"] }
+      },
+      {
+        "tag": "http-in",
+        "protocol": "http",
+        "listen": "127.0.0.1",
+        "port": 10809,
+        "settings": {},
+        "sniffing": { "enabled": true, "destOverride": ["http", "tls"] }
+      }
+    ],
+    "outbounds": [
+      {
+        "tag": "proxy",
+        "protocol": "vless",
+        "settings": {
+          "vnext": [
+            {
+              "address": "203.0.113.10",
+              "port": 443,
+              "users": [
+                {
+                  "id": "d811a5ee-1d55-4dca-bd7f-f68b768a2241",
+                  "encryption": "none",
+                  "flow": "xtls-rprx-vision"
+                }
+              ]
+            }
+          ]
+        },
+        "streamSettings": {
+          "network": "tcp",
+          "security": "reality",
+          "realitySettings": {
+            "serverName": "example.com",
+            "publicKey": "V1OuvPqM8PJgzYhYvOESBeqkVqqAhIcqZOl778zbalU",
+            "shortId": "00e5e640a81a9ac1",
+            "fingerprint": "chrome",
+            "spiderX": "/"
+          }
+        }
+      },
+      {
+        "tag": "direct",
+        "protocol": "freedom",
+        "settings": {}
+      },
+      {
+        "tag": "block",
+        "protocol": "blackhole",
+        "settings": { "response": { "type": "http" } }
+      },
+      {
+        "tag": "fragment-out",
+        "protocol": "freedom",
+        "settings": {
+          "fragment": {
+            "packets": "tlshello",
+            "length": "100-200",
+            "interval": "10-20"
+          }
+        },
+        "streamSettings": {
+          "sockopt": {
+            "tcpFastOpen": true,
+            "tcpKeepAliveIdle": 60,
+            "tcpNoDelay": true
+          }
+        }
+      }
+    ],
+    "routing": {
+      "domainStrategy": "IPIfNonMatch",
+      "rules": [
+        {
+          "type": "field",
+          "outboundTag": "direct",
+          "domain": ["geosite:private", "geosite:category-ru"]
+        },
+        {
+          "type": "field",
+          "outboundTag": "block",
+          "domain": ["geosite:category-ads-all"]
+        }
+      ]
+    },
+    "burstObservatory": {
+      "subjectSelector": ["proxy"],
+      "pingConfig": {
+        "destination": "https://example.com",
+        "interval": "1m",
+        "timeout": "5s",
+        "sampling": 3
+      }
+    }
+  },
+  {
+    "remarks": "🇳🇱 Тестовая локация B [Fragment]",
+    "dns": {
+      "queryStrategy": "UseIP",
+      "servers": ["203.0.113.53"]
+    },
+    "inbounds": [
+      {
+        "tag": "socks-in",
+        "protocol": "socks",
+        "listen": "127.0.0.1",
+        "port": 10808,
+        "settings": { "auth": "noauth", "udp": true },
+        "sniffing": { "enabled": true, "destOverride": ["http", "tls", "quic"] }
+      },
+      {
+        "tag": "http-in",
+        "protocol": "http",
+        "listen": "127.0.0.1",
+        "port": 10809,
+        "settings": {},
+        "sniffing": { "enabled": true, "destOverride": ["http", "tls"] }
+      }
+    ],
+    "outbounds": [
+      {
+        "tag": "proxy",
+        "protocol": "vless",
+        "settings": {
+          "vnext": [
+            {
+              "address": "203.0.113.20",
+              "port": 8443,
+              "users": [
+                {
+                  "id": "0c9439fb-4389-445b-8b03-1535c0be0733",
+                  "encryption": "none",
+                  "flow": "xtls-rprx-vision"
+                }
+              ]
+            }
+          ]
+        },
+        "streamSettings": {
+          "network": "tcp",
+          "security": "reality",
+          "realitySettings": {
+            "serverName": "example.net",
+            "publicKey": "V1OuvPqM8PJgzYhYvOESBeqkVqqAhIcqZOl778zbalU",
+            "shortId": "00e5e640a81a9ac1",
+            "fingerprint": "chrome",
+            "spiderX": "/"
+          }
+        }
+      },
+      {
+        "tag": "direct",
+        "protocol": "freedom",
+        "settings": {}
+      },
+      {
+        "tag": "block",
+        "protocol": "blackhole",
+        "settings": { "response": { "type": "http" } }
+      },
+      {
+        "tag": "fragment-out",
+        "protocol": "freedom",
+        "settings": {
+          "fragment": {
+            "packets": "tlshello",
+            "length": "100-200",
+            "interval": "10-20"
+          }
+        },
+        "streamSettings": {
+          "sockopt": {
+            "tcpFastOpen": true,
+            "tcpKeepAliveIdle": 60,
+            "tcpNoDelay": true
+          }
+        }
+      }
+    ],
+    "routing": {
+      "domainStrategy": "IPIfNonMatch",
+      "rules": [
+        {
+          "type": "field",
+          "outboundTag": "fragment-out",
+          "domain": ["example.net"]
+        },
+        {
+          "type": "field",
+          "outboundTag": "direct",
+          "domain": ["geosite:private"]
+        },
+        {
+          "type": "field",
+          "outboundTag": "block",
+          "domain": ["geosite:category-ads-all"]
+        }
+      ]
+    },
+    "burstObservatory": {
+      "subjectSelector": ["proxy"],
+      "pingConfig": {
+        "destination": "https://example.net",
+        "interval": "1m",
+        "timeout": "5s",
+        "sampling": 3
+      }
+    }
+  }
+]
