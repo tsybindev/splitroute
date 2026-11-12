@@ -4,6 +4,9 @@
     "active": true,
     "targets": ["nsis"],
     "externalBin": ["binaries/sing-box", "binaries/splitroute-helper"],
+    "resources": {
+      "binaries/wintun.dll": "wintun.dll"
+    },
     "windows": {
       "nsis": {
         "installMode": "perMachine"

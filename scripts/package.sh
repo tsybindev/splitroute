@@ -45,6 +45,10 @@ JSON
     pnpm tauri build --bundles app,dmg --config "$overlay"
     ;;
   MINGW*|MSYS*|CYGWIN*)
+    if [ ! -f src-tauri/binaries/wintun.dll ]; then
+      echo "Нет wintun.dll. Выполните ./scripts/fetch-wintun.sh" >&2
+      exit 1
+    fi
     echo "Пакет: nsis"
     exec pnpm tauri build --bundles nsis --config src-tauri/tauri.windows.conf.json
     ;;

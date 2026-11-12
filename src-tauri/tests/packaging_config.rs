@@ -64,6 +64,18 @@ fn windows_config_bundles_helper_and_core() {
 }
 
 #[test]
+fn windows_config_bundles_wintun_next_to_core() {
+    // `wintun.dll` обязан оказаться рядом с `sing-box.exe`: иначе ядро не
+    // поднимет TUN. На Windows `$RESOURCE` — это каталог исполняемого файла,
+    // поэтому ресурс раскладывается в корень, а не в подкаталог.
+    let config = read_json(&manifest_dir().join("tauri.windows.conf.json"));
+    assert_eq!(
+        config["bundle"]["resources"]["binaries/wintun.dll"], "wintun.dll",
+        "wintun.dll должен попадать в каталог приложения"
+    );
+}
+
+#[test]
 fn platform_configs_name_existing_targets() {
     let linux = read_json(&manifest_dir().join("tauri.linux.conf.json"));
     let targets: Vec<&str> = linux["bundle"]["targets"]

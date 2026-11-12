@@ -12,6 +12,7 @@ splitroute-helper — привилегированный helper SplitRoute
 Использование:
   splitroute-helper --socket <путь> --runtime-dir <каталог> --sing-box <бинарь> [--allow-uid <uid>]
   splitroute-helper service --pipe <имя> --runtime-dir <каталог> --sing-box <бинарь> --allow-sid <sid>
+  splitroute-helper console --pipe <имя> --runtime-dir <каталог> --sing-box <бинарь> --allow-sid <sid>
 
 Аргументы:
   --socket       Unix-сокет для IPC (абсолютный путь, права 0600)
@@ -20,6 +21,10 @@ splitroute-helper — привилегированный helper SplitRoute
   --sing-box     путь к pinned sing-box
   --allow-uid    uid клиента, которому разрешено подключение (Unix)
   --allow-sid    SID пользователя, которому разрешено подключение (Windows)
+
+Подкоманды (Windows):
+  service        работа под диспетчером служб (ставится установщиком)
+  console        запуск в консоли от администратора, без регистрации службы
 ";
 
 /// Разобранные аргументы. Неиспользованные для платформы поля остаются `None`.
@@ -64,6 +69,32 @@ pub fn parse_args(args: Vec<String>) -> Result<RawOptions, String> {
 fn next_value(iter: &mut std::vec::IntoIter<String>, flag: &str) -> Result<String, String> {
     iter.next()
         .ok_or_else(|| format!("{flag}: не указано значение"))
+}
+
+/// Подкоманда Windows-helper'а.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Subcommand {
+    /// Работа под диспетчером служб.
+    Service,
+    /// Запуск в консоли, без регистрации службы.
+    Console,
+}
+
+/// Отделяет подкоманду Windows-helper'а от остальных аргументов.
+///
+/// Разбор вынесен сюда, а не в `service`, чтобы тесты выполнялись и на macOS:
+/// подкоманды — часть контракта командной строки, а не привилегий.
+pub fn split_subcommand(args: Vec<String>) -> Result<(Subcommand, Vec<String>), String> {
+    let mut iter = args.into_iter();
+    let Some(first) = iter.next() else {
+        return Err(format!("не указана подкоманда\n\n{USAGE}"));
+    };
+    let rest: Vec<String> = iter.collect();
+    match first.as_str() {
+        "service" => Ok((Subcommand::Service, rest)),
+        "console" => Ok((Subcommand::Console, rest)),
+        other => Err(format!("неизвестная подкоманда: {other}\n\n{USAGE}")),
+    }
 }
 
 #[cfg(test)]
@@ -136,5 +167,37 @@ mod tests {
     fn unknown_argument_is_rejected() {
         let error = parse_args(args(&["--exec"])).unwrap_err();
         assert!(error.contains("неизвестный аргумент"));
+    }
+
+    #[test]
+    fn splits_service_subcommand() {
+        let (subcommand, rest) = split_subcommand(args(&["service", "--pipe", "p"])).unwrap();
+        assert_eq!(subcommand, Subcommand::Service);
+        assert_eq!(rest, args(&["--pipe", "p"]));
+    }
+
+    #[test]
+    fn splits_console_subcommand() {
+        let (subcommand, rest) = split_subcommand(args(&["console", "--pipe", "p"])).unwrap();
+        assert_eq!(subcommand, Subcommand::Console);
+        assert_eq!(rest, args(&["--pipe", "p"]));
+    }
+
+    #[test]
+    fn missing_subcommand_is_rejected() {
+        let error = split_subcommand(Vec::new()).unwrap_err();
+        assert!(error.contains("подкоманда"));
+    }
+
+    #[test]
+    fn unknown_subcommand_is_rejected() {
+        let error = split_subcommand(args(&["install"])).unwrap_err();
+        assert!(error.contains("неизвестная подкоманда"));
+    }
+
+    #[test]
+    fn console_is_documented_in_usage() {
+        assert!(USAGE.contains("console"), "console должен быть в USAGE");
+        assert!(USAGE.contains("service"));
     }
 }

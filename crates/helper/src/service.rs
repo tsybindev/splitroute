@@ -23,7 +23,7 @@ use windows_sys::Win32::{
     },
 };
 
-use crate::args::{parse_args, RawOptions};
+use crate::args::{parse_args, split_subcommand, RawOptions, Subcommand};
 use crate::pipe::{self, ServerOptions};
 
 /// Имя службы, совпадает с тем, что создаёт установщик.
@@ -42,18 +42,29 @@ unsafe impl Sync for StatusHandle {}
 
 static STATUS_HANDLE: OnceLock<StatusHandle> = OnceLock::new();
 
-/// Точка входа службы: `splitroute-helper service <аргументы>`.
+/// Точка входа helper'а на Windows.
+///
+/// Подкоманды:
+/// - `service` — работа под диспетчером служб (устанавливается установщиком);
+/// - `console` — запуск в консоли от администратора, без регистрации службы
+///   (dev-режим и portable-сборка).
 pub fn dispatch(args: Vec<String>) -> Result<(), String> {
-    let rest = args
-        .strip_prefix(&["service".to_string()][..])
-        .ok_or("ожидается подкоманда service")?;
+    let (subcommand, rest) = split_subcommand(args)?;
+    let raw = parse_args(rest)?;
 
-    let raw = parse_args(rest.to_vec())?;
-    let options = build_options(&raw);
-    let _ = OPTIONS.set(options.clone());
-    options?;
-
-    run_service_dispatcher()
+    match subcommand {
+        Subcommand::Service => {
+            let options = build_options(&raw);
+            let _ = OPTIONS.set(options.clone());
+            options?;
+            run_service_dispatcher()
+        }
+        Subcommand::Console => {
+            let options = build_options(&raw)?;
+            eprintln!("splitroute-helper: консольный режим, служба не регистрируется");
+            pipe::run(options).map_err(|error| format!("{error:#}"))
+        }
+    }
 }
 
 fn build_options(raw: &RawOptions) -> Result<ServerOptions, String> {
