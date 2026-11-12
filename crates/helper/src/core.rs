@@ -4,15 +4,16 @@
 //! runtime-каталог с правами `0600`, перед запуском выполняется
 //! `sing-box check`, а содержимое конфига не попадает в логи.
 
-use std::fs::{self, OpenOptions, Permissions};
+use std::fs;
 use std::io::{self, Write};
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 use splitroute_protocol::{CoreState, ErrorCode, HelperStatus};
+
+use crate::platform;
 
 /// Пауза после запуска ядра: если процесс завершился, `start` сообщает ошибку.
 const START_GRACE: Duration = Duration::from_millis(300);
@@ -63,12 +64,7 @@ impl HelperCore {
         let runtime_dir = runtime_dir.into();
 
         fs::create_dir_all(&runtime_dir)?;
-        let dir_mode = if unsafe { libc::geteuid() } == 0 {
-            0o711
-        } else {
-            0o700
-        };
-        fs::set_permissions(&runtime_dir, Permissions::from_mode(dir_mode))?;
+        platform::set_dir_mode(&runtime_dir)?;
 
         let version = read_version(&sing_box);
         let config_path = runtime_dir.join("config.json");
@@ -146,15 +142,10 @@ impl HelperCore {
             ));
         }
 
-        let log = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .mode(0o600)
-            .open(&self.log_path)
-            .map_err(|error| {
-                self.discard_config();
-                HelperError::io(ErrorCode::StartFailed, "не удалось открыть лог ядра", error)
-            })?;
+        let log = platform::open_log(&self.log_path).map_err(|error| {
+            self.discard_config();
+            HelperError::io(ErrorCode::StartFailed, "не удалось открыть лог ядра", error)
+        })?;
         let stdout = log.try_clone().map_err(|error| {
             self.discard_config();
             HelperError::io(
@@ -206,19 +197,13 @@ impl HelperCore {
     fn write_config(&mut self, config: &Value) -> Result<(), HelperError> {
         let temp_path = self.runtime_dir.join("config.json.tmp");
         let result = (|| -> io::Result<()> {
-            let mut file = OpenOptions::new()
-                .create(true)
-                .write(true)
-                .truncate(true)
-                .mode(0o600)
-                .open(&temp_path)?;
-            file.set_permissions(Permissions::from_mode(0o600))?;
+            let mut file = platform::open_private(&temp_path)?;
             serde_json::to_writer_pretty(&mut file, config).map_err(io::Error::other)?;
             file.flush()?;
             file.sync_all()?;
             drop(file);
             fs::rename(&temp_path, &self.config_path)?;
-            fs::set_permissions(&self.config_path, Permissions::from_mode(0o600))?;
+            platform::set_file_mode(&self.config_path)?;
             Ok(())
         })();
 
@@ -265,30 +250,7 @@ impl HelperCore {
             return;
         };
         self.started_at = None;
-
-        let already_exited = matches!(child.try_wait(), Ok(Some(_)));
-        if already_exited {
-            return;
-        }
-
-        // SIGTERM даёт ядру убрать TUN и маршруты; SIGKILL — только крайняя мера.
-        unsafe {
-            libc::kill(child.id() as libc::pid_t, libc::SIGTERM);
-        }
-        let deadline = Instant::now() + STOP_TIMEOUT;
-        loop {
-            match child.try_wait() {
-                Ok(Some(_)) => break,
-                Ok(None) if Instant::now() < deadline => {
-                    std::thread::sleep(Duration::from_millis(50));
-                }
-                _ => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    break;
-                }
-            }
-        }
+        platform::terminate(&mut child, STOP_TIMEOUT);
     }
 }
 
@@ -321,9 +283,10 @@ fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
 
     fn temp_dir(tag: &str) -> PathBuf {
         let unique = SystemTime::now()
@@ -374,11 +337,7 @@ mod tests {
             .permissions()
             .mode()
             & 0o777;
-        let expected = if unsafe { libc::geteuid() } == 0 {
-            0o711
-        } else {
-            0o700
-        };
+        let expected = if platform::is_root() { 0o711 } else { 0o700 };
         assert_eq!(mode, expected);
         let _ = fs::remove_dir_all(&dir);
     }

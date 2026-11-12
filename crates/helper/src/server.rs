@@ -1,4 +1,7 @@
-//! Unix-сервер helper'а: сокет `0600`, проверка uid клиента, набор команд.
+//! Unix-транспорт helper'а: сокет `0600`, проверка uid клиента, цикл accept.
+//!
+//! Протокол и диспетчеризация — в [`crate::handler`]; здесь только транспорт
+//! и аутентификация через `peereid`/`SO_PEERCRED`.
 
 use std::ffi::CString;
 use std::fs::{self, Permissions};
@@ -8,16 +11,17 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
 use anyhow::Context;
-use serde_json::Value;
-use splitroute_protocol::{Command, ErrorCode, Response};
+use splitroute_protocol::{ErrorCode, Response};
 
-use crate::core::{HelperCore, HelperError};
-use crate::ipc::{self, ParsedRequest};
+use crate::core::HelperCore;
+use crate::handler;
+use crate::ipc;
+use crate::platform;
 
 /// Таймаут чтения запроса и записи ответа.
 const IO_TIMEOUT: Duration = Duration::from_secs(10);
@@ -45,7 +49,7 @@ pub fn run(options: ServerOptions) -> anyhow::Result<()> {
     let shared = Arc::new(Mutex::new(core));
 
     let listener = bind_listener(&options.socket_path)?;
-    if unsafe { libc::geteuid() } == 0 && options.allowed_uid != 0 {
+    if platform::is_root() && options.allowed_uid != 0 {
         chown_socket(&options.socket_path, options.allowed_uid)?;
     }
 
@@ -63,7 +67,7 @@ pub fn run(options: ServerOptions) -> anyhow::Result<()> {
     // Новые `start` после этой точки не принимаются: иначе поток, ждавший
     // блокировку, мог бы запустить ядро уже после остановки helper'а.
     SHUTDOWN.store(true, Ordering::SeqCst);
-    lock(&shared).stop();
+    handler::lock(&shared).stop();
     let _ = fs::remove_file(&options.socket_path);
 
     result?;
@@ -170,61 +174,9 @@ fn handle_connection(
         }
     }
 
-    let mut reader = BufReader::new(&stream);
-    let raw = match ipc::read_message(&mut reader) {
-        Ok(Some(raw)) => raw,
-        Ok(None) => return Ok(()),
-        Err(error) => return ipc::write_response(&stream, &error.into_response()),
-    };
-
-    let request = match ipc::decode(&raw) {
-        Ok(request) => request,
-        Err(error) => return ipc::write_response(&stream, &error.into_response()),
-    };
-
-    let response = dispatch(&request, shared);
-    ipc::write_response(&stream, &response)
-}
-
-fn dispatch(request: &ParsedRequest, shared: &Arc<Mutex<HelperCore>>) -> Response {
-    let id = request.id.clone();
-    let result = match request.command {
-        Command::Status => {
-            let mut core = lock(shared);
-            Ok(core.status_value())
-        }
-        Command::Start => {
-            let mut core = lock(shared);
-            if SHUTDOWN.load(Ordering::SeqCst) {
-                return Response::error(id, ErrorCode::Internal, "helper завершается");
-            }
-            let config = request
-                .payload
-                .get("config")
-                .cloned()
-                .unwrap_or(Value::Null);
-            core.start(config).map(status_payload)
-        }
-        Command::Stop => {
-            let mut core = lock(shared);
-            Ok(status_payload(core.stop()))
-        }
-        // Установка и удаление сервиса требуют прав администратора и делаются
-        // установщиком; по сокету эти команды запрещены.
-        Command::Install | Command::Uninstall => Err(HelperError::new(
-            ErrorCode::Forbidden,
-            "команда выполняется установщиком с правами администратора",
-        )),
-    };
-
-    match result {
-        Ok(payload) => Response::ok(id, payload),
-        Err(error) => Response::error(id, error.code, error.message),
-    }
-}
-
-fn status_payload(status: splitroute_protocol::HelperStatus) -> Value {
-    serde_json::to_value(status).unwrap_or(Value::Null)
+    let mut writer = stream.try_clone()?;
+    let reader = BufReader::new(stream);
+    handler::serve(reader, &mut writer, shared, SHUTDOWN.load(Ordering::SeqCst))
 }
 
 /// uid клиента сокета: `getpeereid` на macOS, `SO_PEERCRED` на Linux.
@@ -275,15 +227,9 @@ fn peer_uid(_stream: &UnixStream) -> std::io::Result<u32> {
     ))
 }
 
-fn lock(shared: &Arc<Mutex<HelperCore>>) -> MutexGuard<'_, HelperCore> {
-    shared
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
 /// uid, которому разрешено подключаться.
 ///
-/// Явный `--allow-uid` из LaunchDaemon имеет приоритет. Без него под root
+/// Явный `--allow-uid` из LaunchDaemon/юнита имеет приоритет. Без него под root
 /// используется `SUDO_UID` (dev-режим под sudo), иначе текущий uid.
 pub fn resolve_allowed_uid(explicit: Option<u32>, euid: u32, sudo_uid: Option<&str>) -> u32 {
     if let Some(uid) = explicit {

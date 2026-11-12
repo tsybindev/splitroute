@@ -3658,6 +3658,7 @@ dependencies = [
  "libc",
  "serde_json",
  "splitroute-protocol",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
