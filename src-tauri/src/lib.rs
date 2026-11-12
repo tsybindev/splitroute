@@ -13,8 +13,18 @@ use std::sync::Arc;
 use privileged::{HelperClient, HelperInstaller, UnsupportedInstaller};
 use tauri::Manager;
 
+/// Dev-режим без helper'а и TUN: `SPLITROUTE_MOCK_HELPER=1` в debug-сборке.
+fn mock_helper_enabled() -> bool {
+    cfg!(debug_assertions)
+        && std::env::var("SPLITROUTE_MOCK_HELPER")
+            .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+}
+
 #[cfg(unix)]
 fn default_helper() -> Arc<dyn HelperClient> {
+    if mock_helper_enabled() {
+        return Arc::new(privileged::MockHelperClient::new());
+    }
     Arc::new(privileged::UnixHelperClient::from_env())
 }
 
@@ -42,6 +52,12 @@ pub fn run() {
         store::Store::default_location(),
         Arc::new(subscription::ReqwestFetcher::new()),
     );
+    if mock_helper_enabled() {
+        state.logs.push(
+            splitroute_protocol::LogLevel::Info,
+            "Dev-режим: MockHelperClient, реальный туннель не поднимается",
+        );
+    }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
