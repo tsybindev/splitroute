@@ -2,7 +2,8 @@
 
 Дата: 2026-11-12. Подцели G3.1: S3-T1 (Rust-helper) и S3-T2 (macOS
 LaunchDaemon). Коммиты кода: `d7af3ba`, `d9da641`. G3.2: S3-T3 (Linux) и
-S3-T4 (Windows) — коммиты `be1d918`, `684e6e5`, `276f218`, `cf26d1a`.
+S3-T4 (Windows) — коммиты `be1d918`, `684e6e5`, `276f218`, `cf26d1a`. G3.3:
+S3-T5 (установка helper'а в UI) и S3-T6 (лицензии и уведомления).
 
 Короткий вывод: **Rust-helper реализован и проверен** — протокол, права
 сокета, проверка uid, `sing-box check`, запуск/остановка реального sing-box
@@ -202,6 +203,91 @@ macOS-ветка сохранила прежнее поведение; суще�
    запуск от администратора без регистрации службы. Разбор подкоманд вынесен в
    `args::split_subcommand`, чтобы тесты выполнялись на macOS (5 тестов).
 
+## 2.8. Установка helper'а в UI (S3-T5, G3.3)
+
+Задача была не «добавить установку» (она уже вызывала реальный установщик), а
+перестать скрывать причину отказа: `errorText` подменял сообщение установщика
+общей строкой `errors.INSTALLER`.
+
+**Ошибки — с причиной, а не общей строкой.**
+
+- Контракт `InstallerError::{RequiresPrivileges,Unsupported,MissingBinary,Failed}`
+  не менялся. Изменился маппинг в `CommandError`: один код `INSTALLER` заменён
+  на четыре — `INSTALLER_PRIVILEGES`, `INSTALLER_UNSUPPORTED`,
+  `INSTALLER_MISSING_BINARY`, `INSTALLER_FAILED`. Текст (`error.to_string()`)
+  по-прежнему передаётся как `message`.
+- `ErrorBox` показывает локализованный заголовок по коду **и** исходный текст
+  установщика отдельной строкой, если он отличается от заголовка. Так видны и
+  понятная причина («Нужны права администратора.»), и деталь (путь, `ad-hoc`
+  подпись, «операция отменена пользователем», код `osascript`/`pkexec`/UAC).
+- Отмена системного диалога — это `Failed("операция отменена пользователем")`;
+  UI показывает её дословно, а не «не поддерживается».
+
+**Статус — только из `helper_status`.**
+
+- `shared/lib/helperState.ts` выводит одно из четырёх состояний: `installed`
+  (успешный статус), `outdated` (`HELPER_PROTOCOL`), `unavailable`
+  (`HELPER_TIMEOUT`/`HELPER_UNAVAILABLE`), `missing` (иначе). Badge и текст
+  берутся из i18n (`connect.helper.*`), версия ядра показывается, если есть.
+- Store хранит `helperStatusError`; `refreshHelperStatus()` обновляет статус и
+  после установки/удаления. Успех показывается только если установщик вернул
+  `Ok` (а macOS/Linux дополнительно ждут сокет), но сам статус всё равно
+  берётся из `helper_status`, а не из локального флага.
+
+**Пароль не хранится.** UI не читает и не передаёт пароль: его спрашивает
+`osascript`/`pkexec`/UAC. Изменений в установщиках не потребовалось.
+
+**Настройки.** Блок Helper: badge состояния, «Установить»/«Переустановить»
+(в зависимости от статуса), «Удалить», busy-состояние на время действия,
+уведомление об успехе и `ErrorBox` с причиной. Экраны сверх этого не менялись.
+
+Тесты: 10 frontend в `SettingsScreen.test.tsx` (четыре причины отказа,
+успешная установка с обновлением статуса, статус из `helper_status`, подписка,
+HWID, DNS), 5 в `helperState.test.ts`, состояние «устарел/не отвечает/нет» в
+`ConnectScreen.test.tsx`; Rust `installer_errors_map_to_distinct_codes`.
+
+## 2.9. Лицензии и уведомления (S3-T6, G3.3)
+
+- **`THIRD_PARTY_NOTICES`** в корне. Разделы: проект (GPL-3.0-only), sing-box
+  1.14.4 (GPL-3.0-or-later; ссылки на исходники закреплённого тега, релиза и
+  архива; пояснение, что бинарник не патчится и остаётся отдельным процессом),
+  wintun 0.14.1 (Prebuilt Binaries License WireGuard LLC, полный текст —
+  требование «не удалять уведомления»), Tauri и плагины, полный инвентарь Rust
+  по семействам лицензий (`cargo metadata --all-features`, 511 пакетов),
+  frontend (`pnpm licenses list --prod`), шрифты и иконки. Полные тексты:
+  GPL-3.0 — в `LICENSE`, MIT, ISC, BSD-3-Clause, Apache-2.0 — в самом файле;
+  MPL-2.0 — ссылка и пояснение о файловом копилефте (транзитивные
+  `cssparser`/`selectors`/`dtoa-short`/`option-ext`, без изменений).
+- **GPL-3.0-обязательства.** `LICENSE` — полный GNU GPL v3. sing-box —
+  GPL-3.0-совместимое использование: отдельный процесс, обмен по IPC, без
+  модификации; «Corresponding Source» — исходники тега `v1.14.4` (ссылки в
+  notices и разделе 10). Свои крейты (`splitroute`, `splitroute-helper`,
+  `splitroute-protocol`) — `GPL-3.0-only`; других GPL/LGPL/AGPL-зависимостей в
+  дереве нет (LGPL у `r-efi` — альтернатива, выбрана MIT/Apache).
+- **В бандле.** `bundle.license = "GPL-3.0-only"`,
+  `bundle.licenseFile = "../LICENSE"`, `bundle.resources` — `LICENSE` и
+  `THIRD_PARTY_NOTICES`:
+
+  | Платформа | Куда попадают |
+  |---|---|
+  | macOS `.app` | `Contents/Resources/{LICENSE,THIRD_PARTY_NOTICES}` — проверено на сборке |
+  | macOS `.dmg` | страница лицензии при открытии (проверено) + те же файлы в `.app` |
+  | NSIS | страница лицензии (`licenseFile`); файлы — в ресурсах приложения |
+  | `.deb`/`.rpm`/AppImage | `/usr/share/doc/splitroute/` через `bundle.linux.*.files` |
+  | portable-архив | рядом с исполняемым файлом (`scripts/portable.sh`) |
+
+  Почему `files`, а не только `licenseFile`: `tauri-bundler` кладёт `licenseFile`
+  в DMG и NSIS, но для deb/rpm/AppImage текст лицензии файлом не копирует
+  (`debian.rs` обрабатывает только `changelog`; `rpm.rs` использует `license`
+  лишь как тег). Поэтому тексты добавлены явно.
+- **Проверка зависимостей.** Новых семейств лицензий, несовместимых с
+  GPL-3.0, не появилось; проприетарных компонентов нет. wintun — единственный
+  компонент с отдельной (не SPDX) лицензией, поэтому его текст включён целиком.
+- Тесты упаковки расширены до 10: наличие файлов в корне, ссылки на исходники
+  sing-box в notices, отсутствие секретов, `license`/`licenseFile`/`resources` в
+  базовом конфиге, `/usr/share/doc/splitroute/*` в deb/rpm/appimage, `sh -n`
+  для `portable.sh`.
+
 ## 3. Протокол и совместимость
 
 - `crates/protocol` остаётся единственным источником типов: `Command`,
@@ -224,20 +310,28 @@ cargo test --workspace
 pnpm typecheck && pnpm lint && pnpm test && pnpm build
 ```
 
-Результат на 2026-11-12 (после G3.2 и исправлений S3-T4):
+Результат на 2026-11-12 (после G3.3):
 
 | Набор | Тестов | Результат |
 |---|---|---|
-| `splitroute` lib (macOS 12 + Linux 13 + Windows 15 установщиков) | 108 | ok |
+| `splitroute` lib (macOS 12 + Linux 13 + Windows 15 установщиков + команды 109) | 109 | ok |
 | `splitroute` golden-конфиги | 4 | ok |
 | `splitroute` фикстура подписки | 1 | ok |
 | `splitroute` client ↔ helper round-trip | 1 | ok |
-| `splitroute` конфигурация упаковки | 7 | ok |
+| `splitroute` конфигурация упаковки | 10 | ok |
 | `splitroute-helper` lib (вкл. 5 тестов подкоманд) | 31 | ok |
 | `splitroute-helper` интеграционные | 11 | ok |
 | `splitroute-protocol` | 16 | ok |
-| **Rust всего** | **179** | **ok** |
-| frontend (Vitest) | 24 | ok |
+| **Rust всего** | **183** | **ok** |
+| frontend (Vitest) | 35 | ok |
+
+Изменения G3.3: +1 Rust (`installer_errors_map_to_distinct_codes`), +3 теста
+упаковки (`license_and_notices_exist_in_repository_root`,
+`base_config_bundles_license_and_notices`, `linux_packages_ship_license_docs`,
+плюс `portable.sh` в `sh -n`), +11 frontend (4 причины отказа установщика,
+успешная установка, статус из `helper_status`, 5 тестов `helperState`,
+состояния helper'а на главном экране). Старый тест «INSTALLER → общая строка»
+удалён вместе с самим поведением.
 
 Проверки helper'а покрывают: сериализацию/десериализацию, неизвестную
 команду, `install`/`uninstall` по сокету, несовпадение версии, битый JSON,
@@ -282,6 +376,10 @@ pnpm typecheck && pnpm lint && pnpm test && pnpm build
 | Удаление установленных файлов | ✅ | plist, helper, sing-box, runtime удалены; процессов нет |
 | Кнопка установки в запущенном UI | ✅ частично | нажатие, пароль и ошибка отработали; успешный запуск blocked подписью |
 | Принятие ad-hoc подписи launchd | ❌ **опровергнуто** | AMFI: `has no CMS blob` |
+| `LICENSE` и `THIRD_PARTY_NOTICES` в `SplitRoute.app/Contents/Resources` | ✅ | сборка `./scripts/package.sh` |
+| DMG показывает текст лицензии при открытии | ✅ | `hdiutil attach`: вывод GNU GPL v3 + принятие лицензии |
+| Лицензия и notices в `.deb`/`.rpm`/AppImage | ⏳ по конфигу | пути в `bundle.linux.*.files` закреплены тестом; сборка — на Linux (S3-T7) |
+| NSIS показывает лицензию | ⏳ по конфигу | `licenseFile` + шаблон NSIS; сборка — на Windows (S3-T7) |
 | Linux / Windows (S3-T3/T4) | см. §5.1 | на этой машине нет целевых ОС |
 
 Фактический лог попытки:
@@ -430,6 +528,18 @@ pgrep -fl 'splitroute-helper|sing-box run' || echo "процессов нет"
     Исправлено в `cf26d1a` и закреплено тестом; на живой Windows не проверено.
 11. **Release-сборка Windows не запускалась.** `cargo build` под MSVC на macOS
     невозможен (нет MSVC-заголовков и линковщика); CI — на Windows-раннере.
+12. **Лицензии в `.deb`/`.rpm`/AppImage и NSIS проверены по конфигу, не сборкой.**
+    Пути `/usr/share/doc/splitroute/*` и `licenseFile` закреплены тестами
+    `packaging_config`, но фактический пакет собирается только на целевой ОС
+    (S3-T7).
+13. **`bundle.licenseFile` показывается в DMG/NSIS как «лицензионное
+    соглашение».** Это страница с полным текстом GPL-3.0, а не отдельная EULA;
+    пользователь должен её принять при открытии DMG/установке. Для релиза
+    решить, нужна ли отдельная краткая страница.
+14. **`errors.INSTALLER` больше не выдаётся.** Код `INSTALLER` заменён на четыре
+    (`INSTALLER_PRIVILEGES`/`_UNSUPPORTED`/`_MISSING_BINARY`/`_FAILED`).
+    Совместимость с внешними потребителями не нужна: `CommandError` живёт
+    только между Rust-ядром и этим UI.
 
 ## 8. Следующие шаги
 
@@ -438,8 +548,8 @@ pgrep -fl 'splitroute-helper|sing-box run' || echo "процессов нет"
   готовы; установщик больше не оставляет полусобранный сервис.
 - **S3-T3 и S3-T4 закрыты по коду** (G3.2, коммиты `be1d918`, `684e6e5`,
   `276f218`, `cf26d1a`); ручная проверка на Linux и Windows — в S3-T7.
-- G3.3: S3-T5 (полировка установки в UI: `errorText` подменяет сообщение
-  установщика общей строкой `errors.INSTALLER`, пользователь не видит причину),
-  S3-T6 (notices/GPL-3.0, `LICENSE` и `THIRD_PARTY_NOTICES` в бандле).
+- **S3-T5 и S3-T6 закрыты** (G3.3, §2.8–2.9). Ошибки установщика показываются с
+  причиной, статус берётся из `helper_status`, `LICENSE` и
+  `THIRD_PARTY_NOTICES` входят в бандл (macOS/DMG проверено на этой машине).
 - Реальный smoke на чистых системах — S3-T7 (Linux и Windows обязательны:
-  сейчас это единственный не проверенный участок G3.2).
+  сейчас это единственный не проверенный участок G3.2/G3.3).

@@ -239,3 +239,26 @@ Go 1.27.0; без root. Полный отчёт — [docs/spikes/stage-1.md](./s
 | `sc.exe create ... binPath= "path with spaces" service --pipe ...` регистрирует службу | **опровергнуто рассуждением** | `sc.exe` разбирает argv: значение кончается на закрывающей кавычке, `service` — «неизвестный параметр». Нужен один экранированный токен (`cf26d1a`) |
 | Установка службы, `pkexec`, UAC, `systemctl`, `sc.exe` | **blocked** | нет Linux-машины и Windows VM; выполнять автоматически запрещено |
 | Права `/run/splitroute`/pipe и TUN на целевых ОС | **blocked** | нужны реальные системы; на macOS TUN проверен в S2-T8 |
+
+## 12. Результаты этапа 3, подцель G3.3 (проверено 2026-11-12)
+
+Окружение: macOS 15.8.2 arm64, Rust 1.99.1, Tauri 2.12.5 / CLI 2.12.4,
+tauri-bundler из состава CLI. Проверялось на реальной сборке пакета и исходниках
+Tauri (`crates/tauri-bundler`, `crates/tauri-utils`).
+
+| Утверждение | Статус | Как проверено |
+|---|---|---|
+| `bundle.resources` (map) копирует файлы в ресурсы приложения и на этапе `cargo check` | **подтверждено** | `tauri-build` `copy_resources`; после `cargo check` в `target/debug/` появились `LICENSE` и `THIRD_PARTY_NOTICES` |
+| macOS `.app` содержит `LICENSE` и `THIRD_PARTY_NOTICES` в `Contents/Resources/` | **подтверждено** | `./scripts/package.sh` → `SplitRoute.app/Contents/Resources/{LICENSE,THIRD_PARTY_NOTICES}` |
+| `bundle.licenseFile` встраивает текст лицензии в `.dmg` и показывает его при открытии | **подтверждено** | собранный `.dmg`: при `hdiutil attach` выводится текст GNU GPL v3 и требуется принять лицензию; внутри — те же два файла |
+| DMG требует `licenseFile` в корне конфига, а не отдельного ключа `bundle.macos` | **подтверждено** | `macos/dmg/mod.rs`: `settings.license_file()` → аргумент `bundle_dmg.sh` |
+| NSIS использует `licenseFile` как страницу лицензии | **подтверждено кодом** | `windows/nsis/mod.rs`: файл копируется в `license_file` и передаётся в шаблон |
+| `.deb`/`.rpm`/AppImage не кладут `licenseFile` в `/usr/share/doc` автоматически | **подтверждено кодом** | `debian.rs` обрабатывает только `changelog`; `rpm.rs` берёт `license` только как тег метаданных. Тексты кладутся через `files` |
+| `bundle.linux.deb.files` и `bundle.linux.appimage.files` — карта `путь_в_пакете -> источник` | **подтверждено кодом** | `fs_utils::copy_custom_files`: ключ — путь в `data_dir` (deb/appimage); `rpm.rs` использует ключ как абсолютный путь в пакете |
+| `bundle.linux.rpm.files` принимает абсолютные пути в пакете | **подтверждено кодом** | `rpm.rs`: `FileOptions::new(rpm_path)` для каждого ключа карты |
+| `bundle.license` задаёт SPDX-лицензию в метаданных `.rpm` и `control` | **подтверждено кодом** | `rpm.rs`: `PackageBuilder::new(..., &license, ...)` |
+| Фронтенд-поставка ограничена `react`, `react-dom`, `scheduler`, `zustand`, `lucide-react`, `@tauri-apps/api`, `csstype` | **подтверждено** | `pnpm licenses list --prod`: MIT (React/zustand), ISC (lucide-react), Apache-2.0 OR MIT (@tauri-apps/api) |
+| В Rust-дереве нет GPL/LGPL/AGPL-зависимостей, кроме собственных крейтов | **подтверждено** | `cargo metadata --all-features`: 511 пакетов; GPL — только `splitroute*`; LGPL — лишь как альтернатива в `r-efi` (выбран MIT/Apache) |
+| MPL-2.0 присутствует транзитивно (`cssparser`, `selectors`, `dtoa-short`, `option-ext`) | **подтверждено** | `cargo metadata`; файловый копилефт, исходники не изменялись |
+| wintun.dll распространяется по отдельной лицензии WireGuard LLC, требующей сохранять уведомления и не модифицировать DLL | **подтверждено** | `wintun-0.14.1.zip` → `LICENSE.txt`, sha256 совпал с `scripts/fetch-wintun.sh` |
+| sing-box 1.14.4 — GPL-3.0-or-later, исходники доступны по тегу | **подтверждено** | `LICENSE` из тега `v1.14.4`: «either version 3 ... or any later version» + оговорка об имени |

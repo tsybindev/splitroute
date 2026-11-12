@@ -5,7 +5,7 @@
 
 ## Состояние
 
-- Этапы 1–2 закрыты. **Этап 3, подцели G3.1 и G3.2 выполнены по коду.**
+- Этапы 1–2 закрыты. **Этап 3: G3.1, G3.2 и G3.3 выполнены.**
 - **S3-T1 (Rust-helper) — done.** Коммит `d7af3ba`.
 - **S3-T2 (macOS LaunchDaemon) — blocked по подписи.** Код готов (`d9da641`),
   реальная установка проверена до границы AMFI: ad-hoc/linker-подпись helper'а
@@ -14,8 +14,12 @@
   `276f218`. Ручная проверка — blocked (нет Linux-машины).
 - **S3-T4 (Windows: служба под SYSTEM) — done по коду.** `be1d918`,
   `684e6e5`, `276f218`, `cf26d1a`. Ручная проверка — blocked (нет Windows VM).
+- **S3-T5 (установка helper'а в UI) — done.** Ошибки установщика показываются
+  с причиной (`INSTALLER_*`), статус — из `helper_status`, пароль не хранится.
+- **S3-T6 (лицензии) — done.** `THIRD_PARTY_NOTICES` в корне; `LICENSE` и
+  notices в бандле (macOS/DMG проверено сборкой).
 - Ветка: `main`. Отчёт: [docs/stage-3-report.md](./docs/stage-3-report.md).
-  Факты: [docs/research.md §10–11](./docs/research.md).
+  Факты: [docs/research.md §10–12](./docs/research.md).
 - Системные сервисы, сокеты, пайпы и процессы после проверок не остались.
 
 ### Что работает
@@ -23,58 +27,57 @@
 - **Helper, оба транспорта.** `crates/helper`: Unix-сокет `0600` (uid пира
   `getpeereid`/`SO_PEERCRED`) и Windows named pipe
   `\\.\pipe\splitroute-helper` с SDDL-ACL только на SID пользователя, SYSTEM и
-  Administrators плюс сверка SID процесса-клиента. Общие `handler`/`ipc`/
-  `platform`; протокол не менялся: `status`/`start`/`stop`,
-  `install`/`uninstall` по IPC запрещены.
-- **Служба Windows.** `splitroute-helper-service` под SYSTEM:
-  `StartServiceCtrlDispatcherW`, `SERVICE_CONTROL_STOP` → остановка ядра и
-  выход, статусы start pending/running/stopped. Ожидание клиента вынесено в
-  отдельный поток, поэтому STOP не подвисает на `ConnectNamedPipe`.
-- **Установщик Linux.** `LinuxInstaller`: юнит `splitroute-helper.service`
-  (`User=root`, `RuntimeDirectory=splitroute`, `0711`, `UMask=0077`,
-  `Restart=on-failure`), `/usr/lib/splitroute/{splitroute-helper,sing-box}`,
-  сокет `/run/splitroute/helper.sock`, установка/удаление через
-  `pkexec /bin/sh`; отмена = код 126, нет прав = 127.
-- **Установщик Windows.** `WindowsInstaller`: `C:\Program Files\SplitRoute`
-  (`wintun.dll` рядом с `sing-box.exe`), runtime `C:\ProgramData\SplitRoute`
-  с `icacls`, `sc.exe create ... obj= LocalSystem` (`binPath` одним
-  экранированным токеном), UAC через `Start-Process -Verb RunAs`, отмена = 1223.
-- **Клиент.** Протокол вынесен из транспорта: `UnixHelperClient` и
-  `WindowsPipeClient`. На Windows приложение больше не падает в mock.
+  Administrators плюс сверка SID процесса-клиента. Протокол не менялся:
+  `status`/`start`/`stop`, `install`/`uninstall` по IPC запрещены.
+- **Установщики.** macOS (`/Library/PrivilegedHelperTools`, LaunchDaemon,
+  `osascript`), Linux (`/usr/lib/splitroute`, systemd-юнит `0711`/`UMask=0077`,
+  `pkexec`), Windows (`C:\Program Files\SplitRoute`, служба под SYSTEM,
+  named pipe ACL, `icacls`, UAC). macOS и Linux после установки ждут сокет.
+- **UI установки (S3-T5).** Коды `INSTALLER_PRIVILEGES`, `INSTALLER_UNSUPPORTED`,
+  `INSTALLER_MISSING_BINARY`, `INSTALLER_FAILED`; `ErrorBox` показывает
+  локализованный заголовок и точный текст установщика. Состояния helper'а:
+  установлен / не установлен / устарел (`HELPER_PROTOCOL`) / не отвечает
+  (`HELPER_TIMEOUT`/`HELPER_UNAVAILABLE`) — `src/shared/lib/helperState.ts`.
+  Кнопки «Установить»/«Переустановить»/«Удалить», busy и уведомление об успехе;
+  статус после действия берётся из `helper_status` (`refreshHelperStatus`).
+- **Лицензии (S3-T6).** `THIRD_PARTY_NOTICES` в корне: sing-box 1.14.4
+  (GPL-3.0-or-later, ссылки на исходники тега `v1.14.4`), wintun 0.14.1
+  (Prebuilt Binaries License, полный текст), Tauri и плагины, инвентарь Rust
+  по семействам, frontend, шрифты/иконки. В бандле: macOS/DMG — проверено;
+  `.deb`/`.rpm`/AppImage — `/usr/share/doc/splitroute/`; NSIS — `licenseFile`.
 - **Упаковка.** `tauri.linux.conf.json` (deb/rpm/appimage),
   `tauri.windows.conf.json` (NSIS perMachine), `externalBin` только там;
-  `scripts/build-helper-sidecar.sh`, `scripts/package.sh`.
+  `scripts/build-helper-sidecar.sh`, `scripts/package.sh`, `scripts/portable.sh`.
 - **Dev-режим.** `SPLITROUTE_MOCK_HELPER=1` сохранён на всех ОС.
 
 ### Проверено (2026-11-12)
 
 - `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -D warnings`
   — чисто.
-- `cargo test --workspace` — 173 теста: `splitroute` 108 (macOS 12 + Linux 13 +
-  Windows 15 установщиков) + golden 4 + фикстура 1 + round-trip 1 + упаковка 6,
-  `splitroute-helper` 26 + 11 интеграционных, `splitroute-protocol` 16.
-- `pnpm typecheck && pnpm lint && pnpm test && pnpm build` — 24 теста, чисто.
-- **Компиляция под целевые ОС:** `splitroute-helper` целиком под
-  `x86_64-pc-windows-msvc` и `x86_64-unknown-linux-gnu`; `privileged/windows.rs`,
-  `privileged/linux.rs`, `privileged/client.rs` — изолированной сборкой с
-  `-D warnings` (см. ограничения ниже).
-- **Реальная упаковка на macOS:** `SplitRoute.app` (96.7 МиБ) и `.dmg`
-  (32.8 МиБ); `sing-box` и `splitroute-helper` в `Contents/MacOS/`.
-- Скрипты — `sh -n`; bat-скрипты — ASCII + CRLF.
+- `cargo test --workspace` — **183 теста**: `splitroute` 109 (макос/Linux/
+  Windows-установщики + команды) + golden 4 + фикстура 1 + round-trip 1 +
+  упаковка 10, `splitroute-helper` 31 + 11 интеграционных,
+  `splitroute-protocol` 16.
+- `pnpm typecheck && pnpm lint && pnpm test && pnpm build` — **35 тестов**, чисто.
+- **Сборка пакета на macOS:** `./scripts/package.sh` → `SplitRoute.app`
+  (96.8 МиБ) и `.dmg` (32.9 МиБ); `LICENSE` и `THIRD_PARTY_NOTICES` лежат в
+  `Contents/Resources/`; DMG при открытии показывает текст GPL-3.0 и требует
+  принятия лицензии.
 
 ### Не проверено (причина)
 
 - **Установка/удаление служб, `pkexec`, `systemctl`, `sc.exe`, UAC, права
   сокета/pipe, TUN на Linux и Windows** — blocked: нет Linux-машины и Windows
   VM; привилегированные действия автоматически не выполнялись.
-- **Сборка `.deb`/`.rpm`/AppImage и NSIS** — blocked: нужны целевые ОС.
+- **Сборка `.deb`/`.rpm`/AppImage и NSIS** — blocked: нужны целевые ОС. Состав
+  (`/usr/share/doc/splitroute/*`, `licenseFile`) закреплён тестами конфига.
 - **Успешный запуск macOS LaunchDaemon** — blocked подписью (S3-T2).
 - **Сон/пробуждение, смена сети, Chrome/Telegram** — ручная проверка, этап 2.
 
 ### Важные факты окружения
 
 - `export PATH="$HOME/.cargo/bin:$PATH"` в каждом shell.
-- macOS 15.8.2 arm64, Rust 1.99.1, sing-box 1.14.4 (pinned).
+- macOS 15.8.2 arm64, Rust 1.99.1, Tauri 2.12.5 / CLI 2.12.4, sing-box 1.14.4.
 - Установлены цели `x86_64-pc-windows-msvc` и `x86_64-unknown-linux-gnu`.
 - **Кросс-`cargo check -p splitroute` невозможен:** под Windows падает `ring`
   (`assert.h not found`), под Linux — `gio-sys`/`glib-sys` (pkg-config/sysroot).
@@ -88,6 +91,8 @@
 - **`externalBin` только в платформенных конфигах.** В базовом
   `tauri.conf.json` он ломает `cargo check` на чистом клоне (sidecar в
   `.gitignore`). Инвариант закреплён `src-tauri/tests/packaging_config.rs`.
+  `bundle.resources` в базовом конфиге — можно: `LICENSE` и
+  `THIRD_PARTY_NOTICES` лежат в git.
 - Перед `tauri build` нужны sidecar'ы: `./scripts/fetch-core.sh` и
   `./scripts/build-helper-sidecar.sh`; затем `./scripts/package.sh`.
 - Debug-сборка ищет сокет в `$TMPDIR/splitroute-helper.sock`. Для
@@ -98,8 +103,10 @@
   `SPLITROUTE_SING_BOX_BIN`, рядом с приложением, либо в
   `src-tauri/binaries/sing-box-<triple>` (dev).
 - Секреты (URL подписки, HWID, UUID) не логировать и не коммитить.
-- После проверок: `pgrep -fl 'splitroute-helper|sing-box run'`, `ls -d /tmp/sr-*`,
-  `launchctl print system/com.splitroute.helper`.
+- **`THIRD_PARTY_NOTICES` обновляется вручную** по разделу 11 файла:
+  `cargo metadata --all-features` и `pnpm licenses list --prod`.
+- После проверок: `pgrep -fl 'splitroute-helper|sing-box run'`,
+  `ls -d /tmp/sr-*`, `launchctl print system/com.splitroute.helper`.
 
 ### Проверка перед стартом
 
@@ -188,9 +195,9 @@ rustup target add x86_64-pc-windows-msvc
 ./scripts/portable.sh            # target/portable/SplitRoute-portable-windows-x64.tar.gz
 ```
 
-Распаковать архив и запустить `start.bat` — он поднимет helper в консоли через
-UAC (подкоманда `console`) и откроет приложение. Затем в UI: Настройки → Helper →
-«Установить».
+Распаковать архив (в нём уже `LICENSE` и `THIRD_PARTY_NOTICES`) и запустить
+`start.bat` — он поднимет helper в консоли через UAC (подкоманда `console`) и
+откроет приложение. Затем в UI: Настройки → Helper → «Установить».
 
 Проверки:
 
@@ -201,14 +208,18 @@ Get-ChildItem "$env:ProgramData\SplitRoute"
 ```
 
 Ожидается: служба `RUNNING` под SYSTEM; рядом с `sing-box.exe` лежит
-`wintun.dll`; pipe доступен только SID пользователя; TUN поднимается и выбранное
-приложение идёт через прокси.
+`wintun.dll`, а в каталоге приложения — `LICENSE` и `THIRD_PARTY_NOTICES`;
+pipe доступен только SID пользователя; TUN поднимается и выбранное приложение
+идёт через прокси.
 
 ### Windows: NSIS-установщик
 
 ```bash
 ./scripts/package.sh     # требует wintun.dll, собирает .exe установщика
 ```
+
+При установке проверить, что NSIS показывает страницу лицензии и что после
+установки `LICENSE` и `THIRD_PARTY_NOTICES` лежат в каталоге приложения.
 
 ### Linux
 
@@ -217,6 +228,7 @@ cd app
 export PATH="$HOME/.cargo/bin:$PATH"
 ./scripts/fetch-core.sh
 ./scripts/package.sh                                  # .deb / .rpm / AppImage
+dpkg-deb -c target/release/bundle/deb/*.deb | grep share/doc    # LICENSE и notices
 sudo apt install ./target/release/bundle/deb/*.deb    # установка пакета
 # затем в UI: Настройки → Helper → «Установить» (pkexec)
 systemctl status splitroute-helper.service
@@ -225,99 +237,89 @@ stat -c '%a %U:%G %n' /run/splitroute/helper.sock
 pgrep -a -f 'splitroute-helper|sing-box run'
 ```
 
-Ожидается: сервис `active (running)`; каталог `711 root:root`; сокет `600`
-пользователя; `--allow-uid` = uid установившего. Удаление — кнопкой в UI
-(`pkexec`).
-
-### Windows (VM)
-
-```powershell
-sc.exe query splitroute-helper-service
-Get-ChildItem 'C:\Program Files\SplitRoute'
-Get-ChildItem 'C:\ProgramData\SplitRoute'
-```
-
-Ожидается: служба `RUNNING` под SYSTEM; рядом с `sing-box.exe` лежит
-`wintun.dll`; pipe доступен только SID пользователя; TUN поднимается и выбранное
-приложение идёт через прокси.
+Ожидается: пакет содержит `/usr/share/doc/splitroute/{LICENSE,THIRD_PARTY_NOTICES}`;
+сервис `active (running)`; каталог `711 root:root`; сокет `600` пользователя;
+`--allow-uid` = uid установившего. Удаление — кнопкой в UI (`pkexec`).
 
 Результаты — в `TASKS.md` (S3-T3/S3-T4) и `docs/stage-3-report.md` §5.1.
 
 ---
 
-## Промпт следующей подцели: G3.3 (S3-T5, S3-T6)
+## Промпт следующей подцели: G3.4 (S3-T7, S3-T8)
 
 Скопируйте текст ниже целиком в новую сессию. Запускайте из каталога `app/`.
-S3-T2 **blocked по подписи**; S3-T3/S3-T4 закрыты по коду, ручная проверка —
-S3-T7.
+S3-T2 **blocked по подписи**; S3-T3/T4/T5/T6 закрыты.
 
 ```text
 Ты — оркестратор разработки SplitRoute (per-app VPN на Tauri 2 + React 19 + TS + Rust + sing-box).
 Рабочий каталог: /Users/tsybin_d/Documents/Dev/Backend/vpn_client/app
 Перед командами: export PATH="$HOME/.cargo/bin:$PATH"
 
-ЦЕЛЬ: подцель G3.3 этапа 3 — S3-T5 (проводка установки helper'а в UI: статус,
-ошибки, пароль не хранится) и S3-T6 (THIRD_PARTY_NOTICES, GPL-3.0-обязательства,
-LICENSE и notices в бандле).
-После подцели остановись: коммит кода, отдельный коммит документации,
-обновление NEXT_SESSION.md. Не начинай S3-T7 и S3-T8.
+ЦЕЛЬ: подцель G3.4 этапа 3 — S3-T7 (smoke на чистых системах: macOS, CachyOS/
+Linux, Windows; сценарий S2-T9) и S3-T8 (отчёт этапа 3 и handoff этапа 4).
+После подцели остановись: коммит кода/скриптов (если понадобятся), отдельный
+коммит документации, обновление NEXT_SESSION.md. Этап 4 не начинай.
 
 ПРОЧИТАЙ СНАЧАЛА
-- AGENTS.md §2, §10–§14, §17–§18.
-- PRD.md §6.6, §6.8, §7 (состояния и ошибки), §13.
-- TASKS.md: S3-T5, S3-T6, этап 3.
-- NEXT_SESSION.md (этот файл), docs/stage-3-report.md (особенно §7 п.5–11),
-  docs/research.md §11.
-- Текущее состояние: src-tauri/src/privileged/{installer,macos,linux,windows,
-  mock,client}.rs; src/features/settings; src/shared/api; src/shared/i18n.
+- AGENTS.md §7, §9, §10–§14, §17–§18.
+- PRD.md §6.6, §6.8, §7, §13.
+- TASKS.md: S3-T7, S3-T8, этап 3.
+- NEXT_SESSION.md (этот файл), docs/stage-3-report.md §5–§8,
+  docs/research.md §10–12.
+
+ТЕКУЩЕЕ СОСТОЯНИЕ
+- S3-T1, S3-T3, S3-T4, S3-T5, S3-T6 — done. S3-T2 — blocked по подписи
+  (ad-hoc LaunchDaemon убивается AMFI; нужен Apple Development/Developer ID).
+- Проверено на macOS: 183 Rust + 35 frontend тестов, `clippy -D warnings`,
+  сборка `.app` + `.dmg` с `LICENSE` и `THIRD_PARTY_NOTICES` в Resources.
+- Не проверено: реальная установка служб на Linux/Windows, `.deb`/`.rpm`/
+  AppImage, NSIS, TUN на Windows, `sc.exe`, `pkexec`, UAC.
 
 КОНТРАКТ, КОТОРЫЙ НЕЛЬЗЯ ЛОМАТЬ
-- crates/protocol — единственный источник типов IPC; формат протокола не меняется.
-- InstallerError::{RequiresPrivileges,Unsupported,MissingBinary,Failed} — контракт
-  установщика; UI должен показывать причину, а не общую строку.
-- UI не получает root и не вызывает shell; установка/удаление — только по явному
-  действию пользователя с подтверждением (polkit/UAC/osascript).
+- crates/protocol — единственный источник типов IPC; формат не меняется.
+- InstallerError::{RequiresPrivileges,Unsupported,MissingBinary,Failed} и
+  коды CommandError INSTALLER_* — контракт UI.
+- UI не получает root и не вызывает shell; привилегированные действия — только
+  по явному действию пользователя.
 - Секреты (URL подписки, HWID, UUID) не логировать и не коммитить.
-- Не ломать macOS/Linux/Windows-ветки и существующие тесты (173 Rust + 24 frontend).
+- externalBin — только в платформенных конфигах (`packaging_config.rs`).
+- LICENSE и THIRD_PARTY_NOTICES обязаны оставаться в бандле.
 
 ЗАДАЧИ
-1. S3-T5 (UI):
-   - `helper_install`/`helper_uninstall` уже вызывают реальный установщик;
-     задача — показать пользователю точную причину. Сейчас `errorText` в UI
-     подменяет сообщение установщика общей строкой `errors.INSTALLER`.
-     Покажи `error.message` (или типизированный код + текст), сохранив
-     локализацию; покрой тестами состояния «нет прав / отменено / нет бинаря /
-     не поддерживается».
-   - Статус helper'а (установлен/не установлен/устарел/не отвечает) — по
-     `helper_status`, без хранения пароля.
-   - Не менять экраны сверх необходимого; строки — в i18n-словарь (ru).
-2. S3-T6 (GPL-3.0):
-   - `THIRD_PARTY_NOTICES` в корне: sing-box (GPL-3.0, ссылка на исходники
-     pinned-версии), Tauri и плагины, Rust-крейты, иконки/шрифты.
-   - Убедиться, что `LICENSE` и `THIRD_PARTY_NOTICES` попадают в бандл
-     (Tauri `licenseFile`/`resources`), включая `.deb`/`.rpm`/AppImage и NSIS.
-   - Проверить список зависимостей (`cargo tree`, `pnpm licenses list`) и
-     зафиксировать лицензии.
-3. Обнови тесты и документацию; не начинай S3-T7/S3-T8.
+1. S3-T7 — smoke по матрице AGENTS.md §13 на доступных системах.
+   - macOS (есть): установка helper'а (blocked подписью — зафиксировать),
+     подключение/отключение через dev-helper, выбранное приложение через
+     прокси, невыбранное напрямую, DNS, сон/пробуждение, смена сети, выход без
+     зависших TUN/процессов.
+   - Linux/CachyOS и Windows: если машины нет — явно пометить blocked с
+     причиной и точным чек-листом команд; не выдавать за проверенное.
+     Для Linux проверить содержимое пакета: `/usr/share/doc/splitroute/*`,
+     юнит, `--allow-uid`; для Windows — NSIS-страница лицензии, файлы в
+     каталоге приложения, служба под SYSTEM, `wintun.dll` рядом с ядром.
+   - S2-T9 (CachyOS): systemd-resolved, TUN, allowlist.
+   - Привилегированные действия — только с явным подтверждением пользователя;
+     после проверок остановить сервисы, удалить TUN, проверить `pgrep`.
+2. S3-T8 — отчёт этапа 3: свести G3.1–G3.4, матрицу проверок по ОС, риски,
+   статус S3-T2 (blocked), итог по лицензиям; обновить TASKS.md и
+   NEXT_SESSION.md с промптом этапа 4.
+3. Не менять протокол, установщики и экраны без необходимости.
 
 ПРОВЕРКИ
 - cargo fmt --all --check
 - cargo clippy --workspace --all-targets -- -D warnings
 - cargo test --workspace
 - pnpm typecheck && pnpm lint && pnpm test && pnpm build
-- Если менялись конфиги бандла — `./scripts/package.sh` (нужны sidecar'ы);
-  не ломать инвариант «`externalBin` только в платформенных конфигах»
-  (`src-tauri/tests/packaging_config.rs`).
-- Привилегированные действия не выполнять.
+- ./scripts/package.sh на целевой ОС (Linux/Windows), если машина есть.
 
 ОГРАНИЧЕНИЯ
 - root/polkit/UAC — только по явному действию пользователя.
 - Секреты не логировать и не коммитить.
-- Не менять формат протокола и установщики без необходимости.
+- Не выдавать blocked-пункты за проверенные.
 
 ОТЧЁТ
-- Обнови TASKS.md (S3-T5, S3-T6) и docs/stage-3-report.md (раздел G3.3).
-- NEXT_SESSION.md: состояние и следующий промпт G3.4 (S3-T7, S3-T8).
+- TASKS.md: S3-T7, S3-T8 и статус этапа 3.
+- docs/stage-3-report.md: раздел G3.4 и итоговая матрица.
+- NEXT_SESSION.md: состояние и промпт этапа 4.
 - Коммиты: feat:/fix:/test: для кода, отдельный docs: для документации.
 ```
 
@@ -325,21 +327,21 @@ LICENSE и notices в бандле).
 
 ## Заметки
 
-- Открытые пункты этапа 3: S3-T5 (UI), S3-T6 (notices/GPL), S3-T7 (smoke на
-  чистых системах + CachyOS-сценарий S2-T9), S3-T8 (отчёт и handoff этапа 4).
+- Открытые пункты этапа 3: S3-T7 (smoke на чистых системах + CachyOS-сценарий
+  S2-T9), S3-T8 (отчёт и handoff этапа 4).
 - **S3-T2 blocked по подписи.** Нужен Apple Development/Developer ID. Установщик
   проверяет подпись до копирования и не оставляет полусобранный сервис.
-- **G3.2 не проверен на реальных Linux/Windows.** Код компилируется под обе
-  тройки, генераторы покрыты тестами, но установка служб, права сокета/pipe и
-  TUN — только в S3-T7. Не выдавать за проверенное.
-- **S3-T5:** `errorText` в UI подменяет сообщение установщика общей строкой
-  `errors.INSTALLER`, поэтому пользователь не видит причину (например, подпись
-  macOS или отсутствующий бинарь). Это первое, что нужно исправить.
+- **S3-T5:** причина отказа установщика теперь видна (`INSTALLER_*` + текст в
+  `ErrorBox`); статус helper'а — только из `helper_status`. Старого кода
+  `errors.INSTALLER` больше нет.
+- **S3-T6:** `THIRD_PARTY_NOTICES` обновляется вручную (раздел 11 файла). При
+  обновлении sing-box/wintun менять версии и ссылки в разделах 2–3, иначе
+  `packaging_config`-тест на `v1.14.4` упадёт — это намеренно.
 - **Упаковка:** `externalBin` только в `tauri.linux.conf.json`/
-  `tauri.windows.conf.json`; иначе `cargo check` на чистом клоне падает.
+  `tauri.windows.conf.json`; `bundle.resources` можно и в базовом конфиге.
   Перед `tauri build` — `fetch-core.sh` и `build-helper-sidecar.sh`.
-- **Windows:** `sc.exe` требует `binPath` одним экранированным токеном
-  (`cf26d1a`); `TOKEN_USER` читается из буфера `Vec<u64>` (выравнивание).
+- **Linux/Windows smoke** требует целевых машин; кросс-сборка Tauri
+  установщиков не поддерживается.
 - Известные ограничения G3.1: osascript-скрипт во временном каталоге (TOCTOU —
   для релиза SMJobBless/Authorization Services или подписанный установщик);
   `--allow-uid`/`--allow-sid` фиксируют одного пользователя.

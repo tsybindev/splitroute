@@ -21,5 +21,8 @@ helper, трей и экраны; реальный TUN, внешний IP и о�
 Разделение DNS по процессу на macOS 15 / sing-box 1.14 не поддерживается.
 Решение: пользователь выбирает режим `proxy` (весь DNS через прокси, по
 умолчанию) или `system` (DNS ОС, с предупреждением); реализация — S2-T10.
-Подробности — в [docs/stage-2-report.md](./docs/stage-2-report.md). Дальше —
-S2-T10, затем этап 3: helper'ы под три ОС и упаковка.
+Подробности — в [docs/stage-2-report.md](./docs/stage-2-report.md).
+Этап 3: helper'ы под три ОС, установка из UI с показом причины отказа и
+упаковка с `LICENSE` и [THIRD_PARTY_NOTICES](./THIRD_PARTY_NOTICES) в бандле.
+Осталось: smoke на Linux/Windows (S3-T7). Детали —
+[docs/stage-3-report.md](./docs/stage-3-report.md).
