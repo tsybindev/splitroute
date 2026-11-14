@@ -8,7 +8,9 @@ use serde::Serialize;
 use serde_json::Value;
 use splitroute_protocol::{Profile, Protocol, TlsConfig, TlsKind, Transport};
 
+pub mod base64;
 pub mod fetch;
+pub mod vless;
 
 pub use fetch::{fetch_and_parse, FetchError, FetchRequest, ReqwestFetcher, SubscriptionFetcher};
 
@@ -17,6 +19,8 @@ pub use fetch::{fetch_and_parse, FetchError, FetchRequest, ReqwestFetcher, Subsc
 pub enum SubscriptionError {
     #[error("невалидный JSON: {0}")]
     InvalidJson(String),
+    #[error("неизвестный формат ответа: {0}")]
+    InvalidFormat(String),
     #[error("ожидался JSON-массив профилей")]
     NotAnArray,
     #[error("массив профилей пуст")]
@@ -46,7 +50,43 @@ pub fn parse_subscription(raw: &str) -> Result<Vec<Profile>, SubscriptionError> 
 }
 
 /// Разбирает подписку и возвращает профили вместе с пропусками.
+///
+/// Формат определяется по телу: Happ-JSON, base64-список `vless://` или тот же
+/// список открытым текстом. Так клиент работает и с Happ User-Agent (JSON), и
+/// с собственным `SplitRoute/*` (base64).
 pub fn parse_subscription_report(raw: &str) -> Result<Subscription, SubscriptionError> {
+    let trimmed = raw.trim().trim_start_matches('\u{feff}').trim();
+    if trimmed.is_empty() {
+        return Err(SubscriptionError::Empty);
+    }
+    if trimmed.starts_with('[') || trimmed.starts_with('{') {
+        return parse_json_report(trimmed);
+    }
+    if vless::contains_links(trimmed) {
+        return finish_links(vless::parse_links(trimmed));
+    }
+    if let Some(decoded) = base64::decode(trimmed) {
+        let text = String::from_utf8_lossy(&decoded);
+        if vless::contains_links(&text) {
+            return finish_links(vless::parse_links(&text));
+        }
+    }
+    Err(SubscriptionError::InvalidFormat(
+        "ожидался JSON-массив профилей или base64-список vless-ссылок".to_string(),
+    ))
+}
+
+fn finish_links(subscription: Subscription) -> Result<Subscription, SubscriptionError> {
+    if subscription.profiles.is_empty() {
+        return Err(SubscriptionError::NoProfiles {
+            total: subscription.profiles.len() + subscription.skipped.len(),
+            skipped: subscription.skipped.len(),
+        });
+    }
+    Ok(subscription)
+}
+
+fn parse_json_report(raw: &str) -> Result<Subscription, SubscriptionError> {
     let payload: Value = serde_json::from_str(raw)
         .map_err(|error| SubscriptionError::InvalidJson(error.to_string()))?;
     let items = payload.as_array().ok_or(SubscriptionError::NotAnArray)?;
@@ -246,7 +286,7 @@ fn build_tls(stream: &Value, security: &str, address: &str) -> Result<TlsConfig,
 }
 
 /// UUID в каноническом виде 8-4-4-4-12.
-fn is_uuid(value: &str) -> bool {
+pub(crate) fn is_uuid(value: &str) -> bool {
     let bytes = value.as_bytes();
     if bytes.len() != 36 {
         return false;
@@ -269,7 +309,7 @@ fn is_uuid(value: &str) -> bool {
 }
 
 /// Стабильный идентификатор профиля: FNV-1a по имени и параметрам подключения.
-fn profile_id(name: &str, server: &str, port: u16, uuid: &str) -> String {
+pub(crate) fn profile_id(name: &str, server: &str, port: u16, uuid: &str) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for part in [name, server, &port.to_string(), uuid] {
         for byte in part.as_bytes() {
@@ -412,5 +452,52 @@ mod tests {
         assert!(is_uuid("d811a5ee-1d55-4dca-bd7f-f68b768a2241"));
         assert!(!is_uuid("d811a5ee1d554dcabd7ff68b768a2241"));
         assert!(!is_uuid("zzzzzzzz-1d55-4dca-bd7f-f68b768a2241"));
+    }
+
+    const BASE64_LINK: &str = "dmxlc3M6Ly9kODExYTVlZS0xZDU1LTRkY2EtYmQ3Zi1mNjhiNzY4YTIyNDFAZXhhbXBsZS5jb206NDQzP2VuY3J5cHRpb249bm9uZSZzZWN1cml0eT1yZWFsaXR5JnNuaT1leGFtcGxlLmNvbSZmcD1jaHJvbWUmcGJrPXB1YmxpYy1rZXkmc2lkPTAwZTVlNjQwYTgxYTlhYzEmdHlwZT10Y3AjVGVzdCUyMExvY2F0aW9u";
+    const BASE64_WS: &str = "dmxlc3M6Ly9kODExYTVlZS0xZDU1LTRkY2EtYmQ3Zi1mNjhiNzY4YTIyNDFAZXhhbXBsZS5vcmc6NDQzP3NlY3VyaXR5PXRscyZ0eXBlPXdzI1dT";
+
+    #[test]
+    fn base64_vless_subscription_is_parsed() {
+        let report = parse_subscription_report(BASE64_LINK).unwrap();
+        assert_eq!(report.profiles.len(), 1);
+        let profile = &report.profiles[0];
+        assert_eq!(profile.name, "Test Location");
+        assert_eq!(profile.server, "example.com");
+        assert_eq!(profile.port, 443);
+        assert_eq!(profile.tls.kind, TlsKind::Reality);
+        assert!(report.skipped.is_empty());
+    }
+
+    #[test]
+    fn plain_text_vless_subscription_is_parsed() {
+        let link = "vless://d811a5ee-1d55-4dca-bd7f-f68b768a2241@example.com:443?encryption=none&security=reality&sni=example.com&fp=chrome&pbk=public-key&sid=00e5e640a81a9ac1&type=tcp#Test%20Location";
+        let report = parse_subscription_report(link).unwrap();
+        assert_eq!(report.profiles.len(), 1);
+        assert_eq!(report.profiles[0].name, "Test Location");
+    }
+
+    #[test]
+    fn base64_with_only_unsupported_links_is_no_profiles() {
+        assert_eq!(
+            parse_subscription_report(BASE64_WS).unwrap_err(),
+            SubscriptionError::NoProfiles {
+                total: 1,
+                skipped: 1
+            }
+        );
+    }
+
+    #[test]
+    fn unknown_body_is_invalid_format() {
+        assert!(matches!(
+            parse_subscription_report("hello world"),
+            Err(SubscriptionError::InvalidFormat(_))
+        ));
+        // base64 от "hello world" — валидный base64, но не ссылки.
+        assert!(matches!(
+            parse_subscription_report("aGVsbG8gd29ybGQ="),
+            Err(SubscriptionError::InvalidFormat(_))
+        ));
     }
 }

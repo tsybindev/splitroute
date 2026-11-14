@@ -32,6 +32,8 @@ pub enum FetchError {
     Status(u16),
     #[error("невалидный JSON: {0}")]
     InvalidJson(String),
+    #[error("неизвестный формат ответа: {0}")]
+    InvalidFormat(String),
     #[error("подписка пуста")]
     Empty,
     #[error("нет поддерживаемых профилей: пропущено {skipped} из {total}")]
@@ -49,6 +51,7 @@ impl FetchError {
             Self::NotFound => "NOT_FOUND",
             Self::Status(_) => "HTTP_ERROR",
             Self::InvalidJson(_) => "INVALID_JSON",
+            Self::InvalidFormat(_) => "INVALID_FORMAT",
             Self::Empty => "EMPTY",
             Self::NoProfiles { .. } => "NO_PROFILES",
         }
@@ -59,6 +62,7 @@ impl From<SubscriptionError> for FetchError {
     fn from(error: SubscriptionError) -> Self {
         match error {
             SubscriptionError::InvalidJson(message) => Self::InvalidJson(message),
+            SubscriptionError::InvalidFormat(message) => Self::InvalidFormat(message),
             SubscriptionError::NotAnArray => {
                 Self::InvalidJson("ожидался JSON-массив профилей".to_string())
             }
@@ -323,11 +327,25 @@ mod tests {
     }
 
     #[test]
+    fn base64_links_are_parsed_end_to_end() {
+        init_tls();
+        let encoded = "dmxlc3M6Ly9kODExYTVlZS0xZDU1LTRkY2EtYmQ3Zi1mNjhiNzY4YTIyNDFAZXhhbXBsZS5jb206NDQzP2VuY3J5cHRpb249bm9uZSZzZWN1cml0eT1yZWFsaXR5JnNuaT1leGFtcGxlLmNvbSZmcD1jaHJvbWUmcGJrPXB1YmxpYy1rZXkmc2lkPTAwZTVlNjQwYTgxYTlhYzEmdHlwZT10Y3AjVGVzdCUyMExvY2F0aW9u";
+        let (url, handle) = spawn_http_server("200 OK", encoded.to_string());
+        let mut target = request();
+        target.url = url;
+        let subscription = fetch_and_parse(&ReqwestFetcher::new(), &target).unwrap();
+        assert_eq!(subscription.profiles.len(), 1);
+        assert_eq!(subscription.profiles[0].name, "Test Location");
+        handle.join().unwrap();
+    }
+
+    #[test]
     fn http_errors_from_body_are_typed() {
         init_tls();
         for (body, code) in [
             ("{oops".to_string(), "INVALID_JSON"),
             ("[]".to_string(), "EMPTY"),
+            ("не ссылки и не json".to_string(), "INVALID_FORMAT"),
             (
                 r#"[{"remarks":"x","outbounds":[]}]"#.to_string(),
                 "NO_PROFILES",
