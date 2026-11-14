@@ -11,7 +11,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 use splitroute_protocol::{
-    parse_response, Command, ErrorCode, HelperStatus, ProtocolError, Request, MAX_MESSAGE_BYTES,
+    parse_response, Command, ErrorCode, HelperStatus, ProtocolError, Request, StartPayload,
+    MAX_MESSAGE_BYTES,
 };
 
 use super::HelperClientError;
@@ -96,12 +97,17 @@ pub fn status<S: Read + Write>(stream: &mut S) -> Result<HelperStatus, HelperCli
     parse_status(call(stream, Command::Status, Value::Null)?)
 }
 
-/// `start` поверх открытого потока.
+/// `start` поверх открытого потока. `kill_switch` — часть протокола 2.
 pub fn start<S: Read + Write>(
     stream: &mut S,
     config: Value,
+    kill_switch: bool,
 ) -> Result<HelperStatus, HelperClientError> {
-    let payload = serde_json::json!({ "config": config });
+    let payload = serde_json::to_value(StartPayload {
+        config,
+        kill_switch,
+    })
+    .map_err(|error| HelperClientError::InvalidPayload(error.to_string()))?;
     parse_status(call(stream, Command::Start, payload)?)
 }
 
@@ -197,8 +203,12 @@ mod unix {
             super::status(&mut self.connect()?)
         }
 
-        fn start(&self, config: Value) -> Result<HelperStatus, HelperClientError> {
-            super::start(&mut self.connect()?, config)
+        fn start(
+            &self,
+            config: Value,
+            kill_switch: bool,
+        ) -> Result<HelperStatus, HelperClientError> {
+            super::start(&mut self.connect()?, config, kill_switch)
         }
 
         fn stop(&self) -> Result<HelperStatus, HelperClientError> {
@@ -264,8 +274,12 @@ mod windows_pipe {
             super::status(&mut self.connect()?)
         }
 
-        fn start(&self, config: Value) -> Result<HelperStatus, HelperClientError> {
-            super::start(&mut self.connect()?, config)
+        fn start(
+            &self,
+            config: Value,
+            kill_switch: bool,
+        ) -> Result<HelperStatus, HelperClientError> {
+            super::start(&mut self.connect()?, config, kill_switch)
         }
 
         fn stop(&self) -> Result<HelperStatus, HelperClientError> {
@@ -325,6 +339,7 @@ mod tests {
 mod unix_tests {
     use super::*;
     use crate::privileged::HelperClient;
+    use splitroute_protocol::PROTOCOL_VERSION;
     use std::io::{BufRead, BufReader, Write};
     use std::os::unix::net::UnixListener;
     use std::thread;
@@ -363,7 +378,7 @@ mod unix_tests {
     fn ok_response(payload: Value) -> String {
         format!(
             "{}\n",
-            serde_json::json!({"protocol": 1, "id": "x", "ok": true, "payload": payload})
+            serde_json::json!({"protocol": PROTOCOL_VERSION, "id": "x", "ok": true, "payload": payload})
         )
     }
 
@@ -387,7 +402,7 @@ mod unix_tests {
         let socket = temp_socket("version");
         let response = format!(
             "{}\n",
-            serde_json::json!({"protocol": 2, "id": "x", "ok": true, "payload": {}})
+            serde_json::json!({"protocol": PROTOCOL_VERSION + 1, "id": "x", "ok": true, "payload": {}})
         );
         let handle = spawn_server(socket.clone(), Some(response), Duration::ZERO);
         let error = UnixHelperClient::new(socket).status().unwrap_err();
@@ -404,7 +419,7 @@ mod unix_tests {
         let response = format!(
             "{}\n",
             serde_json::json!({
-                "protocol": 1, "id": "x", "ok": false,
+                "protocol": PROTOCOL_VERSION, "id": "x", "ok": false,
                 "error": {"code": "UNKNOWN_COMMAND", "message": "нет"}
             })
         );

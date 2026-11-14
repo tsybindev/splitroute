@@ -59,6 +59,13 @@ export const ru = {
   "connect.goSettings": "Открыть настройки",
   "connect.connectFailed": "Не удалось подключиться",
   "connect.disconnectFailed": "Не удалось отключиться",
+  "connect.killSwitch": "Kill switch",
+  "connect.killSwitch.active": "Активен",
+  "connect.killSwitch.off": "Выключен",
+  "connect.killSwitch.error": "Ошибка",
+  "connect.killSwitch.blocked":
+    "Ядро остановлено. Kill switch блокирует прямой трафик — отключитесь, чтобы снять защиту.",
+  "connect.killSwitch.disarm": "Отключить и снять защиту",
 
   "profiles.title": "Локации",
   "profiles.refresh": "Обновить подписку",
@@ -131,6 +138,11 @@ export const ru = {
   "settings.network.dns.systemHint":
     "DNS операционной системы, максимальная совместимость. DNS выбранных приложений уходит локально — возможна утечка.",
   "settings.network.logLevel": "Уровень логов",
+  "settings.killSwitch.title": "Kill switch (fail-closed)",
+  "settings.killSwitch.enable": "Блокировать прямой трафик при обрыве туннеля",
+  "settings.killSwitch.hint":
+    "Если ядро упадёт, прямой выход в интернет будет заблокирован до отключения. Локальная сеть остаётся доступной.",
+  "settings.killSwitch.applies": "Применяется при следующем подключении.",
   "settings.app.title": "Приложение",
   "settings.app.autostart": "Запускать при входе в систему",
   "settings.app.launchMinimized": "Запускать свёрнутым",
@@ -181,6 +193,10 @@ export const ru = {
   "errors.HELPER_PROTOCOL": "Несовместимая версия helper'а.",
   "errors.HELPER_ERROR": "Helper вернул ошибку.",
   "errors.HELPER_INVALID_RESPONSE": "Helper вернул некорректный ответ.",
+  "errors.KILL_SWITCH_FAILED":
+    "Не удалось включить kill switch. Проверьте права helper'а.",
+  "errors.CORE_STOPPED":
+    "Ядро остановилось. Kill switch блокирует прямой трафик.",
   "errors.CONFIG": "Не удалось собрать конфиг.",
   "errors.STORE": "Не удалось сохранить данные.",
   "errors.INSTALLER_PRIVILEGES": "Нужны права администратора.",

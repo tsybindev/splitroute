@@ -65,6 +65,6 @@ pub enum HelperClientError {
 /// Минимальный набор операций над ядром через helper.
 pub trait HelperClient: Send + Sync {
     fn status(&self) -> Result<HelperStatus, HelperClientError>;
-    fn start(&self, config: Value) -> Result<HelperStatus, HelperClientError>;
+    fn start(&self, config: Value, kill_switch: bool) -> Result<HelperStatus, HelperClientError>;
     fn stop(&self) -> Result<HelperStatus, HelperClientError>;
 }

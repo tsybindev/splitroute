@@ -6,7 +6,7 @@
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
-use splitroute_protocol::{AppRule, HelperStatus, InstalledApp, LogLevel, Profile};
+use splitroute_protocol::{AppRule, ErrorCode, HelperStatus, InstalledApp, LogLevel, Profile};
 use tauri::Manager;
 
 use crate::catalog;
@@ -60,7 +60,11 @@ impl From<HelperClientError> for CommandError {
             HelperClientError::Unavailable(_) => "HELPER_UNAVAILABLE",
             HelperClientError::Timeout => "HELPER_TIMEOUT",
             HelperClientError::Protocol(_) => "HELPER_PROTOCOL",
-            HelperClientError::Helper { .. } => "HELPER_ERROR",
+            HelperClientError::Helper { code, .. } => match code {
+                // Права/неподдерживаемая ОС: UI показывает отдельную причину.
+                ErrorCode::KillSwitchFailed => "KILL_SWITCH_FAILED",
+                _ => "HELPER_ERROR",
+            },
             HelperClientError::InvalidPayload(_) => "HELPER_INVALID_RESPONSE",
         };
         Self::new(code, error.to_string())
@@ -254,7 +258,14 @@ pub(crate) fn connect_inner(state: &AppState) -> Result<HelperStatus, CommandErr
             );
         }
     }
-    let status = state.helper.start(config)?;
+    let kill_switch = data.settings.network.kill_switch;
+    if kill_switch {
+        state.logs.push(
+            LogLevel::Info,
+            "Kill switch: включён, прямой выход блокируется helper'ом",
+        );
+    }
+    let status = state.helper.start(config, kill_switch)?;
     // Новая сессия начинается с нулевых счётчиков: порт и secret новые.
     state.set_traffic_endpoint(traffic);
     state
@@ -910,6 +921,55 @@ mod tests {
                 .any(|entry| entry.message.contains("DNS") && entry.message.contains("утечка")),
             "в режиме system нужен Warn об утечке DNS"
         );
+    }
+
+    #[test]
+    fn connect_passes_kill_switch_setting_to_helper() {
+        let helper = Arc::new(MockHelperClient::new());
+        let state = AppState::new(
+            helper.clone(),
+            Arc::new(UnsupportedInstaller),
+            Store::load(temp_path("kill-switch")),
+            Arc::new(MockFetcher {
+                body: Ok(fixture()),
+            }),
+        );
+        subscription_fetch_inner(
+            &state,
+            Some("https://example.invalid/sub".to_string()),
+            None,
+            None,
+        )
+        .unwrap();
+
+        let mut settings = state.store.settings();
+        settings.network.kill_switch = true;
+        settings_update_inner(&state, settings).unwrap();
+
+        let status = connect_inner(&state).unwrap();
+        assert!(helper.last_kill_switch());
+        assert!(status.kill_switch.enabled);
+        assert!(
+            state
+                .logs
+                .list(Some(LogLevel::Info), 20)
+                .iter()
+                .any(|entry| entry.message.contains("Kill switch")),
+            "включение kill switch попадает в лог"
+        );
+
+        let stopped = disconnect_inner(&state).unwrap();
+        assert!(!stopped.kill_switch.enabled, "после stop правила сняты");
+    }
+
+    #[test]
+    fn kill_switch_helper_error_maps_to_own_code() {
+        let error = CommandError::from(HelperClientError::Helper {
+            code: ErrorCode::KillSwitchFailed,
+            message: "нужны права root".to_string(),
+        });
+        assert_eq!(error.code, "KILL_SWITCH_FAILED");
+        assert!(error.message.contains("нужны права root"));
     }
 
     #[test]

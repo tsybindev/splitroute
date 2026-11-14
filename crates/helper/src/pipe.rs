@@ -77,6 +77,10 @@ pub fn run(options: ServerOptions) -> anyhow::Result<()> {
     SecurityDescriptor::from_sddl(&pipe_sddl(&options.allowed_sid))
         .context("не удалось построить ACL для named pipe")?;
 
+    if let Err(error) = crate::killswitch::cleanup_stale(&options.runtime_dir) {
+        eprintln!("splitroute-helper: не удалось снять старые правила kill switch: {error}");
+    }
+
     eprintln!(
         "splitroute-helper: слушает {} (sid {})",
         pipe_path(&options.pipe_name),

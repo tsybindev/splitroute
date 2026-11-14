@@ -61,6 +61,13 @@ export const en: Record<MessageKey, string> = {
   "connect.goSettings": "Open settings",
   "connect.connectFailed": "Could not connect",
   "connect.disconnectFailed": "Could not disconnect",
+  "connect.killSwitch": "Kill switch",
+  "connect.killSwitch.active": "Active",
+  "connect.killSwitch.off": "Off",
+  "connect.killSwitch.error": "Error",
+  "connect.killSwitch.blocked":
+    "The core has stopped. The kill switch is blocking direct traffic — disconnect to remove protection.",
+  "connect.killSwitch.disarm": "Disconnect and remove protection",
 
   "profiles.title": "Locations",
   "profiles.refresh": "Refresh subscription",
@@ -133,6 +140,11 @@ export const en: Record<MessageKey, string> = {
   "settings.network.dns.systemHint":
     "Operating system DNS, maximum compatibility. DNS of selected applications goes locally — a leak is possible.",
   "settings.network.logLevel": "Log level",
+  "settings.killSwitch.title": "Kill switch (fail-closed)",
+  "settings.killSwitch.enable": "Block direct traffic when the tunnel drops",
+  "settings.killSwitch.hint":
+    "If the core crashes, all direct internet access is blocked until you disconnect. The local network stays reachable.",
+  "settings.killSwitch.applies": "Applies on the next connection.",
   "settings.app.title": "Application",
   "settings.app.autostart": "Launch at login",
   "settings.app.launchMinimized": "Launch minimized",
@@ -182,6 +194,10 @@ export const en: Record<MessageKey, string> = {
   "errors.HELPER_PROTOCOL": "Incompatible helper version.",
   "errors.HELPER_ERROR": "Helper returned an error.",
   "errors.HELPER_INVALID_RESPONSE": "Helper returned an invalid response.",
+  "errors.KILL_SWITCH_FAILED":
+    "Could not enable the kill switch. Check the helper privileges.",
+  "errors.CORE_STOPPED":
+    "The core stopped. The kill switch is blocking direct traffic.",
   "errors.CONFIG": "Could not build the config.",
   "errors.STORE": "Could not save data.",
   "errors.INSTALLER_PRIVILEGES": "Administrator rights required.",

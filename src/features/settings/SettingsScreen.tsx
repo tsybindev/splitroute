@@ -286,6 +286,20 @@ function SettingsForm({ initial }: { initial: AppSettings }) {
         </div>
       </Card>
 
+      <Card title={t("settings.killSwitch.title")}>
+        <Checkbox
+          checked={form.network.kill_switch}
+          onChange={(value) => updateNetwork({ kill_switch: value })}
+          label={t("settings.killSwitch.enable")}
+        />
+        <p className="mt-2 pl-6 text-xs text-amber-300">
+          {t("settings.killSwitch.hint")}
+        </p>
+        <p className="mt-1 pl-6 text-xs text-neutral-500">
+          {t("settings.killSwitch.applies")}
+        </p>
+      </Card>
+
       <Card title={t("settings.app.title")}>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field

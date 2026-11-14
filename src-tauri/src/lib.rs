@@ -135,6 +135,14 @@ pub fn run() {
             commands::diagnostics_get,
             commands::traffic_stats,
         ])
-        .run(tauri::generate_context!())
-        .expect("ошибка запуска SplitRoute");
+        .build(tauri::generate_context!())
+        .expect("ошибка запуска SplitRoute")
+        .run(|app_handle, event| {
+            // Выход из приложения — это `stop`: ядро останавливается, а правила
+            // kill switch снимаются, чтобы не блокировать сеть после закрытия.
+            if matches!(event, tauri::RunEvent::Exit) {
+                let state = app_handle.state::<commands::AppState>();
+                let _ = state.helper.stop();
+            }
+        });
 }

@@ -24,6 +24,7 @@ export function makeSettings(overrides: Partial<AppSettings> = {}): AppSettings 
       mixed_port: 10808,
       dns_mode: "proxy",
       log_level: "info",
+      kill_switch: false,
       ...overrides.network,
     },
     preferences: {

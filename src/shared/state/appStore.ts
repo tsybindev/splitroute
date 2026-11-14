@@ -68,6 +68,7 @@ interface AppState {
   setLanguagePreference: (language: Language) => Promise<void>;
   regenerateHwid: () => Promise<string | null>;
   refreshHelperStatus: () => Promise<void>;
+  pollConnection: () => Promise<void>;
   loadLogs: (level: LogLevel | null) => Promise<void>;
   loadDiagnostics: () => Promise<string>;
   clearNotice: () => void;
@@ -382,6 +383,33 @@ export const useAppStore = create<AppState>((set, get) => {
         applyStatus(await api.helperStatus());
       } catch (error) {
         set({ helperStatus: null, helperStatusError: toCommandError(error) });
+      }
+    },
+
+    /// Опрос статуса при активном kill switch. Если ядро упало, helper
+    /// продолжает удерживать правила: UI обязан показать ошибку, а не
+    /// «подключено» или «отключено».
+    pollConnection: async () => {
+      const before = get();
+      try {
+        const status = await api.helperStatus();
+        const protectedCrash =
+          before.connection === "connected" &&
+          status.state === "stopped" &&
+          (before.settings?.network.kill_switch ?? false);
+        if (protectedCrash) {
+          set({
+            helperStatus: status,
+            helperStatusError: null,
+            connection: "error",
+            actionError: { code: "CORE_STOPPED", message: "" },
+          });
+          void get().loadLogs(null);
+          return;
+        }
+        applyStatus(status);
+      } catch (error) {
+        set({ helperStatusError: toCommandError(error) });
       }
     },
 

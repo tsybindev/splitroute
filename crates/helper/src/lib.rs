@@ -12,6 +12,7 @@ pub mod args;
 pub mod core;
 pub mod handler;
 pub mod ipc;
+pub mod killswitch;
 pub mod platform;
 
 #[cfg(windows)]

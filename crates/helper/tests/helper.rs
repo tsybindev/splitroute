@@ -17,6 +17,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
+use splitroute_protocol::PROTOCOL_VERSION;
 
 const BIN: &str = env!("CARGO_BIN_EXE_splitroute-helper");
 
@@ -174,7 +175,7 @@ fn read_response(stream: &UnixStream) -> Value {
 
 fn request(id: &str, command: &str, payload: Value) -> Vec<u8> {
     serde_json::to_vec(&json!({
-        "protocol": 1,
+        "protocol": PROTOCOL_VERSION,
         "id": id,
         "command": command,
         "payload": payload,

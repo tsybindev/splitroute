@@ -13,6 +13,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde_json::{json, Value};
 use splitroute_protocol::{CoreState, ErrorCode, HelperStatus};
 
+#[cfg(test)]
+use crate::killswitch::Firewall;
+use crate::killswitch::KillSwitch;
 use crate::platform;
 
 /// Пауза после запуска ядра: если процесс завершился, `start` сообщает ошибку.
@@ -51,6 +54,8 @@ pub struct HelperCore {
     started_at: Option<u64>,
     /// Конфиг записан этим экземпляром и должен быть удалён при остановке.
     config_owned: bool,
+    /// Правила fail-closed; живут дольше процесса ядра.
+    kill_switch: KillSwitch,
 }
 
 impl HelperCore {
@@ -69,6 +74,7 @@ impl HelperCore {
         let version = read_version(&sing_box);
         let config_path = runtime_dir.join("config.json");
         let log_path = runtime_dir.join("sing-box.log");
+        let kill_switch = KillSwitch::platform(&runtime_dir);
 
         Ok(Self {
             sing_box,
@@ -79,7 +85,20 @@ impl HelperCore {
             child: None,
             started_at: None,
             config_owned: false,
+            kill_switch,
         })
+    }
+
+    /// Конструктор для тестов: firewall подменяется, ядро остаётся фиктивным.
+    #[cfg(test)]
+    fn with_firewall(
+        sing_box: impl Into<PathBuf>,
+        runtime_dir: impl Into<PathBuf>,
+        firewall: Box<dyn Firewall>,
+    ) -> io::Result<Self> {
+        let mut core = Self::new(sing_box, runtime_dir)?;
+        core.kill_switch = KillSwitch::new(firewall);
+        Ok(core)
     }
 
     /// Текущий статус; завершившийся процесс ядра замечается здесь же.
@@ -95,6 +114,8 @@ impl HelperCore {
             pid: self.child.as_ref().map(Child::id),
             version: self.version.clone(),
             started_at: if running { self.started_at } else { None },
+            // При падении ядра правила остаются: это и есть fail-closed.
+            kill_switch: self.kill_switch.status(),
         }
     }
 
@@ -104,7 +125,12 @@ impl HelperCore {
     }
 
     /// Проверяет конфиг и запускает ядро. Повторный запуск запрещён.
-    pub fn start(&mut self, config: Value) -> Result<HelperStatus, HelperError> {
+    ///
+    /// При `kill_switch = true` правила ставятся до запуска ядра. Если старт не
+    /// удался, а правила поставил именно этот вызов, они снимаются: не блокируем
+    /// сеть пользователя без работающего туннеля. Если правила остались от
+    /// прошлой сессии после падения ядра, они сохраняются (fail-closed).
+    pub fn start(&mut self, config: Value, kill_switch: bool) -> Result<HelperStatus, HelperError> {
         self.reap();
         if self.child.is_some() {
             return Err(HelperError::new(
@@ -119,9 +145,18 @@ impl HelperCore {
             ));
         }
 
-        self.write_config(&config)?;
+        let was_active = self.kill_switch.is_active();
+        if let Err(error) = self.kill_switch.sync(kill_switch) {
+            return Err(HelperError::new(
+                ErrorCode::KillSwitchFailed,
+                format!("не удалось применить kill switch: {error}"),
+            ));
+        }
 
-        let check = Command::new(&self.sing_box)
+        self.write_config(&config)
+            .inspect_err(|_| self.rollback_kill_switch(was_active))?;
+
+        let check = match Command::new(&self.sing_box)
             .arg("check")
             .arg("-c")
             .arg(&self.config_path)
@@ -129,12 +164,21 @@ impl HelperCore {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()
-            .map_err(|error| {
+        {
+            Ok(status) => status,
+            Err(error) => {
                 self.discard_config();
-                HelperError::io(ErrorCode::StartFailed, "не удалось проверить конфиг", error)
-            })?;
+                self.rollback_kill_switch(was_active);
+                return Err(HelperError::io(
+                    ErrorCode::StartFailed,
+                    "не удалось проверить конфиг",
+                    error,
+                ));
+            }
+        };
         if !check.success() {
             self.discard_config();
+            self.rollback_kill_switch(was_active);
             // Текст ошибки ядра может содержать значения конфига — не отдаём его.
             return Err(HelperError::new(
                 ErrorCode::ConfigInvalid,
@@ -142,20 +186,32 @@ impl HelperCore {
             ));
         }
 
-        let log = platform::open_log(&self.log_path).map_err(|error| {
-            self.discard_config();
-            HelperError::io(ErrorCode::StartFailed, "не удалось открыть лог ядра", error)
-        })?;
-        let stdout = log.try_clone().map_err(|error| {
-            self.discard_config();
-            HelperError::io(
-                ErrorCode::StartFailed,
-                "не удалось подготовить лог ядра",
-                error,
-            )
-        })?;
+        let log = match platform::open_log(&self.log_path) {
+            Ok(log) => log,
+            Err(error) => {
+                self.discard_config();
+                self.rollback_kill_switch(was_active);
+                return Err(HelperError::io(
+                    ErrorCode::StartFailed,
+                    "не удалось открыть лог ядра",
+                    error,
+                ));
+            }
+        };
+        let stdout = match log.try_clone() {
+            Ok(stdout) => stdout,
+            Err(error) => {
+                self.discard_config();
+                self.rollback_kill_switch(was_active);
+                return Err(HelperError::io(
+                    ErrorCode::StartFailed,
+                    "не удалось подготовить лог ядра",
+                    error,
+                ));
+            }
+        };
 
-        let mut child = Command::new(&self.sing_box)
+        let mut child = match Command::new(&self.sing_box)
             .arg("run")
             .arg("-c")
             .arg(&self.config_path)
@@ -163,14 +219,23 @@ impl HelperCore {
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(log))
             .spawn()
-            .map_err(|error| {
+        {
+            Ok(child) => child,
+            Err(error) => {
                 self.discard_config();
-                HelperError::io(ErrorCode::StartFailed, "не удалось запустить ядро", error)
-            })?;
+                self.rollback_kill_switch(was_active);
+                return Err(HelperError::io(
+                    ErrorCode::StartFailed,
+                    "не удалось запустить ядро",
+                    error,
+                ));
+            }
+        };
 
         std::thread::sleep(START_GRACE);
         if let Ok(Some(status)) = child.try_wait() {
             self.discard_config();
+            self.rollback_kill_switch(was_active);
             let code = status
                 .code()
                 .map(|code| code.to_string())
@@ -186,10 +251,18 @@ impl HelperCore {
         Ok(self.status())
     }
 
-    /// Останавливает ядро; операция идемпотентна.
+    /// Снимает правила, поставленные этим вызовом `start`.
+    fn rollback_kill_switch(&mut self, was_active: bool) {
+        if !was_active && self.kill_switch.is_active() {
+            self.kill_switch.release();
+        }
+    }
+
+    /// Останавливает ядро и снимает правила; операция идемпотентна.
     pub fn stop(&mut self) -> HelperStatus {
         self.stop_process();
         self.discard_config();
+        self.kill_switch.release();
         self.status()
     }
 
@@ -258,6 +331,8 @@ impl Drop for HelperCore {
     fn drop(&mut self) {
         self.stop_process();
         self.discard_config();
+        // При завершении helper'а правила не должны «залипнуть».
+        self.kill_switch.release();
     }
 }
 
@@ -287,6 +362,46 @@ fn now_secs() -> u64 {
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    #[derive(Default)]
+    struct FakeCounters {
+        enable: AtomicUsize,
+        disable: AtomicUsize,
+    }
+
+    struct FakeFirewall {
+        counters: Arc<FakeCounters>,
+        fail_enable: bool,
+    }
+
+    impl Firewall for FakeFirewall {
+        fn enable(&self) -> Result<(), String> {
+            if self.fail_enable {
+                return Err("нужны права root".to_string());
+            }
+            self.counters.enable.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn disable(&self) -> Result<(), String> {
+            self.counters.disable.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    fn core_with_fake(dir: &Path, counters: Arc<FakeCounters>, fail_enable: bool) -> HelperCore {
+        HelperCore::with_firewall(
+            dir.join("missing-sing-box"),
+            dir,
+            Box::new(FakeFirewall {
+                counters,
+                fail_enable,
+            }),
+        )
+        .unwrap()
+    }
 
     fn temp_dir(tag: &str) -> PathBuf {
         let unique = SystemTime::now()
@@ -322,9 +437,80 @@ mod tests {
     fn non_object_config_is_rejected_before_writing() {
         let dir = temp_dir("invalid");
         let mut core = HelperCore::new(dir.join("missing-sing-box"), &dir).unwrap();
-        let error = core.start(Value::Null).unwrap_err();
+        let error = core.start(Value::Null, false).unwrap_err();
         assert_eq!(error.code, ErrorCode::ConfigInvalid);
         assert!(!core.config_path.exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn kill_switch_failure_does_not_start_core() {
+        let dir = temp_dir("ks-fail");
+        let counters = Arc::new(FakeCounters::default());
+        let mut core = core_with_fake(&dir, counters.clone(), true);
+
+        let error = core
+            .start(json!({ "log": { "level": "info" } }), true)
+            .unwrap_err();
+        assert_eq!(error.code, ErrorCode::KillSwitchFailed);
+        assert!(error.message.contains("нужны права root"));
+        assert!(!core.config_path.exists(), "конфиг не пишется без защиты");
+        assert!(!core.status().kill_switch.enabled);
+        assert_eq!(counters.enable.load(Ordering::SeqCst), 0);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn failed_start_rolls_back_rules_it_installed() {
+        let dir = temp_dir("ks-rollback");
+        let counters = Arc::new(FakeCounters::default());
+        let mut core = core_with_fake(&dir, counters.clone(), false);
+
+        // Ядра нет: проверка конфига падает после установки правил.
+        let error = core
+            .start(json!({ "log": { "level": "info" } }), true)
+            .unwrap_err();
+        assert_eq!(error.code, ErrorCode::StartFailed);
+        assert_eq!(counters.enable.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            counters.disable.load(Ordering::SeqCst),
+            1,
+            "правила, поставленные этим вызовом, снимаются"
+        );
+        assert!(!core.status().kill_switch.enabled);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn failed_start_keeps_protection_from_previous_crash() {
+        let dir = temp_dir("ks-crash");
+        let counters = Arc::new(FakeCounters::default());
+        let mut core = core_with_fake(&dir, counters.clone(), false);
+        core.kill_switch.sync(true).unwrap();
+
+        let error = core
+            .start(json!({ "log": { "level": "info" } }), true)
+            .unwrap_err();
+        assert_eq!(error.code, ErrorCode::StartFailed);
+        assert_eq!(
+            counters.disable.load(Ordering::SeqCst),
+            0,
+            "после падения ядра правила должны оставаться"
+        );
+        assert!(core.status().kill_switch.enabled);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn stop_removes_kill_switch_rules() {
+        let dir = temp_dir("ks-stop");
+        let counters = Arc::new(FakeCounters::default());
+        let mut core = core_with_fake(&dir, counters.clone(), false);
+        core.kill_switch.sync(true).unwrap();
+
+        let status = core.stop();
+        assert_eq!(counters.disable.load(Ordering::SeqCst), 1);
+        assert!(!status.kill_switch.enabled);
         let _ = fs::remove_dir_all(&dir);
     }
 

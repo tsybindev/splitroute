@@ -8,7 +8,7 @@ use std::io::{BufRead, Write};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde_json::Value;
-use splitroute_protocol::{Command, ErrorCode, Response};
+use splitroute_protocol::{Command, ErrorCode, Response, StartPayload};
 
 use crate::core::{HelperCore, HelperError};
 use crate::ipc::{self, ParsedRequest};
@@ -54,12 +54,18 @@ pub fn dispatch(
             if shutting_down {
                 return Response::error(id, ErrorCode::Internal, "helper завершается");
             }
-            let config = request
-                .payload
-                .get("config")
-                .cloned()
-                .unwrap_or(Value::Null);
-            core.start(config).map(status_payload)
+            let start: StartPayload = match serde_json::from_value(request.payload.clone()) {
+                Ok(start) => start,
+                Err(_) => {
+                    return Response::error(
+                        id,
+                        ErrorCode::BadRequest,
+                        "payload: ожидались config и kill_switch",
+                    );
+                }
+            };
+            core.start(start.config, start.kill_switch)
+                .map(status_payload)
         }
         Command::Stop => {
             let mut core = lock(shared);

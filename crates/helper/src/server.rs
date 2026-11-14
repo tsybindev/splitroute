@@ -53,6 +53,12 @@ pub fn run(options: ServerOptions) -> anyhow::Result<()> {
         chown_socket(&options.socket_path, options.allowed_uid)?;
     }
 
+    // Сокет захвачен: можно снимать правила прошлого запуска, не задевая
+    // работающий экземпляр helper'а.
+    if let Err(error) = crate::killswitch::cleanup_stale(&options.runtime_dir) {
+        eprintln!("splitroute-helper: не удалось снять старые правила kill switch: {error}");
+    }
+
     install_shutdown_handler().context("не удалось установить обработчик сигналов")?;
 
     eprintln!(

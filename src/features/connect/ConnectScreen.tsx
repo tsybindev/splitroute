@@ -106,6 +106,8 @@ export function ConnectScreen() {
   const actionError = useAppStore((state) => state.actionError);
   const busy = useAppStore((state) => state.busy);
   const toggleConnection = useAppStore((state) => state.toggleConnection);
+  const disconnect = useAppStore((state) => state.disconnect);
+  const pollConnection = useAppStore((state) => state.pollConnection);
   const setActiveTab = useAppStore((state) => state.setActiveTab);
 
   const selected = profiles.find((profile) => profile.id === selectedProfileId);
@@ -115,6 +117,19 @@ export function ConnectScreen() {
   const connected = connection === "connected";
   const pending = connection === "connecting" || connection === "disconnecting";
   const canConnect = Boolean(selected) && !pending && !busy.connect;
+  const killSwitchSetting = settings?.network.kill_switch ?? false;
+  const killSwitchActive = helperStatus?.kill_switch?.enabled ?? false;
+  const killSwitchError = helperStatus?.kill_switch?.error;
+
+  // Пока защита включена, следим за ядром: helper продолжает блокировать
+  // трафик и после падения sing-box, поэтому UI не должен показывать «подключено».
+  useEffect(() => {
+    if (!killSwitchSetting || connection !== "connected") return;
+    const timer = setInterval(() => {
+      void pollConnection();
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [killSwitchSetting, connection, pollConnection]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -183,13 +198,21 @@ export function ConnectScreen() {
 
       {actionError ? <ErrorBox error={actionError} /> : null}
 
+      {connection === "error" && killSwitchActive ? (
+        <div className="flex justify-end">
+          <Button onClick={() => void disconnect()}>
+            {t("connect.killSwitch.disarm")}
+          </Button>
+        </div>
+      ) : null}
+
       {profiles.length === 0 ? (
         <p className="rounded-lg border border-neutral-800 bg-neutral-900/60 px-4 py-3 text-sm text-neutral-400">
           {t("connect.noSubscription")}
         </p>
       ) : null}
 
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Card title={t("connect.helper")}>
           <Badge tone={badge.tone}>{helperStatus?.version ?? badge.label}</Badge>
         </Card>
@@ -211,6 +234,27 @@ export function ConnectScreen() {
           <Badge tone={activeRules > 0 ? "success" : "neutral"}>
             {activeRules}
           </Badge>
+        </Card>
+        <Card title={t("connect.killSwitch")}>
+          <Badge
+            tone={
+              killSwitchError ? "warn" : killSwitchActive ? "success" : "neutral"
+            }
+          >
+            {killSwitchError
+              ? t("connect.killSwitch.error")
+              : killSwitchActive
+                ? t("connect.killSwitch.active")
+                : t("connect.killSwitch.off")}
+          </Badge>
+          {killSwitchError ? (
+            <p className="mt-2 text-xs text-amber-300">{killSwitchError}</p>
+          ) : null}
+          {connection === "error" && killSwitchActive ? (
+            <p className="mt-2 text-xs text-amber-300">
+              {t("connect.killSwitch.blocked")}
+            </p>
+          ) : null}
         </Card>
       </div>
     </div>

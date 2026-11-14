@@ -155,6 +155,10 @@ pub struct Settings {
     pub mixed_port: u16,
     pub dns_mode: DnsMode,
     pub log_level: LogLevel,
+    /// Kill switch (fail-closed): правила ставит helper при подключении.
+    /// По умолчанию выключен; старые `state.json` читаются как `false`.
+    #[serde(default)]
+    pub kill_switch: bool,
 }
 
 impl Default for Settings {
@@ -166,6 +170,7 @@ impl Default for Settings {
             mixed_port: 10808,
             dns_mode: DnsMode::Proxy,
             log_level: LogLevel::Info,
+            kill_switch: false,
         }
     }
 }
@@ -205,6 +210,21 @@ mod tests {
         assert_eq!(settings.mixed_port, 10808);
         assert_eq!(settings.dns_mode, DnsMode::Proxy);
         assert_eq!(settings.log_level, LogLevel::Info);
+        assert!(!settings.kill_switch);
+    }
+
+    #[test]
+    fn legacy_settings_without_kill_switch_read_as_disabled() {
+        let raw = r#"{
+            "mtu": 1500,
+            "ipv6_enabled": false,
+            "mixed_inbound_enabled": true,
+            "mixed_port": 10808,
+            "dns_mode": "proxy",
+            "log_level": "info"
+        }"#;
+        let settings: Settings = serde_json::from_str(raw).unwrap();
+        assert!(!settings.kill_switch);
     }
 
     #[test]

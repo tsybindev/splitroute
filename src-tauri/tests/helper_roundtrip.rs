@@ -128,7 +128,9 @@ fn client_and_helper_agree_on_protocol() {
     let status = client.status().unwrap();
     assert_eq!(status.state, CoreState::Stopped);
 
-    let started = client.start(json!({ "log": { "level": "info" } })).unwrap();
+    let started = client
+        .start(json!({ "log": { "level": "info" } }), false)
+        .unwrap();
     assert_eq!(started.state, CoreState::Running);
     assert!(started.pid.is_some());
 

@@ -9,6 +9,7 @@ const apiMock = vi.hoisted(() => ({
   connect: vi.fn(),
   disconnect: vi.fn(),
   trafficStats: vi.fn(),
+  helperStatus: vi.fn(),
 }));
 
 const noTraffic = { available: false, upload_total: 0, download_total: 0 };
@@ -24,6 +25,8 @@ describe("ConnectScreen", () => {
     vi.clearAllMocks();
     apiMock.trafficStats.mockReset();
     apiMock.trafficStats.mockResolvedValue(noTraffic);
+    apiMock.helperStatus.mockReset();
+    apiMock.helperStatus.mockResolvedValue(stoppedStatus);
     resetAppStore();
   });
 
@@ -168,6 +171,77 @@ describe("ConnectScreen", () => {
       vi.advanceTimersByTime(1000);
     });
     expect(screen.getByText("2 КиБ")).toBeInTheDocument();
+  });
+
+  it("показывает активный kill switch из статуса helper'а", () => {
+    const settings = makeSettings();
+    settings.network.kill_switch = true;
+    useAppStore.setState({
+      settings,
+      profiles: [makeProfile()],
+      selectedProfileId: "profile-1",
+      helperStatus: {
+        ...runningStatus,
+        kill_switch: { enabled: true },
+      },
+      connection: "connected",
+    });
+
+    render(<ConnectScreen />);
+    expect(screen.getByText("Активен")).toBeInTheDocument();
+    expect(screen.queryByText("Выключен")).not.toBeInTheDocument();
+  });
+
+  it("показывает ошибку правил kill switch", () => {
+    const settings = makeSettings();
+    settings.network.kill_switch = true;
+    useAppStore.setState({
+      settings,
+      helperStatus: {
+        ...runningStatus,
+        kill_switch: { enabled: false, error: "нет прав root" },
+      },
+      connection: "connected",
+    });
+
+    render(<ConnectScreen />);
+    expect(screen.getByText("Ошибка")).toBeInTheDocument();
+    expect(screen.getByText("нет прав root")).toBeInTheDocument();
+  });
+
+  it("при падении ядра с kill switch показывает ошибку и кнопку снятия защиты", async () => {
+    vi.useFakeTimers();
+    const settings = makeSettings();
+    settings.network.kill_switch = true;
+    useAppStore.setState({
+      settings,
+      profiles: [makeProfile()],
+      selectedProfileId: "profile-1",
+      helperStatus: {
+        ...runningStatus,
+        kill_switch: { enabled: true },
+      },
+      connection: "connected",
+    });
+    apiMock.helperStatus.mockResolvedValue({
+      state: "stopped",
+      kill_switch: { enabled: true },
+    });
+
+    render(<ConnectScreen />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+
+    expect(
+      screen.getByText("Ядро остановилось. Kill switch блокирует прямой трафик."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Kill switch блокирует прямой трафик — отключитесь/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Отключить и снять защиту" }),
+    ).toBeInTheDocument();
   });
 
   it("различает состояния helper'а: нет, устарел, не отвечает", () => {

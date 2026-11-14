@@ -15,7 +15,11 @@ pub use model::{
 };
 
 /// Версия протокола IPC. Несовпадение — повод переустановить helper.
-pub const PROTOCOL_VERSION: u16 = 1;
+///
+/// Версия 2 добавила `kill_switch` в `start` и состояние kill switch в `status`.
+/// Старый helper молча проигнорировал бы флаг и оставил трафик без защиты,
+/// поэтому совместимость не сохраняется.
+pub const PROTOCOL_VERSION: u16 = 2;
 
 /// Максимальный размер одного сообщения протокола, байт.
 pub const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
@@ -73,6 +77,17 @@ impl Request {
     }
 }
 
+/// Payload команды `start`: конфиг ядра и режим kill switch.
+///
+/// `kill_switch` передаётся отдельно от конфига: правила ставит helper, а не
+/// sing-box, и они должны оставаться в силе, если ядро упадёт.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StartPayload {
+    pub config: Value,
+    #[serde(default)]
+    pub kill_switch: bool,
+}
+
 /// Код ошибки протокола: стабильный, машинно-читаемый.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -85,6 +100,7 @@ pub enum ErrorCode {
     ConfigInvalid,
     AlreadyRunning,
     StartFailed,
+    KillSwitchFailed,
     Internal,
 }
 
@@ -162,6 +178,18 @@ pub enum ConnectionState {
     Error,
 }
 
+/// Состояние kill switch в helper'е.
+///
+/// `enabled` — правила сейчас установлены и защита действует (в том числе когда
+/// ядро уже упало). `error` — правила не удалось снять/поставить.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct KillSwitchStatus {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub error: Option<String>,
+}
+
 /// Ответ helper'а на `status`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HelperStatus {
@@ -176,6 +204,8 @@ pub struct HelperStatus {
         deserialize_with = "deserialize_optional_secs"
     )]
     pub started_at: Option<u64>,
+    #[serde(default)]
+    pub kill_switch: KillSwitchStatus,
 }
 
 /// Принимает время старта как целые или дробные секунды: dev-helper отдаёт
@@ -270,12 +300,26 @@ mod tests {
 
     #[test]
     fn parse_response_rejects_foreign_version() {
-        let raw = r#"{"protocol":2,"id":"x","ok":true,"payload":{}}"#;
+        let foreign = PROTOCOL_VERSION + 1;
+        let raw = format!(r#"{{"protocol":{foreign},"id":"x","ok":true,"payload":{{}}}}"#);
+        assert_eq!(
+            parse_response(&raw),
+            Err(ProtocolError::VersionMismatch {
+                expected: PROTOCOL_VERSION,
+                got: foreign
+            })
+        );
+    }
+
+    #[test]
+    fn parse_response_rejects_previous_protocol_version() {
+        // v1 helper не знает kill switch: считать его совместимым нельзя.
+        let raw = r#"{"protocol":1,"id":"x","ok":true,"payload":{}}"#;
         assert_eq!(
             parse_response(raw),
             Err(ProtocolError::VersionMismatch {
                 expected: PROTOCOL_VERSION,
-                got: 2
+                got: 1
             })
         );
     }
@@ -296,10 +340,15 @@ mod tests {
             pid: Some(4242),
             version: Some("sing-box version 1.14.4".to_string()),
             started_at: Some(1_762_950_000),
+            kill_switch: KillSwitchStatus {
+                enabled: true,
+                error: None,
+            },
         };
         let encoded = serde_json::to_string(&status).unwrap();
         let decoded: HelperStatus = serde_json::from_str(&encoded).unwrap();
         assert_eq!(decoded, status);
+        assert!(encoded.contains(r#""kill_switch""#));
     }
 
     #[test]
@@ -308,5 +357,44 @@ mod tests {
         let raw = r#"{"state":"running","pid":42,"started_at":1762950000.123}"#;
         let decoded: HelperStatus = serde_json::from_str(raw).unwrap();
         assert_eq!(decoded.started_at, Some(1_762_950_000));
+    }
+
+    #[test]
+    fn helper_status_without_kill_switch_reads_as_disabled() {
+        // Поле появилось в протоколе 2; отсутствие — «выключен», а не ошибка.
+        let raw = r#"{"state":"stopped"}"#;
+        let decoded: HelperStatus = serde_json::from_str(raw).unwrap();
+        assert!(!decoded.kill_switch.enabled);
+        assert!(decoded.kill_switch.error.is_none());
+    }
+
+    #[test]
+    fn start_payload_defaults_kill_switch_to_false() {
+        let payload: StartPayload = serde_json::from_value(serde_json::json!({
+            "config": { "log": { "level": "info" } }
+        }))
+        .unwrap();
+        assert!(!payload.kill_switch);
+        assert_eq!(payload.config["log"]["level"], "info");
+    }
+
+    #[test]
+    fn start_payload_round_trip_with_kill_switch() {
+        let payload = StartPayload {
+            config: serde_json::json!({ "log": { "level": "info" } }),
+            kill_switch: true,
+        };
+        let encoded = serde_json::to_string(&payload).unwrap();
+        let decoded: StartPayload = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded, payload);
+        assert!(encoded.contains(r#""kill_switch":true"#));
+    }
+
+    #[test]
+    fn kill_switch_error_code_is_stable() {
+        assert_eq!(
+            serde_json::to_value(ErrorCode::KillSwitchFailed).unwrap(),
+            "KILL_SWITCH_FAILED"
+        );
     }
 }

@@ -9,11 +9,18 @@ export type ConnectionState =
 
 export type CoreState = "running" | "stopped";
 
+/** Состояние правил kill switch в helper'е (протокол 2). */
+export interface KillSwitchStatus {
+  enabled: boolean;
+  error?: string;
+}
+
 export interface HelperStatus {
   state: CoreState;
   pid?: number;
   version?: string;
   started_at?: number;
+  kill_switch?: KillSwitchStatus;
 }
 
 export type Protocol = "vless";
@@ -71,6 +78,8 @@ export interface NetworkSettings {
   mixed_port: number;
   dns_mode: DnsMode;
   log_level: LogLevel;
+  /** Fail-closed: при обрыве туннеля helper блокирует прямой выход. */
+  kill_switch: boolean;
 }
 
 export interface SubscriptionSettings {

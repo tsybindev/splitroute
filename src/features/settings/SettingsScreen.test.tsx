@@ -122,6 +122,35 @@ describe("SettingsScreen", () => {
     ).toBeInTheDocument();
   });
 
+  it("включает kill switch с предупреждением и сохраняет настройку", async () => {
+    const user = userEvent.setup();
+    const settings = makeSettings();
+    const saved = {
+      ...settings,
+      network: { ...settings.network, kill_switch: true },
+    };
+    apiMock.settingsUpdate.mockResolvedValue(saved);
+    useAppStore.setState({ settings });
+
+    render(<SettingsScreen />);
+    expect(
+      screen.getByText(/прямой выход в интернет будет заблокирован/),
+    ).toBeInTheDocument();
+
+    await user.click(
+      screen.getByLabelText("Блокировать прямой трафик при обрыве туннеля"),
+    );
+    await user.click(screen.getByRole("button", { name: "Сохранить настройки" }));
+
+    await waitFor(() =>
+      expect(apiMock.settingsUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          network: expect.objectContaining({ kill_switch: true }),
+        }),
+      ),
+    );
+  });
+
   it("показывает статус helper'а из helper_status", async () => {
     useAppStore.setState({
       settings: makeSettings(),
