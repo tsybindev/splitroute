@@ -467,10 +467,13 @@ NSIS показывает страницу лицензии; `LICENSE` и `THIRD
 - **Linux-машина:** git-репозитория нет, исходники синхронизируются `rsync`;
   не удаляйте `target` без нужды — сборка инкрементальная. `sudo` с паролем,
   поэтому установка и сервисы — только с участием пользователя.
-- **Иконка приложения:** `src-tauri/icons/icon.png` (сейчас 512×512) и
-  трей (`include_bytes!("../icons/icon.png")`). Для замены — исходник
-  1024×1024 PNG RGBA и `pnpm tauri icon <path>` (сгенерирует `icon.icns`,
-  `icon.ico`, размерные PNG); при необходимости переключить трей на 32×32.
+- **Иконка приложения:** финал `splitroute-icon-pack/final/splitroute-1024.png`
+  (вне репозитория) прогнан через `pnpm tauri icon`; в `src-tauri/icons` —
+  `icon.icns`, `icon.ico`, 32/64/128/128@2x/512 и Windows Store, `bundle.icon`
+  обновлён. Трей: macOS — `tray-template.png` + `icon_as_template(true)`,
+  Windows/Linux — цветная `32x32.png` (белая моно на светлой теме не видна).
+  Для замены — снова 1024×1024 PNG RGBA и `pnpm tauri icon <path>`. Windows
+  `.ico` в рантайме не проверен.
 - **`--allow-uid`/`--allow-sid`** фиксируют одного пользователя (G3.1).
 - Подпись нужна для распространения: Developer ID + notarization (macOS),
   Authenticode/SmartScreen (Windows), подпись пакетов (Linux); `wintun.dll` —
