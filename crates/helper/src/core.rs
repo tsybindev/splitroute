@@ -13,7 +13,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde_json::{json, Value};
 use splitroute_protocol::{CoreState, ErrorCode, HelperStatus};
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 use crate::killswitch::Firewall;
 use crate::killswitch::KillSwitch;
 use crate::platform;
@@ -74,7 +74,7 @@ impl HelperCore {
         let version = read_version(&sing_box);
         let config_path = runtime_dir.join("config.json");
         let log_path = runtime_dir.join("sing-box.log");
-        let kill_switch = KillSwitch::platform(&runtime_dir);
+        let kill_switch = KillSwitch::platform(&runtime_dir, &sing_box);
 
         Ok(Self {
             sing_box,
@@ -90,7 +90,7 @@ impl HelperCore {
     }
 
     /// Конструктор для тестов: firewall подменяется, ядро остаётся фиктивным.
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     fn with_firewall(
         sing_box: impl Into<PathBuf>,
         runtime_dir: impl Into<PathBuf>,

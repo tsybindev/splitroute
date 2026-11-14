@@ -20,7 +20,7 @@ pub struct SystemFirewall {
 }
 
 impl SystemFirewall {
-    pub fn new(runtime_dir: &Path) -> Self {
+    pub fn new(runtime_dir: &Path, _core: Option<&Path>) -> Self {
         Self {
             runtime_dir: runtime_dir.to_path_buf(),
         }

@@ -8,9 +8,11 @@ use splitroute_protocol::{AppRule, DnsMode, Profile, Protocol, Settings, TlsKind
 
 /// DoT-сервер для выбранных процессов (идёт через proxy).
 pub const REMOTE_DNS: &str = "1.1.1.1";
-/// Адрес TUN для IPv4.
+/// Адрес TUN для IPv4. Правила WFP Windows повторяют его в
+/// `crates/helper/src/killswitch/rules.rs` (`WINDOWS_TUN_V4`): меняйте вместе.
 pub const TUN_ADDRESS_V4: &str = "172.19.0.1/30";
-/// Адрес TUN для IPv6 (только если IPv6 включён).
+/// Адрес TUN для IPv6 (только если IPv6 включён). Дублируется в
+/// `crates/helper/src/killswitch/rules.rs` (`WINDOWS_TUN_V6`).
 pub const TUN_ADDRESS_V6: &str = "fdfe:dcba:9876::1/126";
 /// Локальный адрес Clash API: только loopback, наружу не слушает.
 pub const CLASH_API_HOST: &str = "127.0.0.1";

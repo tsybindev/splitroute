@@ -10,7 +10,8 @@
 //! Механизмы по ОС:
 //! - macOS — pf anchor `com.apple/splitroute.killswitch`;
 //! - Linux — отдельная таблица nftables `inet splitroute_killswitch`;
-//! - Windows — пока не реализовано (S4-T5b), включение возвращает ошибку.
+//! - Windows — собственный провайдер и подслой WFP (фильтры разрешают loopback,
+//!   локальные сети, TUN и процесс ядра, остальное блокируют).
 
 pub mod rules;
 
@@ -22,11 +23,15 @@ use splitroute_protocol::KillSwitchStatus;
 mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(target_os = "windows")]
+mod windows;
 
 #[cfg(target_os = "linux")]
 pub use linux::SystemFirewall;
 #[cfg(target_os = "macos")]
 pub use macos::SystemFirewall;
+#[cfg(target_os = "windows")]
+pub use windows::SystemFirewall;
 
 /// Ошибка применения правил: текст уже безопасен для логов и UI.
 pub type FirewallError = String;
@@ -119,25 +124,28 @@ impl KillSwitch {
 /// Вызывается после успешного захвата сокета/пайпа: второй экземпляр helper'а
 /// не должен снимать защиту работающего.
 pub fn cleanup_stale(runtime_dir: &Path) -> Result<(), FirewallError> {
-    platform_firewall(runtime_dir).disable()
+    platform_firewall(runtime_dir, None).disable()
 }
 
 /// Платформенный backend для рабочего helper'а.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-pub fn platform_firewall(runtime_dir: &Path) -> SystemFirewall {
-    SystemFirewall::new(runtime_dir)
+///
+/// `core` нужен Windows: правила WFP разрешают точный AppId процесса ядра.
+/// macOS и Linux путь к ядру не используют.
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
+pub fn platform_firewall(runtime_dir: &Path, core: Option<&Path>) -> SystemFirewall {
+    SystemFirewall::new(runtime_dir, core)
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
-pub fn platform_firewall(_runtime_dir: &Path) -> UnsupportedFirewall {
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+pub fn platform_firewall(_runtime_dir: &Path, _core: Option<&Path>) -> UnsupportedFirewall {
     UnsupportedFirewall
 }
 
-/// Заглушка для ОС, где kill switch ещё не реализован (Windows — S4-T5b).
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+/// Заглушка для ОС, где kill switch не реализован.
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 pub struct UnsupportedFirewall;
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 impl Firewall for UnsupportedFirewall {
     fn enable(&self) -> Result<(), FirewallError> {
         Err("kill switch не поддерживается на этой ОС".to_string())
@@ -149,9 +157,9 @@ impl Firewall for UnsupportedFirewall {
 }
 
 impl KillSwitch {
-    /// Backend текущей ОС с доступом к runtime-каталогу для файла правил.
-    pub fn platform(runtime_dir: &Path) -> Self {
-        Self::new(Box::new(platform_firewall(runtime_dir)))
+    /// Backend текущей ОС с доступом к runtime-каталогу и пути к ядру.
+    pub fn platform(runtime_dir: &Path, core: &Path) -> Self {
+        Self::new(Box::new(platform_firewall(runtime_dir, Some(core))))
     }
 }
 
