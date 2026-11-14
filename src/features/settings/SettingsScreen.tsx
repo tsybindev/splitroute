@@ -170,12 +170,13 @@ function SettingsForm({ initial }: { initial: AppSettings }) {
           </div>
           <Field
             label={t("settings.subscription.autoUpdate")}
+            hint={t("settings.subscription.autoUpdateHint")}
             htmlFor="subscription-interval"
           >
             <input
               id="subscription-interval"
               type="number"
-              min={1}
+              min={0}
               max={168}
               className={inputClass}
               value={form.subscription.auto_update_hours}

@@ -1,6 +1,7 @@
 //! Точка входа Tauri-приложения SplitRoute.
 
 pub mod autoconnect;
+pub mod autoupdate;
 pub mod catalog;
 pub mod commands;
 pub mod config;
@@ -109,6 +110,8 @@ pub fn run() {
             }
             // Автоподключение — в фоне: окно не ждёт helper'а (B2, PRD §6.5).
             autoconnect::spawn(app.handle().clone());
+            // Автообновление подписки по интервалу (M1, PRD §6.1) — тоже в фоне.
+            autoupdate::spawn(app.handle().clone());
             Ok(())
         })
         .on_window_event(|window, event| {

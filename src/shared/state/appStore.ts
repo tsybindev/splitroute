@@ -5,6 +5,7 @@ import {
   api,
   onAutoconnectFailed,
   onConnectionChanged,
+  onSubscriptionUpdated,
   onUpdateProgress,
   toCommandError,
 } from "../api/client";
@@ -43,6 +44,8 @@ interface AppState {
   profiles: Profile[];
   selectedProfileId: string | null;
   fetchedAt: number | null;
+  /** Когда ждать следующее автообновление подписки (M1); null — не запланировано. */
+  nextUpdateAt: number | null;
   skippedCount: number;
   latency: LatencyResponse | null;
   rules: AppRuleView[];
@@ -111,6 +114,7 @@ const initialState = {
   profiles: [] as Profile[],
   selectedProfileId: null,
   fetchedAt: null,
+  nextUpdateAt: null,
   skippedCount: 0,
   latency: null as LatencyResponse | null,
   rules: [] as AppRuleView[],
@@ -201,6 +205,7 @@ export const useAppStore = create<AppState>((set, get) => {
             profiles: response.profiles,
             selectedProfileId: response.selected_profile_id,
             fetchedAt: response.fetched_at,
+            nextUpdateAt: response.next_update_at,
           });
         })(),
         (async () => {
@@ -236,9 +241,22 @@ export const useAppStore = create<AppState>((set, get) => {
         set({ startupError: error });
         void get().loadLogs(null);
       });
+      // Фоновое автообновление подписки (M1): список локаций и расписание
+      // обновляются без участия пользователя, окно не перезагружается.
+      const stopSubscription = await onSubscriptionUpdated((response) => {
+        set({
+          profiles: response.profiles,
+          selectedProfileId: response.selected_profile_id,
+          fetchedAt: response.fetched_at,
+          nextUpdateAt: response.next_update_at,
+          skippedCount: response.skipped.length,
+        });
+        void get().loadLogs(null);
+      });
       return () => {
         stopConnection();
         stopStartup();
+        stopSubscription();
       };
     },
 
@@ -250,6 +268,7 @@ export const useAppStore = create<AppState>((set, get) => {
             profiles: response.profiles,
             selectedProfileId: response.selected_profile_id,
             fetchedAt: response.fetched_at,
+            nextUpdateAt: response.next_update_at,
             skippedCount: response.skipped.length,
             fetchError: null,
             actionError: null,
@@ -259,7 +278,10 @@ export const useAppStore = create<AppState>((set, get) => {
             void get().pingProfiles();
           }
         } catch (error) {
-          set({ fetchError: toCommandError(error) });
+          const commandError = toCommandError(error);
+          // Параллельная загрузка (планировщик) — не ошибка для пользователя.
+          if (commandError.code === "FETCH_IN_PROGRESS") return;
+          set({ fetchError: commandError });
         }
       });
     },

@@ -110,6 +110,15 @@ export function onAutoconnectFailed(
   );
 }
 
+/** Подписка обновлена планировщиком (M1): список локаций без участия UI. */
+export function onSubscriptionUpdated(
+  handler: (response: SubscriptionFetchResponse) => void,
+): Promise<UnlistenFn> {
+  return listen<SubscriptionFetchResponse>("subscription-updated", (event) =>
+    handler(event.payload),
+  );
+}
+
 /** Прогресс загрузки обновления: байты и, если сервер сообщил, общий размер. */
 export function onUpdateProgress(
   handler: (progress: UpdateProgress) => void,

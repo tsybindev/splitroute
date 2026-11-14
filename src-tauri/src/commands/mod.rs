@@ -3,6 +3,7 @@
 //! UI не формирует конфиг sing-box: подключение собирается здесь из сохранённых
 //! настроек, выбранного профиля и правил allowlist (PRD §6.2).
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
@@ -105,6 +106,20 @@ struct TrafficState {
     error_logged: bool,
 }
 
+/// Код ошибки: загрузка подписки уже идёт. Параллельный запрос отклоняется,
+/// чтобы ручное обновление и планировщик не дублировали сетевую операцию.
+pub(crate) const FETCH_IN_PROGRESS: &str = "FETCH_IN_PROGRESS";
+
+/// Право на одну загрузку подписки. Флаг снимается при `Drop`, поэтому ошибка
+/// или паника не оставляют приложение без возможности обновиться снова.
+pub(crate) struct FetchGuard<'a>(&'a AtomicBool);
+
+impl Drop for FetchGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
 /// Состояние приложения, доступное командам.
 pub struct AppState {
     pub helper: Arc<dyn HelperClient>,
@@ -118,6 +133,11 @@ pub struct AppState {
     /// Ошибка автоподключения при запуске (B2): UI показывает её, пока не
     /// пройдёт удачное подключение или отключение.
     startup_error: Mutex<Option<CommandError>>,
+    /// Идёт загрузка подписки: параллельные запросы не запускаются.
+    fetching: AtomicBool,
+    /// Время последней попытки обновления подписки (unix, секунды). В памяти:
+    /// после перезапуска расписание снова отсчитывается от `profiles_fetched_at`.
+    last_fetch_attempt: Mutex<Option<u64>>,
 }
 
 impl AppState {
@@ -153,6 +173,8 @@ impl AppState {
             probe,
             latency: Mutex::new(LatencyTracker::default()),
             startup_error: Mutex::new(None),
+            fetching: AtomicBool::new(false),
+            last_fetch_attempt: Mutex::new(None),
         }
     }
 
@@ -217,6 +239,38 @@ impl AppState {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone()
     }
+
+    /// Захватывает право на загрузку подписки. `None` — загрузка уже идёт.
+    pub(crate) fn try_begin_fetch(&self) -> Option<FetchGuard<'_>> {
+        self.fetching
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| FetchGuard(&self.fetching))
+    }
+
+    pub(crate) fn last_fetch_attempt(&self) -> Option<u64> {
+        *self
+            .last_fetch_attempt
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    pub(crate) fn set_last_fetch_attempt(&self, at: u64) {
+        *self
+            .last_fetch_attempt
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(at);
+    }
+
+    /// Когда ждать следующее автообновление подписки (M1, PRD §6.1).
+    pub(crate) fn next_update_at(&self) -> Option<u64> {
+        let hours = self.store.settings().subscription.auto_update_hours;
+        crate::autoupdate::next_update_at(
+            self.store.data().profiles_fetched_at,
+            self.last_fetch_attempt(),
+            hours,
+        )
+    }
 }
 
 /// Счётчики трафика сессии в байтах. `available=false` — источник недоступен.
@@ -243,6 +297,8 @@ pub struct ProfilesResponse {
     pub profiles: Vec<Profile>,
     pub selected_profile_id: Option<String>,
     pub fetched_at: Option<u64>,
+    /// Когда произойдёт следующее автообновление (M1); `null` — не запланировано.
+    pub next_update_at: Option<u64>,
 }
 
 /// Результат обновления подписки.
@@ -252,6 +308,7 @@ pub struct SubscriptionFetchResponse {
     pub skipped: Vec<SkippedProfile>,
     pub selected_profile_id: Option<String>,
     pub fetched_at: Option<u64>,
+    pub next_update_at: Option<u64>,
 }
 
 /// Результат проверки задержек для экрана «Локации».
@@ -265,12 +322,13 @@ pub struct LatencyResponse {
     pub checked_at: u64,
 }
 
-fn profiles_response(store: &Store) -> ProfilesResponse {
-    let data = store.data();
+fn profiles_response(state: &AppState) -> ProfilesResponse {
+    let data = state.store.data();
     ProfilesResponse {
         profiles: data.profiles.into_iter().map(sanitize_profile).collect(),
         selected_profile_id: data.selected_profile_id,
         fetched_at: data.profiles_fetched_at,
+        next_update_at: state.next_update_at(),
     }
 }
 
@@ -566,12 +624,17 @@ pub fn traffic_stats(state: tauri::State<'_, AppState>) -> TrafficStats {
     traffic_stats_inner(&state)
 }
 
-fn subscription_fetch_inner(
+pub(crate) fn subscription_fetch_inner(
     state: &AppState,
     url: Option<String>,
     hwid: Option<String>,
     user_agent: Option<String>,
 ) -> Result<SubscriptionFetchResponse, CommandError> {
+    // Одна загрузка за раз: ручное обновление и планировщик не дублируют запрос.
+    let _guard = state.try_begin_fetch().ok_or_else(|| {
+        CommandError::new(FETCH_IN_PROGRESS, "Обновление подписки уже выполняется.")
+    })?;
+
     let settings = state.store.settings();
     let url = url
         .filter(|value| !value.trim().is_empty())
@@ -615,6 +678,7 @@ fn subscription_fetch_inner(
                 skipped: subscription.skipped,
                 selected_profile_id: state.store.data().selected_profile_id,
                 fetched_at: Some(fetched_at),
+                next_update_at: state.next_update_at(),
             })
         }
         Err(error) => {
@@ -730,7 +794,7 @@ pub fn subscription_fetch(
 
 #[tauri::command]
 pub fn profiles_list(state: tauri::State<'_, AppState>) -> ProfilesResponse {
-    profiles_response(&state.store)
+    profiles_response(&state)
 }
 
 #[tauri::command]
@@ -739,7 +803,7 @@ pub fn profile_select(
     id: String,
 ) -> Result<ProfilesResponse, CommandError> {
     state.store.select_profile(&id)?;
-    Ok(profiles_response(&state.store))
+    Ok(profiles_response(&state))
 }
 
 /// Проверка задержек не должна блокировать окно: TCP-connect с таймаутом и
@@ -759,7 +823,7 @@ pub fn profile_switch(
 ) -> Result<ProfilesResponse, CommandError> {
     let status = switch_profile_inner(&state, &id)?;
     crate::tray::publish(&app, &status);
-    Ok(profiles_response(&state.store))
+    Ok(profiles_response(&state))
 }
 
 /// Список правил allowlist с признаком отсутствующего пути (PRD §6.3).
@@ -1146,7 +1210,7 @@ mod tests {
             .profiles
             .iter()
             .all(|profile| profile.raw.is_none()));
-        assert!(profiles_response(&state.store)
+        assert!(profiles_response(&state)
             .profiles
             .iter()
             .all(|profile| profile.raw.is_none()));

@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ProfilesScreen } from "./ProfilesScreen";
 import { resetAppStore, useAppStore } from "../../shared/state/appStore";
-import { makeProfile } from "../../test/fixtures";
+import { makeProfile, makeSettings } from "../../test/fixtures";
 
 const apiMock = vi.hoisted(() => ({
   profileSelect: vi.fn(),
@@ -132,6 +132,51 @@ describe("ProfilesScreen", () => {
     expect(
       await screen.findByText("Сервер не ответил за отведённое время."),
     ).toBeInTheDocument();
+  });
+
+  it("показывает время следующего автообновления подписки", () => {
+    const fetchedAt = Math.floor(new Date("2026-11-14T10:00:00Z").getTime() / 1000);
+    const nextUpdateAt = fetchedAt + 12 * 3600;
+    useAppStore.setState({
+      profiles: [makeProfile()],
+      fetchedAt,
+      nextUpdateAt,
+      settings: makeSettings({
+        subscription: {
+          url: "",
+          hwid: "0123456789abcdef",
+          user_agent: "SplitRoute/test",
+          auto_update_hours: 12,
+        },
+      }),
+    });
+
+    render(<ProfilesScreen />);
+
+    const expected = new Date(nextUpdateAt * 1000).toLocaleString("ru-RU");
+    expect(
+      screen.getByText(`Следующее обновление: ${expected}`),
+    ).toBeInTheDocument();
+  });
+
+  it("сообщает, что автообновление выключено при интервале 0", () => {
+    useAppStore.setState({
+      profiles: [makeProfile()],
+      fetchedAt: 1_800_000_000,
+      nextUpdateAt: null,
+      settings: makeSettings({
+        subscription: {
+          url: "",
+          hwid: "0123456789abcdef",
+          user_agent: "SplitRoute/test",
+          auto_update_hours: 0,
+        },
+      }),
+    });
+
+    render(<ProfilesScreen />);
+
+    expect(screen.getByText("Автообновление выключено")).toBeInTheDocument();
   });
 
   it("выбирает локацию из списка", async () => {

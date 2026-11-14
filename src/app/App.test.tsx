@@ -19,6 +19,7 @@ vi.mock("../shared/api/client", () => ({
   api: apiMock,
   onConnectionChanged: vi.fn(() => Promise.resolve(() => {})),
   onAutoconnectFailed: vi.fn(() => Promise.resolve(() => {})),
+  onSubscriptionUpdated: vi.fn(() => Promise.resolve(() => {})),
   onUpdateProgress: vi.fn(() => Promise.resolve(() => {})),
   toCommandError: (error: unknown) => error,
 }));
@@ -33,6 +34,7 @@ describe("App", () => {
       profiles: [],
       selected_profile_id: null,
       fetched_at: null,
+      next_update_at: null,
     });
     apiMock.helperStatus.mockResolvedValue(stoppedStatus);
     apiMock.autoconnectStatus.mockResolvedValue(null);

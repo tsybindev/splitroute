@@ -150,6 +150,8 @@ export interface ProfilesResponse {
   profiles: Profile[];
   selected_profile_id: string | null;
   fetched_at: number | null;
+  /** Когда произойдёт следующее автообновление (M1); null — не запланировано. */
+  next_update_at: number | null;
 }
 
 export interface SubscriptionFetchResponse extends ProfilesResponse {

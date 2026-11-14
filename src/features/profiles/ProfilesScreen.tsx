@@ -23,6 +23,9 @@ export function ProfilesScreen() {
   const profiles = useAppStore((state) => state.profiles);
   const selectedProfileId = useAppStore((state) => state.selectedProfileId);
   const fetchedAt = useAppStore((state) => state.fetchedAt);
+  const nextUpdateAt = useAppStore((state) => state.nextUpdateAt);
+  const autoUpdateHours =
+    useAppStore((state) => state.settings?.subscription.auto_update_hours) ?? 0;
   const skippedCount = useAppStore((state) => state.skippedCount);
   const latency = useAppStore((state) => state.latency);
   const fetchError = useAppStore((state) => state.fetchError);
@@ -63,6 +66,21 @@ export function ProfilesScreen() {
             </Button>
           </div>
         </div>
+        {autoUpdateHours > 0
+          ? nextUpdateAt
+            ? (
+                <p className="mt-2 text-xs text-neutral-500">
+                  {t("profiles.nextUpdate", { time: formatTime(nextUpdateAt) })}
+                </p>
+              )
+            : null
+          : fetchedAt
+            ? (
+                <p className="mt-2 text-xs text-neutral-500">
+                  {t("profiles.autoUpdateOff")}
+                </p>
+              )
+            : null}
         {skippedCount > 0 ? (
           <p className="mt-3 text-sm text-amber-300">
             {t("profiles.skipped", { count: skippedCount })}
