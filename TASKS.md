@@ -64,7 +64,7 @@
 
 ---
 
-## Этап 3 — helper'ы и упаковка (in-progress: S3-T1/T3/T4/T5/T6 done, S3-T2 blocked — нужна подпись LaunchDaemon)
+## Этап 3 — helper'ы и упаковка (in-progress: S3-T1/T3/T4/T5/T6/T8 done; S3-T2 blocked — подпись; S3-T7 blocked — нет Linux/Windows)
 
 | ID | Задача | Владелец | Критерий приёмки |
 |---|---|---|---|
@@ -74,15 +74,25 @@
 | S3-T4 | Windows: служба под SYSTEM, named pipe ACL, `wintun.dll` | platform-native | **done по коду** — helper под Windows: named pipe `\\.\pipe\splitroute-helper` с SDDL-ACL только на SID пользователя, SYSTEM и Administrators + сверка SID процесса-клиента; служба `splitroute-helper-service` под SYSTEM (`StartServiceCtrlDispatcherW`, `SERVICE_CONTROL_STOP`, статусы). Установщик: `C:\Program Files\SplitRoute` (`wintun.dll` рядом с `sing-box.exe`), runtime `C:\ProgramData\SplitRoute` с `icacls`, `sc.exe create ... obj= LocalSystem`, UAC через `Start-Process -Verb RunAs`; отмена UAC = код 1223 → `RequiresPrivileges`. Клиент через `WindowsPipeClient` (раньше на Windows был mock). `wintun.dll` попадает в пакет через `bundle.resources` (на Windows `$RESOURCE` = каталог экзешника), скачивается `./scripts/fetch-wintun.sh`; helper умеет `console`-режим без регистрации службы. 17 тестов + 2 в helper, 6 тестов упаковки. `scripts/portable.sh` собирает архив «распаковал и запустил». **Не проверено:** реальная служба, `sc.exe`, UAC и wintun — нет Windows VM; `cargo check -p splitroute` под MSVC падает на `ring` (нет MSVC-заголовков). Коммиты `be1d918`, `684e6e5`, `276f218`, `cf26d1a`, `3bf04e9` |
 | S3-T5 | Проводка установки helper'а в UI | react-ui | done — `helper_install`/`helper_uninstall` вызывают реальный установщик, ошибки показываются с точной причиной: `InstallerError` маппится в коды `INSTALLER_PRIVILEGES`/`INSTALLER_UNSUPPORTED`/`INSTALLER_MISSING_BINARY`/`INSTALLER_FAILED`, `ErrorBox` показывает локализованный заголовок и текст установщика. Статус берётся из `helper_status` (`shared/lib/helperState.ts`: установлен/не установлен/устарел/не отвечает, по `error.code`), обновляется после действия; пароль не читается и не хранится. Настройки: «Установить»/«Переустановить»/«Удалить», busy-состояние, уведомления об успехе. Тесты: 10 frontend (4 причины + успех + статус + состояния helper'а) и Rust `installer_errors_map_to_distinct_codes` |
 | S3-T6 | `THIRD_PARTY_NOTICES`, GPL-3.0-обязательства | оркестратор | done — `THIRD_PARTY_NOTICES` в корне: sing-box 1.14.4 (GPL-3.0-or-later, ссылка на исходники закреплённого тега), wintun 0.14.1 (Prebuilt Binaries License, полный текст), Tauri и плагины, полный инвентарь Rust (511 пакетов по семействам лицензий, MPL-2.0 отдельно), frontend, шрифты/иконки; полные тексты GPL-3.0 (в `LICENSE`), MIT, ISC, BSD-3-Clause, Apache-2.0. Оба файла в бандле: macOS — `Contents/Resources` (проверено), DMG показывает лицензию (проверено), `.deb`/`.rpm`/AppImage — `/usr/share/doc/splitroute/`, NSIS — `licenseFile`. `bundle.license=GPL-3.0-only`, `bundle.licenseFile=../LICENSE`. Тесты упаковки: 10 (наличие файлов, ссылки sing-box, лицензии в конфигах) |
-| S3-T7 | Smoke на чистых системах + CachyOS-сценарий (S2-T9) | platform-native | установка, запуск, подключение/отключение и allowlist на macOS, CachyOS и Windows; результаты в отчёте |
-| S3-T8 | Отчёт этапа 3 и handoff этапа 4 | оркестратор | `docs/stage-3-report.md`, обновлённые `TASKS.md` и `NEXT_SESSION.md` |
+| S3-T7 | Smoke на чистых системах + CachyOS-сценарий (S2-T9) | platform-native | **blocked** — macOS-часть выполнена 2026-11-14: пакет `.app`/`.dmg`/portable собирается, `LICENSE`/`THIRD_PARTY_NOTICES` в Resources побайтово совпадают, DMG показывает GPL-3.0, приложение запускается и завершается без остатков, упакованные helper + sing-box проходят `status/start/stop` без root (сокет и конфиг `0600`, mixed-inbound слушает, очистка после `stop`), helper обслуживает одно сообщение на соединение. **Не проверено и не выдаётся за проверенное:** установка LaunchDaemon (blocked подписью), TUN/per-app/DNS/сон/смена сети на упакованных бинарях (нет root и реальной подписки; функционально проверено в S2-T8/S2-T10 на dev-бинарях), Linux/CachyOS (S2-T9, `systemctl`, `pkexec`, `.deb`/`.rpm`/AppImage) и Windows (`sc.exe`, UAC, pipe ACL, TUN, NSIS) — нет целевых машин. Матрица и точные команды — `docs/stage-3-report.md` §9, `NEXT_SESSION.md` |
+| S3-T8 | Отчёт этапа 3 и handoff этапа 4 | оркестратор | done — `docs/stage-3-report.md` §9 (G3.4: окружение, автопроверки, артефакты, smoke helper'а, blocked-пункты, итоговая матрица, лицензии, риски); `docs/research.md` §13 с проверенными фактами; `TASKS.md` отражает статусы; `NEXT_SESSION.md` содержит состояние и промпт G4.1 |
 
-## Этап 4 — полировка (todo)
+## Этап 4 — полировка (todo: следующий — G4.1/S4-T1)
 
-- Каталог установленных приложений, статистика трафика.
-- Kill switch (fail-closed), автопереключение локации.
-- Доменные правила провайдера (после решения по открытому вопросу PRD).
-- Автообновление, EN-локализация.
+| ID | Задача | Владелец | Критерий приёмки |
+|---|---|---|---|
+| S4-T1 | Каталог установленных приложений (без иконок) | react-ui + rust-core | Tauri-команда отдаёт установленные приложения: macOS — `/Applications`, `/System/Applications`, `~/Applications`; Windows — Start Menu/реестр; Linux — `.desktop`. UI: вкладка «Установленные» с поиском, из записи создаётся выключенное правило; несуществующие пути помечаются; ошибки типизированы; тесты парсинга и фильтрации |
+| S4-T2 | Иконки приложений в каталоге | platform-native + react-ui | Иконка берётся из `.app`/`.exe`/`.desktop` без тяжёлых зависимостей, кэшируется в памяти, есть fallback; UI не тормозит на большом каталоге |
+| S4-T3 | EN-локализация | react-ui | Все строки — через словари `ru`/`en`; переключатель языка в настройках; тест на отсутствие непереведённых ключей |
+| S4-T4 | Статистика трафика сессии | rust-core + react-ui | Счётчики ↑/↓ за сессию из ядра, сброс при подключении, отображение на главной; без телеметрии |
+| S4-T5 | Kill switch (fail-closed) | platform-native + rust-core | При падении ядра/туннеля выбранные приложения не выходят напрямую; явное предупреждение; механизм на macOS проверен вручную |
+| S4-T6 | Автовыбор и автопереключение локации | rust-core + react-ui | Задержки измеряются, локация переключается при деградации выше порога, функцию можно отключить; переподключение не оставляет TUN |
+| S4-T7 | Доменные правила провайдера | rust-core | После решения PRD §13.2: `geoip`/`geosite` из шаблона → route-правила, golden-тесты, `sing-box check` |
+| S4-T8 | Автообновление приложения | platform-native + оркестратор | Tauri updater, подписанные обновления, канал; обновление проверено на macOS вручную, секретов в конфиге нет |
+
+Незакрытые блокеры этапа 3 переносятся без потери: **S3-T2** (подпись Apple) и
+**S3-T7** (Linux/Windows) перепроверяются, когда появятся сертификат и целевые
+машины. Новые задачи этапа 4 получают ID `S4-T<n>` и не переиспользуют старые.
 
 ## Этап 5 — macOS NetworkExtension (todo, при подтверждении R1)
 

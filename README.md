@@ -24,5 +24,7 @@ helper, трей и экраны; реальный TUN, внешний IP и о�
 Подробности — в [docs/stage-2-report.md](./docs/stage-2-report.md).
 Этап 3: helper'ы под три ОС, установка из UI с показом причины отказа и
 упаковка с `LICENSE` и [THIRD_PARTY_NOTICES](./THIRD_PARTY_NOTICES) в бандле.
-Осталось: smoke на Linux/Windows (S3-T7). Детали —
-[docs/stage-3-report.md](./docs/stage-3-report.md).
+Код этапа завершён; на macOS проверены сборка `.app`/`.dmg`/portable и smoke
+упакованных helper + sing-box. Осталось: установка LaunchDaemon (нужен
+сертификат Apple, S3-T2) и smoke на Linux/Windows (S3-T7). Детали —
+[docs/stage-3-report.md](./docs/stage-3-report.md) §9.

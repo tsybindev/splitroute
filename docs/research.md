@@ -262,3 +262,32 @@ Tauri (`crates/tauri-bundler`, `crates/tauri-utils`).
 | MPL-2.0 присутствует транзитивно (`cssparser`, `selectors`, `dtoa-short`, `option-ext`) | **подтверждено** | `cargo metadata`; файловый копилефт, исходники не изменялись |
 | wintun.dll распространяется по отдельной лицензии WireGuard LLC, требующей сохранять уведомления и не модифицировать DLL | **подтверждено** | `wintun-0.14.1.zip` → `LICENSE.txt`, sha256 совпал с `scripts/fetch-wintun.sh` |
 | sing-box 1.14.4 — GPL-3.0-or-later, исходники доступны по тегу | **подтверждено** | `LICENSE` из тега `v1.14.4`: «either version 3 ... or any later version» + оговорка об имени |
+
+## 13. Результаты этапа 3, подцель G3.4 (проверено 2026-11-14)
+
+Окружение: macOS 15.8.2 (24H232) arm64, Rust 1.99.1, Tauri 2.12.5 / CLI 2.12.4,
+sing-box 1.14.4. Обычный пользователь (uid 501), без root, без подписи, без
+Linux-машины и Windows VM. Подробности и матрица —
+[docs/stage-3-report.md](./stage-3-report.md) §9.
+
+| Утверждение | Статус | Как проверено |
+|---|---|---|
+| Пакет `.app`/`.dmg` собирается из текущего дерева и содержит sidecar'ы | **подтверждено** | `./scripts/package.sh`: 96.80 МиБ / 32.87 МиБ; `Contents/MacOS/{splitroute,sing-box,splitroute-helper}` |
+| `LICENSE` и `THIRD_PARTY_NOTICES` в `Contents/Resources` побайтово равны файлам в корне | **подтверждено** | `cmp` на собранном `.app` |
+| DMG показывает текст GNU GPL v3 при открытии | **подтверждено** | `hdiutil attach -nobrowse -readonly` вывел текст лицензии |
+| Portable-архив содержит приложение, ядро, helper, лицензию и notices | **подтверждено** | `tar -tzf` + распаковка: `sing-box version` → 1.14.4, `splitroute-helper --help` |
+| Helper в собранном бандле имеет ad-hoc/linker-подпись | **подтверждено** | `codesign -dv`: `Signature=adhoc`, `flags=0x20002(adhoc,linker-signed)`; приложение — тоже ad-hoc |
+| Установщик отклонит helper из бандла до копирования | **следует из проверки подписи** | код проверяет `codesign` до привилегированного шага; identity на машине — 0 |
+| Упакованные helper и sing-box проходят `status/start/stop` без root | **подтверждено** | smoke с бинарями из `.app`: сокет `0600`, конфиг `0600`, mixed-inbound слушает, `stop` удаляет конфиг и процесс, `SIGTERM` удаляет сокет |
+| Helper обслуживает одно сообщение на соединение | **подтверждено** | второй запрос в тот же Unix-сокет даёт `BrokenPipe`; клиент приложения (`UnixHelperClient::status/start/stop`) открывает новое соединение на каждую команду |
+| Приложение из `.app` запускается и завершается без остатков | **подтверждено** | `open -n` → процесс жив; `SIGTERM` → процесса нет, `splitroute-helper`/`sing-box run` не остались |
+| Установка LaunchDaemon возможна без сертификата | **опровергнуто повторно** | `security find-identity -v -p codesigning` → 0; helper ad-hoc (см. §10) |
+| TUN и per-app на упакованных бинарях | **не проверено** | нет root (`sudo -n` просит пароль) и реальной подписки; ранее проверено на dev-бинарях (§9) |
+| Linux/Windows smoke, `.deb`/`.rpm`/AppImage, NSIS | **blocked** | нет целевых ОС; не выдаётся за проверенное |
+
+Практическое следствие для этапа 4: код этапа 3 завершён, но приёмка S3-T2 и
+S3-T7 остаётся за внешними условиями (сертификат Apple, Linux-машина, Windows
+VM). Скрипты smoke на других ОС должны учитывать «одно сообщение на
+соединение». Идентификатор `com.splitroute.app` заканчивается на `.app` —
+Tauri предупреждает о конфликте с расширением бандла; финальный bundle id
+нужно зафиксировать до публичной сборки (PRD §13).
