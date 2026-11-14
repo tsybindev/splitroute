@@ -1,0 +1,98 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  package:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            name: linux
+          - os: windows-latest
+            name: windows
+    steps:
+      - uses: actions/checkout@v4
+
+      # Зависимости Tauri 2 и сборки AppImage (AGENTS.md §5.1).
+      - name: "Linux: системные зависимости"
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+            libxdo-dev libssl-dev patchelf file
+
+      # fetch-core.sh и fetch-wintun.sh распаковывают zip через unzip.
+      - name: "Windows: unzip для архивов ядра и wintun"
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command unzip -ErrorAction SilentlyContinue)) {
+            choco install unzip --no-progress -y
+            "$env:ProgramData\chocolatey\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          }
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.name }}
+
+      - name: Зависимости фронтенда
+        run: pnpm install --frozen-lockfile
+
+      - name: sing-box закреплённой версии
+        shell: bash
+        run: ./scripts/fetch-core.sh
+
+      - name: wintun.dll
+        if: runner.os == 'Windows'
+        shell: bash
+        run: ./scripts/fetch-wintun.sh
+
+      # externalBin ищется tauri-build уже на сборке, поэтому sidecar'ы нужны до тестов.
+      - name: sidecar helper'а
+        shell: bash
+        run: ./scripts/build-helper-sidecar.sh
+
+      - name: Rust-тесты
+        run: cargo test --workspace --locked
+
+      - name: Фронтенд-проверки
+        run: pnpm typecheck && pnpm lint && pnpm test
+
+      # Проверка остатков и очистка не нужны: сборка идёт без root и без TUN.
+      - name: Пакет (без updater-подписи)
+        shell: bash
+        env:
+          SPLITROUTE_ALLOW_UNSIGNED: "1"
+        run: ./scripts/package.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: splitroute-${{ matrix.name }}
+          path: src-tauri/target/release/bundle/
+          if-no-files-found: error
