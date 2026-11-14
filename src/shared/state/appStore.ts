@@ -396,7 +396,8 @@ export const useAppStore = create<AppState>((set, get) => {
         const protectedCrash =
           before.connection === "connected" &&
           status.state === "stopped" &&
-          (before.settings?.network.kill_switch ?? false);
+          ((before.settings?.network.kill_switch ?? false) ||
+            (before.helperStatus?.kill_switch?.enabled ?? false));
         if (protectedCrash) {
           set({
             helperStatus: status,
