@@ -42,6 +42,8 @@ export function toCommandError(error: unknown): CommandError {
 
 export const api = {
   helperStatus: () => invoke<HelperStatus>("helper_status"),
+  // Автоподключение при старте (B2): причина сбоя или null.
+  autoconnectStatus: () => invoke<CommandError | null>("autoconnect_status"),
   connect: () => invoke<HelperStatus>("connect"),
   disconnect: () => invoke<HelperStatus>("disconnect"),
   helperInstall: () => invoke<void>("helper_install"),
@@ -95,6 +97,15 @@ export function onConnectionChanged(
   handler: (status: HelperStatus) => void,
 ): Promise<UnlistenFn> {
   return listen<HelperStatus>("connection-changed", (event) =>
+    handler(event.payload),
+  );
+}
+
+/** Автоподключение при старте не удалось: причина для ErrorBox (B2). */
+export function onAutoconnectFailed(
+  handler: (error: CommandError) => void,
+): Promise<UnlistenFn> {
+  return listen<CommandError>("autoconnect-failed", (event) =>
     handler(event.payload),
   );
 }

@@ -12,6 +12,7 @@ const apiMock = vi.hoisted(() => ({
   rulesList: vi.fn(),
   profilesList: vi.fn(),
   helperStatus: vi.fn(),
+  autoconnectStatus: vi.fn(),
   logsList: vi.fn(),
   appsInstalled: vi.fn(),
   appsRunning: vi.fn(),
@@ -20,6 +21,7 @@ const apiMock = vi.hoisted(() => ({
 vi.mock("../shared/api/client", () => ({
   api: apiMock,
   onConnectionChanged: vi.fn(() => Promise.resolve(() => {})),
+  onAutoconnectFailed: vi.fn(() => Promise.resolve(() => {})),
   toCommandError: (error: unknown) => error,
 }));
 
@@ -43,6 +45,7 @@ describe("EN-локализация экранов", () => {
       fetched_at: null,
     });
     apiMock.helperStatus.mockResolvedValue(stoppedStatus);
+    apiMock.autoconnectStatus.mockResolvedValue(null);
     apiMock.logsList.mockResolvedValue([]);
     apiMock.appsInstalled.mockResolvedValue([]);
     apiMock.appsRunning.mockResolvedValue([]);

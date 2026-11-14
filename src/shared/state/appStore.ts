@@ -3,6 +3,7 @@
 import { create } from "zustand";
 import {
   api,
+  onAutoconnectFailed,
   onConnectionChanged,
   onUpdateProgress,
   toCommandError,
@@ -56,6 +57,8 @@ interface AppState {
   connection: ConnectionState;
   fetchError: CommandError | null;
   actionError: CommandError | null;
+  /** Автоподключение при старте не удалось (B2): причина для ErrorBox. */
+  startupError: CommandError | null;
   notice: string | null;
   logs: LogEntry[];
   diagnostics: string;
@@ -94,6 +97,7 @@ interface AppState {
   pollConnection: () => Promise<void>;
   loadLogs: (level: LogLevel | null) => Promise<void>;
   loadDiagnostics: () => Promise<string>;
+  loadStartupError: () => Promise<void>;
   loadUpdateStatus: () => Promise<void>;
   checkForUpdates: (channel: UpdateChannel, silent?: boolean) => Promise<void>;
   installUpdate: (channel: UpdateChannel) => Promise<void>;
@@ -121,6 +125,7 @@ const initialState = {
   connection: "disconnected" as ConnectionState,
   fetchError: null,
   actionError: null,
+  startupError: null,
   notice: null,
   logs: [] as LogEntry[],
   diagnostics: "",
@@ -204,6 +209,9 @@ export const useAppStore = create<AppState>((set, get) => {
         get().loadLogs(null),
         get().loadUpdateStatus(),
       ]);
+      // Автоподключение при старте могло завершиться до появления окна: забираем
+      // сохранённую причину сбоя (B2). Более поздний сбой придёт событием.
+      await get().loadStartupError();
       // Проверка при запуске — только если она включена и канал настроен.
       // Установка никогда не запускается автоматически.
       const settings = get().settings;
@@ -218,11 +226,21 @@ export const useAppStore = create<AppState>((set, get) => {
       }
     },
 
-    subscribe: async () =>
-      onConnectionChanged((status) => {
+    subscribe: async () => {
+      const stopConnection = await onConnectionChanged((status) => {
         applyStatus(status);
         void get().loadLogs(null);
-      }),
+      });
+      // Поздний сбой автоподключения: окно не блокируется, показываем причину.
+      const stopStartup = await onAutoconnectFailed((error) => {
+        set({ startupError: error });
+        void get().loadLogs(null);
+      });
+      return () => {
+        stopConnection();
+        stopStartup();
+      };
+    },
 
     refreshSubscription: async () => {
       await withBusy("subscription", async () => {
@@ -329,7 +347,7 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     connect: async () => {
-      set({ connection: "connecting", actionError: null });
+      set({ connection: "connecting", actionError: null, startupError: null });
       try {
         const status = await api.connect();
         applyStatus(status);
@@ -339,7 +357,11 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     disconnect: async () => {
-      set({ connection: "disconnecting", actionError: null });
+      set({
+        connection: "disconnecting",
+        actionError: null,
+        startupError: null,
+      });
       try {
         const status = await api.disconnect();
         applyStatus(status);
@@ -591,6 +613,16 @@ export const useAppStore = create<AppState>((set, get) => {
       } catch (error) {
         set({ actionError: toCommandError(error) });
         return "";
+      }
+    },
+
+    /// Ошибка автоподключения при запуске, если она уже случилась (B2).
+    /// Подключение к сети и ядру здесь не выполняется.
+    loadStartupError: async () => {
+      try {
+        set({ startupError: await api.autoconnectStatus() });
+      } catch {
+        // Автоподключение не критично: окно и ручное подключение работают.
       }
     },
 

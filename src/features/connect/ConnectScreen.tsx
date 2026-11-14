@@ -105,6 +105,7 @@ export function ConnectScreen() {
   const helperStatusError = useAppStore((state) => state.helperStatusError);
   const latency = useAppStore((state) => state.latency);
   const actionError = useAppStore((state) => state.actionError);
+  const startupError = useAppStore((state) => state.startupError);
   const busy = useAppStore((state) => state.busy);
   const toggleConnection = useAppStore((state) => state.toggleConnection);
   const disconnect = useAppStore((state) => state.disconnect);
@@ -224,6 +225,8 @@ export function ConnectScreen() {
           </div>
         </div>
       </Card>
+
+      {startupError ? <ErrorBox error={startupError} /> : null}
 
       {actionError ? <ErrorBox error={actionError} /> : null}
 

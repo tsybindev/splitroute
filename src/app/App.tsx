@@ -26,16 +26,24 @@ export function App() {
 
   useEffect(() => {
     const store = useAppStore.getState();
-    void store.initialize();
     let unlisten: (() => void) | undefined;
     let cancelled = false;
-    void store.subscribe().then((stop) => {
-      if (cancelled) {
-        stop();
-      } else {
+    // Слушатели событий ставятся до инициализации: автоподключение при старте
+    // (B2) может завершиться раньше, чем UI успеет прочитать состояние.
+    const start = async () => {
+      try {
+        const stop = await store.subscribe();
+        if (cancelled) {
+          stop();
+          return;
+        }
         unlisten = stop;
+      } catch {
+        // Без событий окно работает: состояние читается командами.
       }
-    });
+      if (!cancelled) await store.initialize();
+    };
+    void start();
     return () => {
       cancelled = true;
       unlisten?.();

@@ -1,5 +1,6 @@
 //! Точка входа Tauri-приложения SplitRoute.
 
+pub mod autoconnect;
 pub mod catalog;
 pub mod commands;
 pub mod config;
@@ -106,6 +107,8 @@ pub fn run() {
                     let _ = window.hide();
                 }
             }
+            // Автоподключение — в фоне: окно не ждёт helper'а (B2, PRD §6.5).
+            autoconnect::spawn(app.handle().clone());
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -119,6 +122,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::helper_status,
+            commands::autoconnect_status,
             commands::connect,
             commands::disconnect,
             commands::helper_install,

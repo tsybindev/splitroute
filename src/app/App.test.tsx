@@ -10,6 +10,7 @@ const apiMock = vi.hoisted(() => ({
   rulesList: vi.fn(),
   profilesList: vi.fn(),
   helperStatus: vi.fn(),
+  autoconnectStatus: vi.fn(),
   logsList: vi.fn(),
   updateStatus: vi.fn(),
 }));
@@ -17,6 +18,7 @@ const apiMock = vi.hoisted(() => ({
 vi.mock("../shared/api/client", () => ({
   api: apiMock,
   onConnectionChanged: vi.fn(() => Promise.resolve(() => {})),
+  onAutoconnectFailed: vi.fn(() => Promise.resolve(() => {})),
   onUpdateProgress: vi.fn(() => Promise.resolve(() => {})),
   toCommandError: (error: unknown) => error,
 }));
@@ -33,6 +35,7 @@ describe("App", () => {
       fetched_at: null,
     });
     apiMock.helperStatus.mockResolvedValue(stoppedStatus);
+    apiMock.autoconnectStatus.mockResolvedValue(null);
     apiMock.logsList.mockResolvedValue([]);
     apiMock.updateStatus.mockResolvedValue({
       current_version: "0.1.0",
@@ -53,5 +56,17 @@ describe("App", () => {
     render(<App />);
     await userEvent.click(screen.getByRole("button", { name: "Приложения" }));
     expect(screen.getByRole("heading", { name: "Приложения" })).toBeInTheDocument();
+  });
+
+  it("показывает ошибку автоподключения при запуске (B2)", async () => {
+    apiMock.autoconnectStatus.mockResolvedValue({
+      code: "HELPER_NOT_INSTALLED",
+      message: "helper не установлен",
+    });
+    render(<App />);
+
+    expect(await screen.findByText("Helper не установлен.")).toBeInTheDocument();
+    // Остальные экраны и ручное подключение остаются доступными.
+    expect(screen.getByRole("button", { name: "Подключить" })).toBeInTheDocument();
   });
 });

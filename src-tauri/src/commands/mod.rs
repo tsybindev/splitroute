@@ -115,6 +115,9 @@ pub struct AppState {
     traffic: Mutex<TrafficState>,
     probe: Arc<dyn LatencyProbe>,
     latency: Mutex<LatencyTracker>,
+    /// Ошибка автоподключения при запуске (B2): UI показывает её, пока не
+    /// пройдёт удачное подключение или отключение.
+    startup_error: Mutex<Option<CommandError>>,
 }
 
 impl AppState {
@@ -149,6 +152,7 @@ impl AppState {
             traffic: Mutex::new(TrafficState::default()),
             probe,
             latency: Mutex::new(LatencyTracker::default()),
+            startup_error: Mutex::new(None),
         }
     }
 
@@ -197,6 +201,21 @@ impl AppState {
         self.traffic
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Запоминает ошибку автоподключения для UI (B2).
+    pub(crate) fn set_startup_error(&self, error: Option<CommandError>) {
+        *self
+            .startup_error
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = error;
+    }
+
+    pub(crate) fn startup_error(&self) -> Option<CommandError> {
+        self.startup_error
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 }
 
@@ -327,6 +346,8 @@ pub(crate) fn connect_inner(state: &AppState) -> Result<HelperStatus, CommandErr
     let status = state.helper.start(config, kill_switch)?;
     // Новая сессия начинается с нулевых счётчиков: порт и secret новые.
     state.set_traffic_endpoint(traffic);
+    // Успешное подключение закрывает ошибку автоподключения при запуске (B2).
+    state.set_startup_error(None);
     state
         .logs
         .push(LogLevel::Info, format!("Подключено: {}", profile.name));
@@ -337,6 +358,7 @@ pub(crate) fn disconnect_inner(state: &AppState) -> Result<HelperStatus, Command
     let status = state.helper.stop()?;
     // После `stop` статистика недоступна и UI показывает нули/«—».
     state.set_traffic_endpoint(None);
+    state.set_startup_error(None);
     state.logs.push(LogLevel::Info, "Подключение остановлено");
     state.reset_latency();
     Ok(status)
@@ -654,6 +676,13 @@ fn diagnostics_text(state: &AppState) -> String {
 #[tauri::command]
 pub fn helper_status(state: tauri::State<'_, AppState>) -> Result<HelperStatus, CommandError> {
     Ok(state.helper.status()?)
+}
+
+/// Ошибка автоподключения при запуске (B2) или `null`, если её не было.
+/// Сбрасывается успешным `connect`/`disconnect`: UI не держит устаревшую причину.
+#[tauri::command]
+pub fn autoconnect_status(state: tauri::State<'_, AppState>) -> Option<CommandError> {
+    state.startup_error()
 }
 
 #[tauri::command]
