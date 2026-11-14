@@ -29,9 +29,14 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let quit_item = MenuItem::with_id(app, "quit", "Выйти", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&status_item, &toggle_item, &open_item, &quit_item])?;
 
-    let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png"))?;
+    // macOS ждёт template-иконку (альфа-канал, без цвета), остальные ОС —
+    // цветную 32×32: белая моно-иконка на светлой теме была бы невидимой.
+    #[cfg(target_os = "macos")]
+    let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray-template.png"))?;
+    #[cfg(not(target_os = "macos"))]
+    let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png"))?;
 
-    TrayIconBuilder::with_id(TRAY_ID)
+    let builder = TrayIconBuilder::with_id(TRAY_ID)
         .icon(icon)
         .tooltip("SplitRoute")
         .menu(&menu)
@@ -41,8 +46,10 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
             "open" => show_main(app),
             "quit" => quit(app),
             _ => {}
-        })
-        .build(app)?;
+        });
+    #[cfg(target_os = "macos")]
+    let builder = builder.icon_as_template(true);
+    builder.build(app)?;
 
     app.manage(TrayState {
         status_item: Mutex::new(Some(status_item)),
