@@ -112,12 +112,16 @@ fn packaging_scripts_are_valid_shell() {
             text.starts_with("#!/usr/bin/env sh"),
             "{script}: ожидался POSIX sh"
         );
-        let status = std::process::Command::new("/bin/sh")
-            .arg("-n")
-            .arg(&path)
-            .status()
-            .expect("запуск sh -n");
-        assert!(status.success(), "{script} не проходит sh -n");
+        // `sh -n` есть только на Unix; shebang проверен выше на любой ОС.
+        #[cfg(unix)]
+        {
+            let status = std::process::Command::new("/bin/sh")
+                .arg("-n")
+                .arg(&path)
+                .status()
+                .expect("запуск sh -n");
+            assert!(status.success(), "{script} не проходит sh -n");
+        }
     }
 }
 
