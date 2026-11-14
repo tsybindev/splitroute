@@ -174,6 +174,31 @@ export const ru = {
   "settings.app.languageHint": "Применяется сразу, без перезапуска.",
   "settings.app.language.ru": "Русский",
   "settings.app.language.en": "Английский",
+  "settings.updates.title": "Обновления",
+  "settings.updates.currentVersion": "Текущая версия",
+  "settings.updates.channel": "Канал обновлений",
+  "settings.updates.channel.stable": "Стабильный",
+  "settings.updates.channel.beta": "Бета",
+  "settings.updates.checkOnStart": "Проверять обновления при запуске",
+  "settings.updates.checkOnStartHint":
+    "Проверка не устанавливает обновление: установка — только по кнопке.",
+  "settings.updates.check": "Проверить обновления",
+  "settings.updates.checking": "Проверка…",
+  "settings.updates.notConfigured":
+    "Канал обновлений не настроен в этой сборке.",
+  "settings.updates.upToDate": "Обновлений нет.",
+  "settings.updates.available": "Доступна версия {version}.",
+  "settings.updates.install": "Установить и перезапустить",
+  "settings.updates.installing": "Установка…",
+  "settings.updates.later": "Позже",
+  "settings.updates.progress": "Загружено: {percent}%",
+  "settings.updates.progressUnknown": "Загрузка обновления…",
+  "settings.updates.date": "Опубликовано: {date}",
+  "settings.updates.restartHint": "После установки приложение перезапустится.",
+  "settings.updates.signatureHint":
+    "Подпись обновления проверяется; без действительной подписи установка отменяется.",
+  "settings.updates.helperHint":
+    "Установленный helper обновляется отдельно: если версия протокола изменится, переустановите его здесь же.",
   "settings.helper.title": "Helper",
   "settings.helper.status": "Статус",
   "settings.helper.install": "Установить",
@@ -230,6 +255,16 @@ export const ru = {
   "errors.INSTALLER_MISSING_BINARY":
     "Не найден файл, нужный для установки helper'а.",
   "errors.INSTALLER_FAILED": "Не удалось установить helper.",
+  "errors.UPDATE_NOT_CONFIGURED": "Канал обновлений не настроен в этой сборке.",
+  "errors.UPDATE_CONFIG": "Некорректная настройка канала обновлений.",
+  "errors.UPDATE_CHECK_FAILED":
+    "Не удалось проверить обновления. Проверьте сеть и повторите.",
+  "errors.UPDATE_DOWNLOAD_FAILED": "Не удалось скачать обновление.",
+  "errors.UPDATE_SIGNATURE":
+    "Подпись обновления недействительна. Установка отменена.",
+  "errors.UPDATE_INSTALL_FAILED": "Не удалось установить обновление.",
+  "errors.UPDATE_NOT_AVAILABLE":
+    "Обновление больше не доступно. Проверьте ещё раз.",
   "errors.UNKNOWN": "Неизвестная ошибка.",
 } as const;
 

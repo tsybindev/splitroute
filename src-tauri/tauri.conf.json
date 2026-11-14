@@ -41,5 +41,12 @@
       "../LICENSE": "LICENSE",
       "../THIRD_PARTY_NOTICES": "THIRD_PARTY_NOTICES"
     }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": ["https://updates.splitroute.invalid/stable/latest.json"],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEY4MkY0RTkxOTM0OEE4NjIKUldSaXFFaVRrVTR2K0o4M2xObGJpZVdNVEltRkFTS1hjby92b0FCY0pmWEFmWm9KSWNmWXBZSzkK",
+      "requireSignedVersion": true
+    }
   }
 }

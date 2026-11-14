@@ -16,11 +16,12 @@ use crate::config::{build_config, ConfigError};
 use crate::latency::{self, LatencyProbe, LatencyTracker, PingResult, SwitchPolicy};
 use crate::logging::{LogBuffer, LogEntry};
 use crate::privileged::{HelperClient, HelperClientError, HelperInstaller, InstallerError};
-use crate::store::{now_secs, AppSettings, Store, StoreError};
+use crate::store::{now_secs, AppSettings, Store, StoreError, UpdateChannel};
 use crate::subscription::{
     fetch_and_parse, FetchError, FetchRequest, SkippedProfile, SubscriptionFetcher,
 };
 use crate::traffic::TrafficEndpoint;
+use crate::updates::{self, UpdateCheck, UpdateError, UpdateStatus};
 
 /// Ошибка команды: стабильный код + русский текст для пользователя.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -30,7 +31,7 @@ pub struct CommandError {
 }
 
 impl CommandError {
-    fn new(code: &str, message: impl Into<String>) -> Self {
+    pub(crate) fn new(code: &str, message: impl Into<String>) -> Self {
         Self {
             code: code.to_string(),
             message: message.into(),
@@ -84,6 +85,12 @@ impl From<InstallerError> for CommandError {
             InstallerError::Failed(_) => "INSTALLER_FAILED",
         };
         Self::new(code, error.to_string())
+    }
+}
+
+impl From<UpdateError> for CommandError {
+    fn from(error: UpdateError) -> Self {
+        Self::new(error.code(), error.to_string())
     }
 }
 
@@ -815,6 +822,75 @@ pub fn diagnostics_get(state: tauri::State<'_, AppState>) -> String {
     diagnostics_text(&state)
 }
 
+/// Состояние канала обновлений: текущая версия, канал и настроен ли домен.
+#[tauri::command]
+pub fn update_status(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> UpdateStatus {
+    updates::status(&app, &state.store.settings().preferences.updates)
+}
+
+/// Проверка обновлений. `async`: сетевой запрос с таймаутом не должен
+/// выполняться на главном потоке окна.
+#[tauri::command]
+pub async fn update_check(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    channel: UpdateChannel,
+) -> Result<UpdateCheck, CommandError> {
+    let result = updates::check(&app, channel).await;
+    match &result {
+        Ok(check) if check.available => state.logs.push(
+            LogLevel::Info,
+            format!(
+                "Обновление доступно: {}",
+                check.version.as_deref().unwrap_or("—")
+            ),
+        ),
+        Ok(_) => state.logs.push(LogLevel::Info, "Обновлений нет"),
+        Err(error) => state.logs.push(
+            LogLevel::Warn,
+            format!("Проверка обновлений: {}", error.code()),
+        ),
+    }
+    result.map_err(Into::into)
+}
+
+/// Скачивание и установка обновления. Ядро останавливается только после
+/// успешной проверки: ошибка сети или подписи не рвёт работающий туннель.
+#[tauri::command]
+pub async fn update_install(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    channel: UpdateChannel,
+) -> Result<(), CommandError> {
+    state.logs.push(
+        LogLevel::Info,
+        format!("Установка обновления: канал {}", channel.as_str()),
+    );
+    let helper = state.helper.clone();
+    let logs = &state.logs;
+    updates::install(&app, channel, move || {
+        if let Err(error) = helper.stop() {
+            logs.push(
+                LogLevel::Warn,
+                format!("Перед обновлением не удалось остановить ядро: {error}"),
+            );
+        } else {
+            logs.push(
+                LogLevel::Info,
+                "Перед обновлением ядро и правила kill switch остановлены",
+            );
+        }
+    })
+    .await
+    .map_err(|error| {
+        state.logs.push(
+            LogLevel::Warn,
+            format!("Установка обновления: {}", error.code()),
+        );
+        CommandError::from(error)
+    })
+}
+
 /// Автозапуск применяется к системе как побочный эффект сохранения настройки.
 /// Ошибка регистрации не отменяет сохранение: пользователь увидит предупреждение
 /// в логах, а флаг останется сохранённым.
@@ -1478,6 +1554,25 @@ mod tests {
             let command_error = CommandError::from(error);
             assert_eq!(command_error.code, code);
             assert_eq!(command_error.message, message);
+        }
+    }
+
+    /// Ошибки обновлений приходят в UI стабильными кодами, а не одной строкой.
+    #[test]
+    fn update_errors_map_to_distinct_codes() {
+        let cases = [
+            (UpdateError::NotConfigured, "UPDATE_NOT_CONFIGURED"),
+            (UpdateError::Config, "UPDATE_CONFIG"),
+            (UpdateError::CheckFailed, "UPDATE_CHECK_FAILED"),
+            (UpdateError::Signature, "UPDATE_SIGNATURE"),
+            (UpdateError::DownloadFailed, "UPDATE_DOWNLOAD_FAILED"),
+            (UpdateError::InstallFailed, "UPDATE_INSTALL_FAILED"),
+            (UpdateError::NotAvailable, "UPDATE_NOT_AVAILABLE"),
+        ];
+        for (error, code) in cases {
+            let command_error = CommandError::from(error);
+            assert_eq!(command_error.code, code);
+            assert!(!command_error.message.is_empty());
         }
     }
 

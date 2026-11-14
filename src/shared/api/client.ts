@@ -16,6 +16,10 @@ import type {
   ProfilesResponse,
   SubscriptionFetchResponse,
   TrafficStats,
+  UpdateChannel,
+  UpdateCheckResult,
+  UpdateProgress,
+  UpdateStatus,
 } from "./types";
 
 export function toCommandError(error: unknown): CommandError {
@@ -72,12 +76,27 @@ export const api = {
   diagnosticsGet: () => invoke<string>("diagnostics_get"),
   // Счётчики читает Rust у локального Clash API; секрет и адрес ядра в UI не попадают.
   trafficStats: () => invoke<TrafficStats>("traffic_stats"),
+  // Обновления: подпись проверяет Rust, UI не получает URL или ключи.
+  updateStatus: () => invoke<UpdateStatus>("update_status"),
+  updateCheck: (channel: UpdateChannel) =>
+    invoke<UpdateCheckResult>("update_check", { channel }),
+  updateInstall: (channel: UpdateChannel) =>
+    invoke<void>("update_install", { channel }),
 };
 
 export function onConnectionChanged(
   handler: (status: HelperStatus) => void,
 ): Promise<UnlistenFn> {
   return listen<HelperStatus>("connection-changed", (event) =>
+    handler(event.payload),
+  );
+}
+
+/** Прогресс загрузки обновления: байты и, если сервер сообщил, общий размер. */
+export function onUpdateProgress(
+  handler: (progress: UpdateProgress) => void,
+): Promise<UnlistenFn> {
+  return listen<UpdateProgress>("update-progress", (event) =>
     handler(event.payload),
   );
 }

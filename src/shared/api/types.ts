@@ -99,6 +99,15 @@ export interface AutoSelectSettings {
   failures_to_switch: number;
 }
 
+/** Канал обновлений приложения (S4-T8). */
+export type UpdateChannel = "stable" | "beta";
+
+export interface UpdateSettings {
+  /** Проверять обновления при запуске; установка всегда вручную. */
+  check_on_start: boolean;
+  channel: UpdateChannel;
+}
+
 export interface AppPreferences {
   launch_at_login: boolean;
   launch_minimized: boolean;
@@ -106,6 +115,7 @@ export interface AppPreferences {
   close_to_tray: boolean;
   language: Language;
   auto_select: AutoSelectSettings;
+  updates: UpdateSettings;
 }
 
 export interface AppSettings {
@@ -162,4 +172,26 @@ export interface LatencyResponse {
 export interface CommandError {
   code: string;
   message: string;
+}
+
+/** Состояние канала обновлений (S4-T8). */
+export interface UpdateStatus {
+  current_version: string;
+  channel: UpdateChannel;
+  configured: boolean;
+}
+
+/** Результат проверки обновления. */
+export interface UpdateCheckResult {
+  available: boolean;
+  current_version: string;
+  version?: string;
+  notes?: string;
+  date?: string;
+}
+
+/** Прогресс загрузки артефакта обновления. */
+export interface UpdateProgress {
+  downloaded: number;
+  total?: number | null;
 }

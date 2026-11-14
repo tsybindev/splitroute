@@ -11,11 +11,13 @@ const apiMock = vi.hoisted(() => ({
   profilesList: vi.fn(),
   helperStatus: vi.fn(),
   logsList: vi.fn(),
+  updateStatus: vi.fn(),
 }));
 
 vi.mock("../shared/api/client", () => ({
   api: apiMock,
   onConnectionChanged: vi.fn(() => Promise.resolve(() => {})),
+  onUpdateProgress: vi.fn(() => Promise.resolve(() => {})),
   toCommandError: (error: unknown) => error,
 }));
 
@@ -32,6 +34,11 @@ describe("App", () => {
     });
     apiMock.helperStatus.mockResolvedValue(stoppedStatus);
     apiMock.logsList.mockResolvedValue([]);
+    apiMock.updateStatus.mockResolvedValue({
+      current_version: "0.1.0",
+      channel: "stable",
+      configured: true,
+    });
   });
 
   it("показывает заголовок и вкладки", () => {

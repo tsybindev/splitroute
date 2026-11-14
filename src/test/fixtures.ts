@@ -42,6 +42,11 @@ export function makeSettings(overrides: Partial<AppSettings> = {}): AppSettings 
         failures_to_switch: 2,
         ...overrides.preferences?.auto_select,
       },
+      updates: {
+        check_on_start: false,
+        channel: "stable",
+        ...overrides.preferences?.updates,
+      },
       ...overrides.preferences,
     },
   };

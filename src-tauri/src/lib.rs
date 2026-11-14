@@ -10,6 +10,7 @@ pub mod store;
 pub mod subscription;
 pub mod traffic;
 pub mod tray;
+pub mod updates;
 
 use std::sync::Arc;
 
@@ -94,6 +95,7 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec!["--hidden"]),
         ))
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(state)
         .setup(|app| {
             tray::create(app.handle())?;
@@ -137,6 +139,9 @@ pub fn run() {
             commands::logs_list,
             commands::diagnostics_get,
             commands::traffic_stats,
+            commands::update_status,
+            commands::update_check,
+            commands::update_install,
         ])
         .build(tauri::generate_context!())
         .expect("ошибка запуска SplitRoute")

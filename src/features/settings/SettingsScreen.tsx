@@ -8,30 +8,10 @@ import { useAppStore } from "../../shared/state/appStore";
 import { Badge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
 import { Card } from "../../shared/ui/Card";
+import { Checkbox } from "../../shared/ui/Checkbox";
 import { ErrorBox } from "../../shared/ui/ErrorBox";
 import { Field, inputClass } from "../../shared/ui/Field";
-
-function Checkbox({
-  checked,
-  onChange,
-  label,
-}: {
-  checked: boolean;
-  onChange: (value: boolean) => void;
-  label: string;
-}) {
-  return (
-    <label className="flex items-center gap-2 text-sm text-neutral-200">
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(event) => onChange(event.target.checked)}
-        className="size-4 accent-emerald-600"
-      />
-      {label}
-    </label>
-  );
-}
+import { UpdateCard } from "./UpdateCard";
 
 export function SettingsScreen() {
   const stored = useAppStore((state) => state.settings);
@@ -91,6 +71,17 @@ function SettingsForm({ initial }: { initial: AppSettings }) {
       preferences: {
         ...form.preferences,
         auto_select: { ...form.preferences.auto_select, ...patch },
+      },
+    });
+
+  const updateUpdates = (
+    patch: Partial<AppSettings["preferences"]["updates"]>,
+  ) =>
+    setForm({
+      ...form,
+      preferences: {
+        ...form.preferences,
+        updates: { ...form.preferences.updates, ...patch },
       },
     });
 
@@ -458,6 +449,15 @@ function SettingsForm({ initial }: { initial: AppSettings }) {
           />
         </div>
       </Card>
+
+      <UpdateCard
+        channel={form.preferences.updates.channel}
+        checkOnStart={form.preferences.updates.check_on_start}
+        onChannelChange={(channel) => updateUpdates({ channel })}
+        onCheckOnStartChange={(value) =>
+          updateUpdates({ check_on_start: value })
+        }
+      />
 
       <Card title={t("settings.helper.title")}>
         <div className="flex flex-wrap items-center gap-3">

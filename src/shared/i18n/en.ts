@@ -176,6 +176,31 @@ export const en: Record<MessageKey, string> = {
   "settings.app.languageHint": "Applies immediately, no restart required.",
   "settings.app.language.ru": "Russian",
   "settings.app.language.en": "English",
+  "settings.updates.title": "Updates",
+  "settings.updates.currentVersion": "Current version",
+  "settings.updates.channel": "Update channel",
+  "settings.updates.channel.stable": "Stable",
+  "settings.updates.channel.beta": "Beta",
+  "settings.updates.checkOnStart": "Check for updates at startup",
+  "settings.updates.checkOnStartHint":
+    "Checking does not install anything: installation is always manual.",
+  "settings.updates.check": "Check for updates",
+  "settings.updates.checking": "Checking…",
+  "settings.updates.notConfigured":
+    "The update channel is not configured in this build.",
+  "settings.updates.upToDate": "You are up to date.",
+  "settings.updates.available": "Version {version} is available.",
+  "settings.updates.install": "Install and restart",
+  "settings.updates.installing": "Installing…",
+  "settings.updates.later": "Later",
+  "settings.updates.progress": "Downloaded: {percent}%",
+  "settings.updates.progressUnknown": "Downloading the update…",
+  "settings.updates.date": "Published: {date}",
+  "settings.updates.restartHint": "The application restarts after installation.",
+  "settings.updates.signatureHint":
+    "The update signature is verified; installation is cancelled without a valid signature.",
+  "settings.updates.helperHint":
+    "The installed helper is updated separately: if the protocol version changes, reinstall it here.",
   "settings.helper.title": "Helper",
   "settings.helper.status": "Status",
   "settings.helper.install": "Install",
@@ -229,5 +254,16 @@ export const en: Record<MessageKey, string> = {
   "errors.INSTALLER_UNSUPPORTED": "Helper installation is not supported on this platform.",
   "errors.INSTALLER_MISSING_BINARY": "A file required to install the helper was not found.",
   "errors.INSTALLER_FAILED": "Could not install the helper.",
+  "errors.UPDATE_NOT_CONFIGURED":
+    "The update channel is not configured in this build.",
+  "errors.UPDATE_CONFIG": "Invalid update channel configuration.",
+  "errors.UPDATE_CHECK_FAILED":
+    "Could not check for updates. Check the network and try again.",
+  "errors.UPDATE_DOWNLOAD_FAILED": "Could not download the update.",
+  "errors.UPDATE_SIGNATURE":
+    "The update signature is invalid. Installation cancelled.",
+  "errors.UPDATE_INSTALL_FAILED": "Could not install the update.",
+  "errors.UPDATE_NOT_AVAILABLE":
+    "The update is no longer available. Check again.",
   "errors.UNKNOWN": "Unknown error.",
 };

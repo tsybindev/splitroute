@@ -11,10 +11,31 @@
 # передаётся через временный конфиг: базовый `tauri.conf.json` остаётся без
 # `externalBin`, иначе `cargo check` на чистом клоне падал бы на отсутствующих
 # файлах.
+#
+# Обновления подписываются приватным ключом, которого нет в репозитории:
+# задайте `TAURI_SIGNING_PRIVATE_KEY` (путь или содержимое) и
+# `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Без ключа сборка пакета остановится;
+# для локальной проверки без updater-артефактов — `SPLITROUTE_ALLOW_UNSIGNED=1`.
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$root"
+
+if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ] && [ "${SPLITROUTE_ALLOW_UNSIGNED:-}" != "1" ]; then
+  echo "Нет TAURI_SIGNING_PRIVATE_KEY: нечем подписать updater-артефакты." >&2
+  echo "Задайте TAURI_SIGNING_PRIVATE_KEY и TAURI_SIGNING_PRIVATE_KEY_PASSWORD" >&2
+  echo "или SPLITROUTE_ALLOW_UNSIGNED=1 для сборки без обновлений." >&2
+  exit 1
+fi
+
+# Подписанные updater-артефакты создаются только при наличии ключа.
+build() {
+  if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+    pnpm tauri build "$@" --config '{"bundle":{"createUpdaterArtifacts":true}}'
+  else
+    pnpm tauri build "$@"
+  fi
+}
 
 if [ ! -d src-tauri/binaries ] || ! ls src-tauri/binaries/sing-box-* >/dev/null 2>&1; then
   echo "Нет sing-box в src-tauri/binaries. Выполните ./scripts/fetch-core.sh" >&2
@@ -26,7 +47,7 @@ fi
 case "$(uname -s)" in
   Linux)
     echo "Пакет: deb, rpm, appimage"
-    exec pnpm tauri build --bundles deb,rpm,appimage --config src-tauri/tauri.linux.conf.json
+    build --bundles deb,rpm,appimage --config src-tauri/tauri.linux.conf.json
     ;;
   Darwin)
     # Временный слой с externalBin: удаляется при выходе.
@@ -42,7 +63,7 @@ case "$(uname -s)" in
 }
 JSON
     echo "Пакет: app, dmg"
-    pnpm tauri build --bundles app,dmg --config "$overlay"
+    build --bundles app,dmg --config "$overlay"
     ;;
   MINGW*|MSYS*|CYGWIN*)
     if [ ! -f src-tauri/binaries/wintun.dll ]; then
@@ -50,7 +71,7 @@ JSON
       exit 1
     fi
     echo "Пакет: nsis"
-    exec pnpm tauri build --bundles nsis --config src-tauri/tauri.windows.conf.json
+    build --bundles nsis --config src-tauri/tauri.windows.conf.json
     ;;
   *)
     echo "Неподдерживаемая ОС для сборки пакета: $(uname -s)" >&2

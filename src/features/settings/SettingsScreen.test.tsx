@@ -11,11 +11,15 @@ const apiMock = vi.hoisted(() => ({
   helperInstall: vi.fn(),
   helperUninstall: vi.fn(),
   helperStatus: vi.fn(),
+  updateStatus: vi.fn(),
+  updateCheck: vi.fn(),
+  updateInstall: vi.fn(),
 }));
 
 vi.mock("../../shared/api/client", () => ({
   api: apiMock,
   onConnectionChanged: vi.fn(() => Promise.resolve(() => {})),
+  onUpdateProgress: vi.fn(() => Promise.resolve(() => {})),
   toCommandError: (error: unknown) => error,
 }));
 
@@ -24,6 +28,11 @@ describe("SettingsScreen", () => {
     vi.clearAllMocks();
     resetAppStore();
     apiMock.helperStatus.mockResolvedValue(stoppedStatus);
+    apiMock.updateStatus.mockResolvedValue({
+      current_version: "0.1.0",
+      channel: "stable",
+      configured: true,
+    });
   });
 
   it("показывает загрузку без настроек", () => {
@@ -190,6 +199,31 @@ describe("SettingsScreen", () => {
     render(<SettingsScreen />);
 
     expect(screen.getByText("sing-box 1.14.4")).toBeInTheDocument();
+  });
+
+  it("сохраняет канал обновлений и проверку при запуске", async () => {
+    const user = userEvent.setup();
+    apiMock.settingsUpdate.mockImplementation(async (next) => next);
+    useAppStore.setState({ settings: makeSettings() });
+
+    render(<SettingsScreen />);
+    await waitFor(() => expect(screen.getByText("0.1.0")).toBeInTheDocument());
+
+    await user.selectOptions(screen.getByLabelText("Канал обновлений"), "beta");
+    await user.click(
+      screen.getByLabelText("Проверять обновления при запуске"),
+    );
+    await user.click(screen.getByRole("button", { name: "Сохранить настройки" }));
+
+    await waitFor(() =>
+      expect(apiMock.settingsUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          preferences: expect.objectContaining({
+            updates: { channel: "beta", check_on_start: true },
+          }),
+        }),
+      ),
+    );
   });
 
   it("показывает точную причину: нужны права администратора", async () => {

@@ -95,6 +95,58 @@ impl AutoSelectSettings {
     }
 }
 
+/// Канал обновлений. Неизвестное значение в state.json читается как `stable`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum UpdateChannel {
+    #[default]
+    Stable,
+    Beta,
+}
+
+impl UpdateChannel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Stable => "stable",
+            Self::Beta => "beta",
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for UpdateChannel {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(match value.trim().to_ascii_lowercase().as_str() {
+            "beta" => Self::Beta,
+            _ => Self::Stable,
+        })
+    }
+}
+
+/// Настройки автообновления приложения (S4-T8).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdateSettings {
+    /// Проверять обновления при запуске. Установка всегда требует явного
+    /// действия пользователя.
+    #[serde(default)]
+    pub check_on_start: bool,
+    /// Канал обновлений: `stable` или `beta`.
+    #[serde(default)]
+    pub channel: UpdateChannel,
+}
+
+impl Default for UpdateSettings {
+    fn default() -> Self {
+        Self {
+            check_on_start: false,
+            channel: UpdateChannel::Stable,
+        }
+    }
+}
+
 /// Поведение приложения и системная интеграция.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppPreferences {
@@ -108,6 +160,9 @@ pub struct AppPreferences {
     /// Старые state.json не содержат блока — читаются с выключенными функциями.
     #[serde(default)]
     pub auto_select: AutoSelectSettings,
+    /// Старые state.json не содержат блока — проверка выключена, канал stable.
+    #[serde(default)]
+    pub updates: UpdateSettings,
 }
 
 /// Полные настройки приложения для UI.
@@ -151,6 +206,7 @@ impl Default for AppSettings {
                 close_to_tray: true,
                 language: Language::Ru,
                 auto_select: AutoSelectSettings::default(),
+                updates: UpdateSettings::default(),
             },
         }
     }
@@ -457,6 +513,65 @@ mod tests {
         assert_eq!(saved.preferences.auto_select.interval_secs, 15);
         assert_eq!(saved.preferences.auto_select.confirmations, 1);
         assert_eq!(saved.preferences.auto_select.failures_to_switch, 5);
+    }
+
+    /// Старый state.json без блока обновлений: проверка выключена, канал stable.
+    #[test]
+    fn legacy_preferences_without_updates_read_as_disabled_stable() {
+        let raw = r#"{
+            "launch_at_login": true,
+            "launch_minimized": false,
+            "connect_on_start": false,
+            "close_to_tray": true
+        }"#;
+        let preferences: AppPreferences = serde_json::from_str(raw).unwrap();
+        assert!(!preferences.updates.check_on_start);
+        assert_eq!(preferences.updates.channel, UpdateChannel::Stable);
+    }
+
+    /// Неизвестный или испорченный канал не должен ломать чтение настроек.
+    #[test]
+    fn unknown_update_channel_normalizes_to_stable() {
+        for value in ["", "nightly", "STABLE", "  stable  "] {
+            let raw = format!(r#"{{"check_on_start": true, "channel": "{value}"}}"#);
+            let updates: UpdateSettings = serde_json::from_str(&raw).unwrap();
+            assert_eq!(
+                updates.channel,
+                UpdateChannel::Stable,
+                "значение {value:?} читается как stable"
+            );
+            assert!(updates.check_on_start);
+        }
+        let beta: UpdateSettings = serde_json::from_str(r#"{"channel":"BETA"}"#).unwrap();
+        assert_eq!(beta.channel, UpdateChannel::Beta);
+    }
+
+    #[test]
+    fn update_channel_serializes_lowercase() {
+        assert_eq!(
+            serde_json::to_value(UpdateChannel::Stable).unwrap(),
+            "stable"
+        );
+        assert_eq!(serde_json::to_value(UpdateChannel::Beta).unwrap(), "beta");
+    }
+
+    #[test]
+    fn update_settings_round_trip_through_file() {
+        let path = temp_path("updates");
+        let store = Store::load(&path);
+        let mut settings = store.settings();
+        settings.preferences.updates = UpdateSettings {
+            check_on_start: true,
+            channel: UpdateChannel::Beta,
+        };
+        store.update_settings(settings.clone()).unwrap();
+
+        let reloaded = Store::load(&path);
+        assert_eq!(
+            reloaded.settings().preferences.updates,
+            settings.preferences.updates
+        );
+        let _ = fs::remove_file(&path);
     }
 
     #[test]

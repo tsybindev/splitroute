@@ -4,6 +4,7 @@ import { create } from "zustand";
 import {
   api,
   onConnectionChanged,
+  onUpdateProgress,
   toCommandError,
 } from "../api/client";
 import type {
@@ -19,6 +20,10 @@ import type {
   LogLevel,
   Platform,
   Profile,
+  UpdateChannel,
+  UpdateCheckResult,
+  UpdateProgress,
+  UpdateStatus,
 } from "../api/types";
 import type { TabId } from "../../app/tabs";
 import { setLanguage } from "../i18n";
@@ -50,6 +55,12 @@ interface AppState {
   logs: LogEntry[];
   diagnostics: string;
   busy: Record<string, boolean>;
+  updateStatus: UpdateStatus | null;
+  updateCheck: UpdateCheckResult | null;
+  updateChecking: boolean;
+  updateInstalling: boolean;
+  updateProgress: UpdateProgress | null;
+  updateError: CommandError | null;
 
   setActiveTab: (tab: TabId) => void;
   initialize: () => Promise<void>;
@@ -76,6 +87,10 @@ interface AppState {
   pollConnection: () => Promise<void>;
   loadLogs: (level: LogLevel | null) => Promise<void>;
   loadDiagnostics: () => Promise<string>;
+  loadUpdateStatus: () => Promise<void>;
+  checkForUpdates: (channel: UpdateChannel, silent?: boolean) => Promise<void>;
+  installUpdate: (channel: UpdateChannel) => Promise<void>;
+  dismissUpdate: () => void;
   clearNotice: () => void;
 }
 
@@ -100,6 +115,12 @@ const initialState = {
   logs: [] as LogEntry[],
   diagnostics: "",
   busy: {},
+  updateStatus: null as UpdateStatus | null,
+  updateCheck: null as UpdateCheckResult | null,
+  updateChecking: false,
+  updateInstalling: false,
+  updateProgress: null as UpdateProgress | null,
+  updateError: null,
 };
 
 function connectionFromStatus(status: HelperStatus): ConnectionState {
@@ -171,7 +192,20 @@ export const useAppStore = create<AppState>((set, get) => {
           await get().refreshHelperStatus();
         })(),
         get().loadLogs(null),
+        get().loadUpdateStatus(),
       ]);
+      // Проверка при запуске — только если она включена и канал настроен.
+      // Установка никогда не запускается автоматически.
+      const settings = get().settings;
+      if (
+        settings?.preferences.updates.check_on_start &&
+        get().updateStatus?.configured
+      ) {
+        void get().checkForUpdates(
+          settings.preferences.updates.channel,
+          true,
+        );
+      }
     },
 
     subscribe: async () =>
@@ -511,6 +545,64 @@ export const useAppStore = create<AppState>((set, get) => {
         return "";
       }
     },
+
+    loadUpdateStatus: async () => {
+      try {
+        set({ updateStatus: await api.updateStatus() });
+      } catch (error) {
+        set({ updateStatus: null, updateError: toCommandError(error) });
+      }
+    },
+
+    /// Проверка обновлений. `silent` — стартовая проверка: отсутствие канала
+    /// не показывается как ошибка, установка всё равно только вручную.
+    checkForUpdates: async (channel, silent = false) => {
+      set({ updateChecking: true, updateError: null });
+      try {
+        const updateCheck = await api.updateCheck(channel);
+        set({ updateCheck, updateError: null });
+      } catch (error) {
+        const commandError = toCommandError(error);
+        set({
+          updateCheck: null,
+          updateError:
+            silent && commandError.code === "UPDATE_NOT_CONFIGURED"
+              ? null
+              : commandError,
+        });
+      } finally {
+        set({ updateChecking: false });
+      }
+    },
+
+    /// Установка обновления: прогресс приходит событием из Rust. После
+    /// успешной установки приложение перезапускается, и промис может не
+    /// завершиться — это ожидаемо.
+    installUpdate: async (channel) => {
+      set({
+        updateInstalling: true,
+        updateError: null,
+        updateProgress: { downloaded: 0, total: null },
+      });
+      let unlisten: (() => void) | undefined;
+      try {
+        unlisten = await onUpdateProgress((progress) =>
+          set({ updateProgress: progress }),
+        );
+      } catch {
+        // Прогресс не критичен: установка продолжается без него.
+      }
+      try {
+        await api.updateInstall(channel);
+        set({ updateInstalling: false, updateCheck: null });
+      } catch (error) {
+        set({ updateInstalling: false, updateError: toCommandError(error) });
+      } finally {
+        unlisten?.();
+      }
+    },
+
+    dismissUpdate: () => set({ updateCheck: null }),
 
     clearNotice: () => set({ notice: null, actionError: null, fetchError: null }),
   };
