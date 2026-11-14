@@ -1,12 +1,16 @@
-import { useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
-import { t } from "../../shared/i18n/ru";
+import { useEffect, useMemo, useState } from "react";
+import { Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import type { InstalledApp } from "../../shared/api/types";
+import { t, type MessageKey } from "../../shared/i18n/ru";
 import { useAppStore, type NewRuleInput } from "../../shared/state/appStore";
 import { Badge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
 import { Card } from "../../shared/ui/Card";
 import { EmptyState } from "../../shared/ui/EmptyState";
+import { ErrorBox } from "../../shared/ui/ErrorBox";
 import { Field, inputClass } from "../../shared/ui/Field";
+
+type AppsTab = "installed" | "running" | "rules";
 
 function ruleValues(rule: {
   process_name?: string[];
@@ -22,7 +26,182 @@ function ruleValues(rule: {
 
 const emptyInput: NewRuleInput = { name: "", kind: "process", value: "" };
 
+// Порядок вкладок — как в PRD §7; по умолчанию открыт каталог.
+const tabLabels: Record<AppsTab, MessageKey> = {
+  running: "apps.tabs.running",
+  installed: "apps.tabs.installed",
+  rules: "apps.tabs.rules",
+};
+
 export function AppsScreen() {
+  const [tab, setTab] = useState<AppsTab>("installed");
+
+  return (
+    <div className="flex flex-col gap-4">
+      <h2 className="text-base font-medium">{t("apps.title")}</h2>
+      <div role="tablist" className="flex gap-1">
+        {(Object.keys(tabLabels) as AppsTab[]).map((id) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={tab === id}
+            onClick={() => setTab(id)}
+            className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
+              tab === id
+                ? "bg-neutral-800 text-neutral-100"
+                : "text-neutral-400 hover:text-neutral-200"
+            }`}
+          >
+            {t(tabLabels[id])}
+          </button>
+        ))}
+      </div>
+
+      {tab === "installed" ? <InstalledApps /> : null}
+      {tab === "running" ? <RunningApps /> : null}
+      {tab === "rules" ? <RulesTab /> : null}
+    </div>
+  );
+}
+
+function InstalledApps() {
+  const apps = useAppStore((state) => state.installedApps);
+  const loading = useAppStore((state) => state.installedLoading);
+  const error = useAppStore((state) => state.installedError);
+  const busy = useAppStore((state) => state.busy);
+  const loadInstalledApps = useAppStore((state) => state.loadInstalledApps);
+  const addRuleFromInstalled = useAppStore(
+    (state) => state.addRuleFromInstalled,
+  );
+  const [query, setQuery] = useState("");
+  const [addedPath, setAddedPath] = useState<string | null>(null);
+
+  useEffect(() => {
+    void loadInstalledApps();
+  }, [loadInstalledApps]);
+
+  const filtered = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return apps;
+    return apps.filter((app) => app.name.toLowerCase().includes(needle));
+  }, [apps, query]);
+
+  const add = async (app: InstalledApp) => {
+    await addRuleFromInstalled(app);
+    setAddedPath(app.path);
+  };
+
+  return (
+    <div className="flex flex-col gap-3">
+      <Card title={t("apps.installed.title")}>
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative flex-1">
+              <Search className="pointer-events-none absolute top-2.5 left-2.5 size-4 text-neutral-500" />
+              <input
+                id="installed-search"
+                aria-label={t("apps.installed.search")}
+                className={`${inputClass} pl-8`}
+                placeholder={t("apps.installed.search")}
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+              />
+            </div>
+            <Button
+              onClick={() => void loadInstalledApps()}
+              disabled={loading}
+            >
+              <RefreshCw className={`size-4 ${loading ? "animate-spin" : ""}`} />
+              {t("apps.installed.refresh")}
+            </Button>
+          </div>
+
+          {error ? (
+            <ErrorBox
+              error={error}
+              showDetail
+              onRetry={() => void loadInstalledApps()}
+            />
+          ) : null}
+
+          {loading && apps.length === 0 ? (
+            <p className="text-sm text-neutral-400">
+              {t("apps.installed.loading")}
+            </p>
+          ) : null}
+
+          {!loading && apps.length === 0 && !error ? (
+            <EmptyState
+              title={t("apps.installed.empty.title")}
+              hint={t("apps.installed.empty.hint")}
+            />
+          ) : null}
+
+          {apps.length > 0 && filtered.length === 0 ? (
+            <EmptyState
+              title={t("apps.installed.empty.title")}
+              hint={t("apps.installed.noMatches", { query: query.trim() })}
+            />
+          ) : null}
+
+          {filtered.length > 0 ? (
+            <ul className="flex flex-col gap-2">
+              {filtered.map((app) => {
+                const added = addedPath === app.path;
+                return (
+                  <li
+                    key={app.path}
+                    className="flex items-center justify-between gap-3 rounded-lg border border-neutral-800 bg-neutral-900/60 px-4 py-3"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-neutral-100">
+                        {app.name}
+                      </p>
+                      <p className="truncate font-mono text-xs text-neutral-500">
+                        {app.path}
+                      </p>
+                    </div>
+                    <Button
+                      variant={added ? "ghost" : "secondary"}
+                      aria-label={`${t("apps.installed.add")}: ${app.name}`}
+                      disabled={Boolean(busy[`rule-${app.path}`]) || added}
+                      onClick={() => void add(app)}
+                      className="shrink-0"
+                    >
+                      <Plus className="size-4" />
+                      {added ? t("apps.installed.added") : t("apps.installed.add")}
+                    </Button>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : null}
+
+          <p className="text-xs text-neutral-500">
+            {t("apps.installed.count", { count: filtered.length })}
+          </p>
+          {addedPath ? (
+            <p className="text-xs text-emerald-300">
+              {t("apps.installed.addedHint")}
+            </p>
+          ) : null}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function RunningApps() {
+  return (
+    <EmptyState
+      title={t("apps.tabs.running")}
+      hint={t("apps.tabs.runningHint")}
+    />
+  );
+}
+
+function RulesTab() {
   const rules = useAppStore((state) => state.rules);
   const busy = useAppStore((state) => state.busy);
   const addRule = useAppStore((state) => state.addRule);
@@ -131,7 +310,8 @@ export function AppsScreen() {
                   className="cursor-pointer"
                 >
                   <Badge tone={rule.enabled ? "success" : "neutral"}>
-                    {t("apps.enabled")}: {t(rule.enabled ? "common.yes" : "common.no")}
+                    {t("apps.enabled")}:{" "}
+                    {t(rule.enabled ? "common.yes" : "common.no")}
                   </Badge>
                 </button>
                 <Button

@@ -78,6 +78,26 @@ export const ru = {
   "apps.ruleCount": "Правил: {count}",
   "apps.add.invalid": "Заполните название и значение правила.",
 
+  "apps.tabs.rules": "Все правила",
+  "apps.tabs.installed": "Установленные",
+  "apps.installed.title": "Установленные приложения",
+  "apps.tabs.running": "Запущенные",
+  "apps.tabs.runningHint":
+    "Список запущенных процессов появится в следующей версии. Пока добавьте приложение из установленных или вручную.",
+  "apps.installed.search": "Поиск по установленным приложениям",
+  "apps.installed.empty.title": "Приложения не найдены",
+  "apps.installed.empty.hint":
+    "Каталог пуст или недоступен для чтения. Добавьте правило вручную ниже.",
+  "apps.installed.noMatches": "По запросу «{query}» ничего не найдено.",
+  "apps.installed.add": "Добавить правило",
+  "apps.installed.added": "Правило добавлено",
+  "apps.installed.addedHint":
+    "Правило создано выключенным — включите его на вкладке «Все правила».",
+  "apps.installed.count": "Найдено приложений: {count}",
+  "apps.installed.loading": "Читаем список приложений…",
+  "apps.installed.refresh": "Обновить список",
+  "apps.installed.missingPath": "Путь не найден",
+
   "settings.title": "Настройки",
   "settings.subscription.title": "Подписка",
   "settings.subscription.url": "URL подписки",

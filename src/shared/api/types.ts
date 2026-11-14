@@ -53,6 +53,13 @@ export interface AppRule {
   enabled: boolean;
 }
 
+/** Запись каталога установленных приложений (PRD §6.3). Иконок пока нет. */
+export interface InstalledApp {
+  name: string;
+  path: string;
+  platform: Platform;
+}
+
 export type DnsMode = "proxy" | "system";
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error";
 

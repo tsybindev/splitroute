@@ -4,6 +4,7 @@ import type {
   AppRule,
   AppSettings,
   HelperStatus,
+  InstalledApp,
   Profile,
 } from "../shared/api/types";
 
@@ -69,8 +70,18 @@ export function makeRule(overrides: Partial<AppRule> = {}): AppRule {
   };
 }
 
-export const stoppedStatus: HelperStatus = { state: "stopped" };
+export function makeInstalledApp(
+  overrides: Partial<InstalledApp> = {},
+): InstalledApp {
+  return {
+    name: "Google Chrome",
+    path: "/Applications/Google Chrome.app",
+    platform: "macos",
+    ...overrides,
+  };
+}
 
+export const stoppedStatus: HelperStatus = { state: "stopped" };
 export const runningStatus: HelperStatus = {
   state: "running",
   pid: 42,

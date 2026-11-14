@@ -8,6 +8,7 @@ import type {
   AppSettings,
   CommandError,
   HelperStatus,
+  InstalledApp,
   LogEntry,
   LogLevel,
   ProfilesResponse,
@@ -49,6 +50,9 @@ export const api = {
   rulesUpsert: (rule: AppRule) =>
     invoke<AppRule[]>("rules_upsert", { rule }),
   rulesDelete: (id: string) => invoke<AppRule[]>("rules_delete", { id }),
+  appsInstalled: () => invoke<InstalledApp[]>("apps_installed"),
+  appRuleFromInstalled: (app: InstalledApp) =>
+    invoke<AppRule>("app_rule_from_installed", { app }),
   settingsGet: () => invoke<AppSettings>("settings_get"),
   settingsUpdate: (settings: AppSettings) =>
     invoke<AppSettings>("settings_update", { settings }),

@@ -87,6 +87,17 @@ pub struct AppRule {
     pub enabled: bool,
 }
 
+/// Установленное приложение из каталога (PRD §6.3, §7). Иконок пока нет.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InstalledApp {
+    /// Человекочитаемое имя: stem бандла `.app`, `Name=` из `.desktop` или имя ярлыка.
+    pub name: String,
+    /// Абсолютный путь: `.app`-бандл, ярлык `.lnk` или программа из `Exec`.
+    pub path: String,
+    /// Платформа, на которой найден каталог.
+    pub platform: Platform,
+}
+
 /// Режим DNS (PRD §6.4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DnsMode {
@@ -223,6 +234,26 @@ mod tests {
         let decoded: AppRule = serde_json::from_str(&encoded).unwrap();
         assert_eq!(decoded, rule);
         assert!(!encoded.contains("process_path"));
+    }
+
+    #[test]
+    fn installed_app_round_trip() {
+        let app = InstalledApp {
+            name: "Google Chrome".to_string(),
+            path: "/Applications/Google Chrome.app".to_string(),
+            platform: Platform::Macos,
+        };
+        let encoded = serde_json::to_string(&app).unwrap();
+        let decoded: InstalledApp = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded, app);
+        assert_eq!(
+            serde_json::to_value(&app).unwrap(),
+            serde_json::json!({
+                "name": "Google Chrome",
+                "path": "/Applications/Google Chrome.app",
+                "platform": "macos",
+            })
+        );
     }
 
     #[test]

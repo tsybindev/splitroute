@@ -6,9 +6,10 @@
 use std::sync::Arc;
 
 use serde::Serialize;
-use splitroute_protocol::{AppRule, HelperStatus, LogLevel, Profile};
+use splitroute_protocol::{AppRule, HelperStatus, InstalledApp, LogLevel, Profile};
 use tauri::Manager;
 
+use crate::catalog;
 use crate::config::{build_config, ConfigError};
 use crate::logging::{LogBuffer, LogEntry};
 use crate::privileged::{HelperClient, HelperClientError, HelperInstaller, InstallerError};
@@ -357,6 +358,31 @@ pub fn profile_select(
 #[tauri::command]
 pub fn rules_list(state: tauri::State<'_, AppState>) -> Vec<AppRule> {
     state.store.rules()
+}
+
+/// Каталог установленных приложений текущей ОС (PRD §6.3). Причины пропуска
+/// битых записей уходят в лог, чтобы не теряться в отчёте сканирования.
+#[tauri::command]
+pub fn apps_installed(state: tauri::State<'_, AppState>) -> Vec<InstalledApp> {
+    let report = catalog::scan();
+    let found = report.apps.len();
+    for reason in &report.skipped {
+        state
+            .logs
+            .push(LogLevel::Debug, format!("Каталог: {reason}"));
+    }
+    state.logs.push(
+        LogLevel::Info,
+        format!("Каталог приложений: найдено {found}"),
+    );
+    report.apps
+}
+
+/// Готовит выключенное правило из записи каталога: macOS получает regex по
+/// каталогу `.app`, Windows/Linux — полный путь к процессу (PRD §6.3).
+#[tauri::command]
+pub fn app_rule_from_installed(app: InstalledApp) -> AppRule {
+    catalog::rule_from_app(&app)
 }
 
 #[tauri::command]

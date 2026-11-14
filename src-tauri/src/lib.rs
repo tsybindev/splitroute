@@ -1,5 +1,6 @@
 //! Точка входа Tauri-приложения SplitRoute.
 
+pub mod catalog;
 pub mod commands;
 pub mod config;
 pub mod logging;
@@ -123,6 +124,8 @@ pub fn run() {
             commands::rules_list,
             commands::rules_upsert,
             commands::rules_delete,
+            commands::apps_installed,
+            commands::app_rule_from_installed,
             commands::settings_get,
             commands::settings_update,
             commands::hwid_generate,

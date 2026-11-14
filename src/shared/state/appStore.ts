@@ -12,6 +12,7 @@ import type {
   CommandError,
   ConnectionState,
   HelperStatus,
+  InstalledApp,
   LogEntry,
   LogLevel,
   Platform,
@@ -33,6 +34,9 @@ interface AppState {
   fetchedAt: number | null;
   skippedCount: number;
   rules: AppRule[];
+  installedApps: InstalledApp[];
+  installedLoading: boolean;
+  installedError: CommandError | null;
   helperStatus: HelperStatus | null;
   helperStatusError: CommandError | null;
   connection: ConnectionState;
@@ -52,7 +56,9 @@ interface AppState {
   disconnect: () => Promise<void>;
   toggleConnection: () => Promise<void>;
   loadRules: () => Promise<void>;
+  loadInstalledApps: () => Promise<void>;
   addRule: (input: NewRuleInput) => Promise<void>;
+  addRuleFromInstalled: (app: InstalledApp) => Promise<void>;
   toggleRule: (rule: AppRule) => Promise<void>;
   deleteRule: (id: string) => Promise<void>;
   loadSettings: () => Promise<void>;
@@ -72,6 +78,9 @@ const initialState = {
   fetchedAt: null,
   skippedCount: 0,
   rules: [] as AppRule[],
+  installedApps: [] as InstalledApp[],
+  installedLoading: false,
+  installedError: null,
   helperStatus: null,
   helperStatusError: null,
   connection: "disconnected" as ConnectionState,
@@ -231,10 +240,36 @@ export const useAppStore = create<AppState>((set, get) => {
       }
     },
 
+    loadInstalledApps: async () => {
+      set({ installedLoading: true });
+      try {
+        const installedApps = await api.appsInstalled();
+        set({ installedApps, installedError: null });
+      } catch (error) {
+        set({ installedError: toCommandError(error) });
+      } finally {
+        set({ installedLoading: false });
+      }
+    },
+
     addRule: async (input) => {
       await withBusy("rule", async () => {
         try {
           const rules = await api.rulesUpsert(ruleFromInput(input));
+          set({ rules, actionError: null });
+        } catch (error) {
+          set({ actionError: toCommandError(error) });
+        }
+      });
+    },
+
+    /// Правило из каталога строит ядро: regex по `.app` на macOS и полный путь
+    /// на Windows/Linux. UI не собирает regex сам (PRD §6.3).
+    addRuleFromInstalled: async (app) => {
+      await withBusy(`rule-${app.path}`, async () => {
+        try {
+          const rule = await api.appRuleFromInstalled(app);
+          const rules = await api.rulesUpsert(rule);
           set({ rules, actionError: null });
         } catch (error) {
           set({ actionError: toCommandError(error) });
