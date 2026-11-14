@@ -63,6 +63,34 @@ describe("SettingsScreen", () => {
     );
   });
 
+  it("переключает язык, применяет сразу и сохраняет через settingsUpdate", async () => {
+    const user = userEvent.setup();
+    useAppStore.setState({ settings: makeSettings() });
+    apiMock.settingsUpdate.mockImplementation(async (settings) => settings);
+
+    render(<SettingsScreen />);
+    expect(
+      screen.getByRole("button", { name: "Сохранить настройки" }),
+    ).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText(/Язык интерфейса/), "en");
+
+    await waitFor(() =>
+      expect(apiMock.settingsUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          preferences: expect.objectContaining({ language: "en" }),
+        }),
+      ),
+    );
+    // Язык применился без перезапуска: видимый текст уже английский.
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Save settings" }),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.getByLabelText(/Interface language/)).toHaveValue("en");
+  });
+
   it("генерирует новый HWID", async () => {
     const user = userEvent.setup();
     apiMock.hwidGenerate.mockResolvedValue("abcdef0123456789");

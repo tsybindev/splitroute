@@ -1,4 +1,4 @@
-import type { MessageKey } from "../shared/i18n/ru";
+import type { MessageKey } from "../shared/i18n";
 
 export type TabId = "connect" | "profiles" | "apps" | "settings" | "logs";
 

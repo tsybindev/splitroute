@@ -1,5 +1,5 @@
 import type { ConnectionState } from "../api/types";
-import { t } from "../i18n/ru";
+import { t } from "../i18n";
 import { useAppStore } from "../state/appStore";
 import { Badge, Dot } from "./Badge";
 

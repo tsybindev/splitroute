@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Power } from "lucide-react";
-import { t } from "../../shared/i18n/ru";
+import { t } from "../../shared/i18n";
 import { helperBadge } from "../../shared/lib/helperState";
 import { useAppStore } from "../../shared/state/appStore";
 import { Badge } from "../../shared/ui/Badge";

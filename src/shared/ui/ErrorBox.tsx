@@ -1,6 +1,6 @@
 import { AlertTriangle } from "lucide-react";
 import type { CommandError } from "../api/types";
-import { errorText, t } from "../i18n/ru";
+import { errorText, t } from "../i18n";
 import { Button } from "./Button";
 
 interface ErrorBoxProps {

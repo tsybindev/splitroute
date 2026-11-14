@@ -5,7 +5,7 @@ import { ProfilesScreen } from "../features/profiles/ProfilesScreen";
 import { AppsScreen } from "../features/apps/AppsScreen";
 import { SettingsScreen } from "../features/settings/SettingsScreen";
 import { LogsScreen } from "../features/logs/LogsScreen";
-import { t } from "../shared/i18n/ru";
+import { t, useLanguage } from "../shared/i18n";
 import { useAppStore } from "../shared/state/appStore";
 import { StatusBadge } from "../shared/ui/StatusBadge";
 
@@ -18,6 +18,8 @@ const screens: Record<TabId, () => React.JSX.Element> = {
 };
 
 export function App() {
+  // Подписка на язык: смена языка перерисовывает всё дерево без перезапуска.
+  useLanguage();
   const active = useAppStore((state) => state.activeTab);
   const setActive = useAppStore((state) => state.setActiveTab);
   const Screen = screens[active];

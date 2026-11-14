@@ -61,6 +61,7 @@ export interface InstalledApp {
 }
 
 export type DnsMode = "proxy" | "system";
+export type Language = "ru" | "en";
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error";
 
 export interface NetworkSettings {
@@ -84,6 +85,7 @@ export interface AppPreferences {
   launch_minimized: boolean;
   connect_on_start: boolean;
   close_to_tray: boolean;
+  language: Language;
 }
 
 export interface AppSettings {

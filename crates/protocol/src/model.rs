@@ -5,6 +5,30 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Язык интерфейса (PRD §6.6, §8). Хранится в настройках, по умолчанию русский.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Language {
+    #[default]
+    Ru,
+    En,
+}
+
+/// Неизвестный код читается как `ru`: ручная правка state.json не должна
+/// сбрасывать остальные настройки.
+impl<'de> Deserialize<'de> for Language {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let code = String::deserialize(deserializer)?;
+        Ok(match code.as_str() {
+            "en" => Self::En,
+            _ => Self::Ru,
+        })
+    }
+}
+
 /// Протокол подключения. MVP обязан поддерживать VLESS + Reality + TCP.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -254,6 +278,28 @@ mod tests {
                 "platform": "macos",
             })
         );
+    }
+
+    #[test]
+    fn language_serializes_as_two_letter_code() {
+        assert_eq!(serde_json::to_value(Language::Ru).unwrap(), "ru");
+        assert_eq!(serde_json::to_value(Language::En).unwrap(), "en");
+        assert_eq!(Language::default(), Language::Ru);
+    }
+
+    #[test]
+    fn language_round_trip() {
+        for language in [Language::Ru, Language::En] {
+            let encoded = serde_json::to_string(&language).unwrap();
+            let decoded: Language = serde_json::from_str(&encoded).unwrap();
+            assert_eq!(decoded, language);
+        }
+    }
+
+    #[test]
+    fn unknown_language_falls_back_to_ru() {
+        let decoded: Language = serde_json::from_str("\"de\"").unwrap();
+        assert_eq!(decoded, Language::Ru);
     }
 
     #[test]

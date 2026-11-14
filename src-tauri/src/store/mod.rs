@@ -10,7 +10,7 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
-use splitroute_protocol::{AppRule, Profile, Settings};
+use splitroute_protocol::{AppRule, Language, Profile, Settings};
 
 /// Настройки подписки и идентификации устройства.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,6 +29,9 @@ pub struct AppPreferences {
     pub launch_minimized: bool,
     pub connect_on_start: bool,
     pub close_to_tray: bool,
+    /// Старые state.json не содержат поля — читаются как `ru`.
+    #[serde(default)]
+    pub language: Language,
 }
 
 /// Полные настройки приложения для UI.
@@ -70,6 +73,7 @@ impl Default for AppSettings {
                 launch_minimized: false,
                 connect_on_start: false,
                 close_to_tray: true,
+                language: Language::Ru,
             },
         }
     }
@@ -320,7 +324,34 @@ mod tests {
             "собственный UA: провайдер отдаёт base64-список vless-ссылок"
         );
         assert!(settings.preferences.close_to_tray);
+        assert_eq!(settings.preferences.language, Language::Ru);
         assert!(store.data().profiles.is_empty());
+    }
+
+    /// Старый state.json без поля `language` читается как `ru`.
+    #[test]
+    fn legacy_preferences_without_language_read_as_ru() {
+        let raw = r#"{
+            "launch_at_login": true,
+            "launch_minimized": false,
+            "connect_on_start": false,
+            "close_to_tray": true
+        }"#;
+        let preferences: AppPreferences = serde_json::from_str(raw).unwrap();
+        assert_eq!(preferences.language, Language::Ru);
+    }
+
+    #[test]
+    fn language_is_saved_and_reloaded() {
+        let path = temp_path("language");
+        let store = Store::load(&path);
+        let mut settings = store.settings();
+        settings.preferences.language = Language::En;
+        store.update_settings(settings).unwrap();
+
+        let reloaded = Store::load(&path);
+        assert_eq!(reloaded.settings().preferences.language, Language::En);
+        let _ = fs::remove_file(&path);
     }
 
     /// Сохранённый UA — это выбор пользователя: загрузка его не переписывает.

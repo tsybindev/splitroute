@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import type { InstalledApp } from "../../shared/api/types";
-import { t, type MessageKey } from "../../shared/i18n/ru";
+import { t, type MessageKey } from "../../shared/i18n";
 import { useAppStore, type NewRuleInput } from "../../shared/state/appStore";
 import { Badge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";

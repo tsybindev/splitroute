@@ -1,4 +1,5 @@
-// Словарь русских строк. Компоненты не содержат захардкоженных текстов.
+// Эталонный словарь русских строк: набор ключей задаёт `MessageKey`.
+// Компоненты не содержат захардкоженных текстов.
 
 export const ru = {
   "app.name": "SplitRoute",
@@ -126,6 +127,10 @@ export const ru = {
   "settings.app.launchMinimized": "Запускать свёрнутым",
   "settings.app.connectOnStart": "Подключаться при старте",
   "settings.app.closeToTray": "Закрывать окно в трей",
+  "settings.app.language": "Язык интерфейса",
+  "settings.app.languageHint": "Применяется сразу, без перезапуска.",
+  "settings.app.language.ru": "Русский",
+  "settings.app.language.en": "Английский",
   "settings.helper.title": "Helper",
   "settings.helper.status": "Статус",
   "settings.helper.install": "Установить",
@@ -179,25 +184,3 @@ export const ru = {
 } as const;
 
 export type MessageKey = keyof typeof ru;
-
-export function t(
-  key: MessageKey,
-  vars?: Record<string, string | number>,
-): string {
-  let text: string = ru[key];
-  if (vars) {
-    for (const [name, value] of Object.entries(vars)) {
-      text = text.replaceAll(`{${name}}`, String(value));
-    }
-  }
-  return text;
-}
-
-/** Текст ошибки по стабильному коду команды. */
-export function errorText(code: string, fallback?: string): string {
-  const key = `errors.${code}` as MessageKey;
-  if (key in ru) {
-    return t(key);
-  }
-  return fallback ?? t("errors.UNKNOWN");
-}

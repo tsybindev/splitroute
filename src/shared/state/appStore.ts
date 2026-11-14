@@ -13,12 +13,14 @@ import type {
   ConnectionState,
   HelperStatus,
   InstalledApp,
+  Language,
   LogEntry,
   LogLevel,
   Platform,
   Profile,
 } from "../api/types";
 import type { TabId } from "../../app/tabs";
+import { setLanguage } from "../i18n";
 
 export interface NewRuleInput {
   name: string;
@@ -63,6 +65,7 @@ interface AppState {
   deleteRule: (id: string) => Promise<void>;
   loadSettings: () => Promise<void>;
   saveSettings: (settings: AppSettings) => Promise<void>;
+  setLanguagePreference: (language: Language) => Promise<void>;
   regenerateHwid: () => Promise<string | null>;
   refreshHelperStatus: () => Promise<void>;
   loadLogs: (level: LogLevel | null) => Promise<void>;
@@ -302,6 +305,7 @@ export const useAppStore = create<AppState>((set, get) => {
     loadSettings: async () => {
       try {
         const settings = await api.settingsGet();
+        setLanguage(settings.preferences.language);
         set({ settings });
       } catch (error) {
         set({ actionError: toCommandError(error) });
@@ -309,12 +313,48 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     saveSettings: async (settings) => {
+      // Язык принадлежит Rust-состоянию и уже применён: форма не должна
+      // откатывать его к значению, загруженному при открытии экрана.
+      const current = get().settings;
+      const payload = current
+        ? {
+            ...settings,
+            preferences: {
+              ...settings.preferences,
+              language: current.preferences.language,
+            },
+          }
+        : settings;
       await withBusy("settings", async () => {
         try {
-          const saved = await api.settingsUpdate(settings);
+          const saved = await api.settingsUpdate(payload);
+          setLanguage(saved.preferences.language);
           set({ settings: saved, actionError: null, notice: "settings.saved" });
         } catch (error) {
           set({ actionError: toCommandError(error) });
+        }
+      });
+    },
+
+    /// Язык применяется сразу (единое состояние в Rust) и сразу сохраняется,
+    /// поэтому переключение не зависит от остальных несохранённых полей формы.
+    setLanguagePreference: async (language) => {
+      const settings = get().settings;
+      if (!settings) return;
+      const next: AppSettings = {
+        ...settings,
+        preferences: { ...settings.preferences, language },
+      };
+      setLanguage(language);
+      set({ settings: next, actionError: null });
+      await withBusy("language", async () => {
+        try {
+          const saved = await api.settingsUpdate(next);
+          setLanguage(saved.preferences.language);
+          set({ settings: saved });
+        } catch (error) {
+          setLanguage(settings.preferences.language);
+          set({ settings, actionError: toCommandError(error) });
         }
       });
     },

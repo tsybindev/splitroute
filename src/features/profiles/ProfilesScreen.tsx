@@ -1,5 +1,5 @@
 import { RefreshCw } from "lucide-react";
-import { t } from "../../shared/i18n/ru";
+import { locale, t } from "../../shared/i18n";
 import { useAppStore } from "../../shared/state/appStore";
 import { Badge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
@@ -9,7 +9,7 @@ import { ErrorBox } from "../../shared/ui/ErrorBox";
 
 function formatTime(timestamp: number | null): string {
   if (!timestamp) return t("common.none");
-  return new Date(timestamp * 1000).toLocaleString("ru-RU");
+  return new Date(timestamp * 1000).toLocaleString(locale());
 }
 
 export function ProfilesScreen() {

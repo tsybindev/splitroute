@@ -5,7 +5,7 @@
 
 use std::sync::Mutex;
 
-use splitroute_protocol::{CoreState, HelperStatus};
+use splitroute_protocol::{CoreState, HelperStatus, Language};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Manager, Wry};
@@ -17,16 +17,39 @@ use crate::commands::{self, AppState};
 pub struct TrayState {
     status_item: Mutex<Option<MenuItem<Wry>>>,
     toggle_item: Mutex<Option<MenuItem<Wry>>>,
+    open_item: Mutex<Option<MenuItem<Wry>>>,
+    quit_item: Mutex<Option<MenuItem<Wry>>>,
+    /// Последнее известное состояние ядра: по нему пересобираются подписи при
+    /// смене языка без запроса к helper'у.
+    running: Mutex<bool>,
 }
 
 pub const TRAY_ID: &str = "splitroute-tray";
 
 /// Создаёт иконку и меню трея. Вызывается один раз в `setup`.
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
-    let status_item = MenuItem::with_id(app, "status", status_label(None), false, None::<&str>)?;
-    let toggle_item = MenuItem::with_id(app, "toggle", "Подключить", true, None::<&str>)?;
-    let open_item = MenuItem::with_id(app, "open", "Открыть SplitRoute", true, None::<&str>)?;
-    let quit_item = MenuItem::with_id(app, "quit", "Выйти", true, None::<&str>)?;
+    let language = app
+        .state::<AppState>()
+        .store
+        .settings()
+        .preferences
+        .language;
+    let status_item = MenuItem::with_id(
+        app,
+        "status",
+        status_label(None, language),
+        false,
+        None::<&str>,
+    )?;
+    let toggle_item = MenuItem::with_id(
+        app,
+        "toggle",
+        toggle_label(false, language),
+        true,
+        None::<&str>,
+    )?;
+    let open_item = MenuItem::with_id(app, "open", open_label(language), true, None::<&str>)?;
+    let quit_item = MenuItem::with_id(app, "quit", quit_label(language), true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&status_item, &toggle_item, &open_item, &quit_item])?;
 
     // macOS ждёт template-иконку (альфа-канал, без цвета), остальные ОС —
@@ -54,38 +77,97 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     app.manage(TrayState {
         status_item: Mutex::new(Some(status_item)),
         toggle_item: Mutex::new(Some(toggle_item)),
+        open_item: Mutex::new(Some(open_item)),
+        quit_item: Mutex::new(Some(quit_item)),
+        running: Mutex::new(false),
     });
     Ok(())
 }
 
 /// Обновляет меню и рассылает статус в UI.
 pub fn publish(app: &AppHandle, status: &HelperStatus) {
-    let label = status_label(Some(status.state));
-    let toggle = if status.state == CoreState::Running {
-        "Отключить"
-    } else {
-        "Подключить"
-    };
-    if let Some(state) = app.try_state::<TrayState>() {
-        if let Ok(item) = state.status_item.lock() {
-            if let Some(item) = item.as_ref() {
-                let _ = item.set_text(label);
-            }
-        }
-        if let Ok(item) = state.toggle_item.lock() {
-            if let Some(item) = item.as_ref() {
-                let _ = item.set_text(toggle);
-            }
-        }
-    }
+    let language = app
+        .state::<AppState>()
+        .store
+        .settings()
+        .preferences
+        .language;
+    apply_labels(app, language, status.state == CoreState::Running);
     use tauri::Emitter;
     let _ = app.emit("connection-changed", status);
 }
 
-fn status_label(state: Option<CoreState>) -> &'static str {
-    match state {
-        Some(CoreState::Running) => "Подключено",
-        Some(CoreState::Stopped) | None => "Не подключено",
+/// Перерисовывает подписи трея при смене языка интерфейса.
+pub fn set_language(app: &AppHandle, language: Language) {
+    let running = app
+        .try_state::<TrayState>()
+        .and_then(|state| state.running.lock().ok().map(|running| *running))
+        .unwrap_or(false);
+    apply_labels(app, language, running);
+}
+
+fn apply_labels(app: &AppHandle, language: Language, running: bool) {
+    if let Some(state) = app.try_state::<TrayState>() {
+        if let Ok(mut value) = state.running.lock() {
+            *value = running;
+        }
+        let status = if running {
+            Some(CoreState::Running)
+        } else {
+            Some(CoreState::Stopped)
+        };
+        if let Ok(item) = state.status_item.lock() {
+            if let Some(item) = item.as_ref() {
+                let _ = item.set_text(status_label(status, language));
+            }
+        }
+        if let Ok(item) = state.toggle_item.lock() {
+            if let Some(item) = item.as_ref() {
+                let _ = item.set_text(toggle_label(running, language));
+            }
+        }
+        if let Ok(item) = state.open_item.lock() {
+            if let Some(item) = item.as_ref() {
+                let _ = item.set_text(open_label(language));
+            }
+        }
+        if let Ok(item) = state.quit_item.lock() {
+            if let Some(item) = item.as_ref() {
+                let _ = item.set_text(quit_label(language));
+            }
+        }
+    }
+}
+
+fn status_label(state: Option<CoreState>, language: Language) -> &'static str {
+    match (state, language) {
+        (Some(CoreState::Running), Language::Ru) => "Подключено",
+        (Some(CoreState::Running), Language::En) => "Connected",
+        (_, Language::Ru) => "Не подключено",
+        (_, Language::En) => "Disconnected",
+    }
+}
+
+fn toggle_label(running: bool, language: Language) -> &'static str {
+    match (running, language) {
+        (true, Language::Ru) => "Отключить",
+        (true, Language::En) => "Disconnect",
+        (false, Language::Ru) => "Подключить",
+        (false, Language::En) => "Connect",
+    }
+}
+
+fn open_label(language: Language) -> &'static str {
+    match language {
+        Language::Ru => "Открыть SplitRoute",
+        Language::En => "Open SplitRoute",
+    }
+}
+
+fn quit_label(language: Language) -> &'static str {
+    match language {
+        Language::Ru => "Выйти",
+        Language::En => "Quit",
     }
 }
 

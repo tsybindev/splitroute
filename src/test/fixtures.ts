@@ -31,6 +31,7 @@ export function makeSettings(overrides: Partial<AppSettings> = {}): AppSettings 
       launch_minimized: false,
       connect_on_start: false,
       close_to_tray: true,
+      language: "ru",
       ...overrides.preferences,
     },
   };

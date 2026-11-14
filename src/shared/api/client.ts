@@ -3,6 +3,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { t } from "../i18n";
 import type {
   AppRule,
   AppSettings,
@@ -27,7 +28,7 @@ export function toCommandError(error: unknown): CommandError {
   }
   return {
     code: "UNKNOWN",
-    message: typeof error === "string" ? error : "Неизвестная ошибка",
+    message: typeof error === "string" ? error : t("errors.UNKNOWN"),
   };
 }
 

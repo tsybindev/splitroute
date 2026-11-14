@@ -2,8 +2,8 @@
 // Пароль и права установщика здесь не участвуют: только результат проверки.
 
 import type { CommandError, HelperStatus } from "../api/types";
-import type { MessageKey } from "../i18n/ru";
-import { t } from "../i18n/ru";
+import type { MessageKey } from "../i18n";
+import { t } from "../i18n";
 import type { Tone } from "../ui/Badge";
 
 export type HelperState =

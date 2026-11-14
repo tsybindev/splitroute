@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { ClipboardCopy, RefreshCw } from "lucide-react";
 import type { LogLevel } from "../../shared/api/types";
-import { t } from "../../shared/i18n/ru";
+import { locale, t } from "../../shared/i18n";
 import { useAppStore } from "../../shared/state/appStore";
 import { Button } from "../../shared/ui/Button";
 import { Card } from "../../shared/ui/Card";
@@ -13,7 +13,7 @@ type Filter = LogLevel | "all";
 const levels: Filter[] = ["all", "trace", "debug", "info", "warn", "error"];
 
 function formatTimestamp(timestamp: number): string {
-  return new Date(timestamp * 1000).toLocaleTimeString("ru-RU");
+  return new Date(timestamp * 1000).toLocaleTimeString(locale());
 }
 
 export function LogsScreen() {

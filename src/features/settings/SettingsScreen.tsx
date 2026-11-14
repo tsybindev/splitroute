@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { Loader2, RefreshCw } from "lucide-react";
 import { api, toCommandError } from "../../shared/api/client";
-import type { AppSettings, CommandError } from "../../shared/api/types";
-import { t } from "../../shared/i18n/ru";
+import type { AppSettings, CommandError, Language } from "../../shared/api/types";
+import { t } from "../../shared/i18n";
 import { helperBadge } from "../../shared/lib/helperState";
 import { useAppStore } from "../../shared/state/appStore";
 import { Badge } from "../../shared/ui/Badge";
@@ -57,6 +57,12 @@ function SettingsForm({ initial }: { initial: AppSettings }) {
   const notice = useAppStore((state) => state.notice);
   const busy = useAppStore((state) => state.busy);
   const saveSettings = useAppStore((state) => state.saveSettings);
+  const language = useAppStore(
+    (state) => state.settings?.preferences.language ?? "ru",
+  );
+  const setLanguagePreference = useAppStore(
+    (state) => state.setLanguagePreference,
+  );
   const regenerateHwid = useAppStore((state) => state.regenerateHwid);
   const refreshHelperStatus = useAppStore((state) => state.refreshHelperStatus);
   const [form, setForm] = useState<AppSettings>(initial);
@@ -281,7 +287,27 @@ function SettingsForm({ initial }: { initial: AppSettings }) {
       </Card>
 
       <Card title={t("settings.app.title")}>
-        <div className="flex flex-col gap-2">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field
+            label={t("settings.app.language")}
+            hint={t("settings.app.languageHint")}
+            htmlFor="app-language"
+          >
+            <select
+              id="app-language"
+              className={inputClass}
+              value={language}
+              disabled={Boolean(busy.language)}
+              onChange={(event) =>
+                void setLanguagePreference(event.target.value as Language)
+              }
+            >
+              <option value="ru">{t("settings.app.language.ru")}</option>
+              <option value="en">{t("settings.app.language.en")}</option>
+            </select>
+          </Field>
+        </div>
+        <div className="mt-3 flex flex-col gap-2">
           <Checkbox
             checked={form.preferences.launch_at_login}
             onChange={(value) =>

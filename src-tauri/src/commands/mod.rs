@@ -425,6 +425,8 @@ pub fn settings_update(
 ) -> Result<AppSettings, CommandError> {
     let saved = settings_update_inner(&state, settings)?;
     apply_autostart(&app, saved.preferences.launch_at_login);
+    // Язык — единое состояние в Rust; меню трея перерисовывается сразу.
+    crate::tray::set_language(&app, saved.preferences.language);
     Ok(saved)
 }
 
