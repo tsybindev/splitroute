@@ -9,17 +9,14 @@
 - **Этап 3: S3-T1, S3-T3, S3-T4, S3-T5, S3-T6, S3-T8 — done.**
   **S3-T2 — blocked** (нет сертификата Apple). **S3-T7 — blocked частично:**
   macOS-часть выполнена; на CachyOS собраны `.deb`/`.rpm`/AppImage и прогнаны
-  тесты (см. ниже), но установка, `systemctl`/`pkexec`, TUN и GUI не проверены;
+  тесты, но установка, `systemctl`/`pkexec`, TUN и GUI не проверены;
   Windows VM нет.
-- **Этап 4: S4-T1, S4-T2, S4-T3, S4-T9, S4-T10 — done.** Следующая — S4-T4
-  (статистика трафика сессии).
-- Дата проверки: **2026-11-14**. Ветка `main`. Последние коммиты: `613a27e`
-  (feat: EN-локализация), `9fd1bdf` (feat: base64/vless), `06701bf` (fix:
-  зависание подписки), `1b1b9fe` (docs G4.2). Отчёт этапа 3:
-  [docs/stage-3-report.md](./docs/stage-3-report.md) §9. Факты:
-  [docs/research.md](./docs/research.md) §13–§18.
-- Системные сервисы, сокеты, пайпы, dev-серверы и процессы после проверок не
-  остались.
+- **Этап 4: S4-T1, S4-T2, S4-T3, S4-T4, S4-T9, S4-T10 — done.** Следующая —
+  **S4-T5 (kill switch, fail-closed)**.
+- Дата проверки: **2026-11-14**. Ветка `main`. Последний коммит кода — `cda798e`
+  (feat: счётчики трафика сессии из Clash API); до него `613a27e` (EN-локализация),
+  `9fd1bdf` (base64/vless), `06701bf` (зависание подписки). Факты:
+  [docs/research.md](./docs/research.md) §18–§19.
 
 ### Что работает
 
@@ -32,140 +29,91 @@
 - **Установщики.** macOS (`/Library/PrivilegedHelperTools`, LaunchDaemon,
   `osascript`), Linux (`/usr/lib/splitroute`, systemd-юнит `0711`/`UMask=0077`,
   `pkexec`), Windows (`C:\Program Files\SplitRoute`, служба под SYSTEM,
-  named pipe ACL, `icacls`, UAC). macOS/Linux после установки ждут сокет.
-- **UI установки.** Коды `INSTALLER_PRIVILEGES`, `INSTALLER_UNSUPPORTED`,
-  `INSTALLER_MISSING_BINARY`, `INSTALLER_FAILED`; `ErrorBox` показывает
-  локализованный заголовок и точный текст установщика. Состояния helper'а:
-  установлен / не установлен / устарел (`HELPER_PROTOCOL`) / не отвечает
-  (`HELPER_TIMEOUT`/`HELPER_UNAVAILABLE`) — `src/shared/lib/helperState.ts`.
-- **Подписка (S4-T9, S4-T10).** `subscription_fetch` — `#[tauri::command(async)]`:
-  блокирующий HTTP ушёл в thread pool, окно не замерзает. Таймаут 45 с,
-  `connect_timeout` 10 с. Формат тела определяется автоматически: Happ-JSON,
-  base64 или открытый текст `vless://` (Reality/TLS, `pbk`/`sid`/`sni`/`fp`/
-  `alpn`, `flow`, TCP, IPv6; остальное пропускается с причиной). User-Agent
-  по умолчанию — собственный `SplitRoute/0.1.0` (провайдер отдаёт base64
-  быстрее и стабильнее); `Happ/4.1.0` остаётся опцией. Сохранённый UA не
-  перезаписывается, миграции нет. Неизвестное тело → `INVALID_FORMAT`.
-  base64/vless больше не backlog (PRD §2 обновлён).
-- **Каталог приложений (S4-T1).** `crates/protocol::InstalledApp {name, path,
-  platform}`; команда `apps_installed` (`src-tauri/src/catalog/`):
-  - macOS — `.app` в `/Applications`, `/System/Applications`, `~/Applications`,
-    один уровень без рекурсии; имя — stem бандла;
-  - Linux — `.desktop` в `/usr/share/applications` и
-    `~/.local/share/applications`; имя из `Name`, путь из первого токена `Exec`
-    (снимается `env VAR=…`, отбрасываются field-коды); относительные и
-    отсутствующие бинари пропускаются;
-  - Windows — ярлыки меню «Пуск» (ProgramData + APPDATA, рекурсивно) и
-    `Uninstall` в HKLM/HKCU/WOW6432Node по `DisplayIcon`; свой разбор Shell Link.
-  - Битые записи пропускаются с причиной в лог `Debug`, результат
-    дедуплицируется по `path` и сортируется по имени.
-  - `app_rule_from_installed` создаёт **выключенное** правило: macOS —
-    `path_regex ^<escaped .app>/`, Windows/Linux — `process_path`.
-  - UI: вкладки «Запущенные / Установленные / Все правила» (PRD §7), поиск по
-    имени, пустые состояния, типизированная ошибка с повтором.
-- **Иконки каталога (S4-T2).** `InstalledApp` не менялся; отдельная команда
-  `app_icon(app)` (`#[tauri::command(async)]`) отдаёт готовый `data:` URL или
-  `null`:
-  - macOS — PNG-чанк из `.icns` в `Contents/Resources` (минимальная ширина
-    ≥ 64; `Info.plist` не парсится);
-  - Linux — `Icon=` из `.desktop`, поиск в `hicolor` по размерам 64/48/128/
-    256/32/512, затем `scalable` (SVG), затем `/usr/share/pixmaps`;
-  - Windows — `PrivateExtractIconsW` 64×64 (fallback `ExtractIconExW`),
-    `GetDIBits` BGRA, прозрачность из AND-маски.
-  - Нормализация до 64 px (`image`, png-only), лимит 256 КиБ, свой base64;
-    кэш в памяти по пути, негативный результат тоже; карта `exec → Icon` на
-    Linux строится один раз.
-  - UI: `AppIcon` 32×32, ленивая загрузка по `IntersectionObserver`
-    (`rootMargin: 200px`), модульный кэш по `app.path` (включая «иконки нет»),
-    заглушка с первой буквой; ошибка иконки не показывает `ErrorBox`.
-- **Локализация (S4-T3).** Язык — часть Rust-состояния:
-  `AppSettings.preferences.language` (`ru`/`en`, `#[serde(default)]` → `ru`,
-  неизвестное значение → `ru`). UI: `src/shared/i18n/{ru,en,index}.ts`,
-  `t()`/`errorText()` по текущему языку, `useLanguage()` через
-  `useSyncExternalStore`; переключатель в «Настройках» применяется сразу и
-  сохраняется через `settings_update`. Даты — `ru-RU`/`en-US`. Меню трея
-  переведено на стороне Rust (`tray.rs`) по выбранному языку. Логи ядра и
-  точный `message` установщика остаются русскими — это деталь под
-  локализованным заголовком по коду ошибки.
-- **Лицензии.** `THIRD_PARTY_NOTICES` в корне; `LICENSE` и notices в бандле
-  (macOS — `Contents/Resources`, `.deb`/`.rpm`/AppImage —
-  `/usr/share/doc/splitroute/`, NSIS — `licenseFile`). Новых пакетов S4-T2 не
-  добавил: `image` уже был транзитивно через `tauri/image-png`.
+  named pipe ACL, `icacls`, UAC). Коды `INSTALLER_*` показываются с точной
+  причиной.
+- **Подписка.** `subscription_fetch` — `#[tauri::command(async)]`; формат тела
+  определяется автоматически: Happ-JSON, base64 или открытый текст `vless://`
+  (Reality/TLS, `pbk`/`sid`/`sni`/`fp`/`alpn`, `flow`, TCP, IPv6). UA по
+  умолчанию — `SplitRoute/0.1.0`; сохранённый UA не перезаписывается. Таймаут
+  45 с, `connect_timeout` 10 с.
+- **Каталог и иконки (S4-T1, S4-T2).** `apps_installed` и отдельная
+  `app_icon(app)` (`#[tauri::command(async)]`); macOS 110 приложений / 100
+  иконок, Linux — `.desktop` + `hicolor`/`pixmaps`, Windows — ярлыки и реестр;
+  нормализация до 64 px, кэш в памяти, заглушка без `ErrorBox`.
+- **Локализация (S4-T3).** Язык `ru`/`en` — в Rust
+  (`AppSettings.preferences.language`), все видимые строки в
+  `src/shared/i18n/{ru,en}.ts`, переключение без перезапуска, меню трея
+  локализовано на стороне Rust.
+- **Статистика трафика (S4-T4).** Новый модуль `src-tauri/src/traffic/`:
+  - `build_config` получает `Option<&ClashApi>` и добавляет
+    `experimental.clash_api` с `external_controller = 127.0.0.1:<port>` и
+    случайным 32-hex `secret`;
+  - `TrafficEndpoint::allocate()` берёт свободный loopback-порт
+    (`TcpListener::bind(("127.0.0.1", 0))`) и CSPRNG-secret на сессию;
+  - `GET /connections` с `Authorization: Bearer`, читаются только
+    `uploadTotal`/`downloadTotal`; таймаут 2 с, один HTTP-клиент на процесс,
+    лимит тела 1 МиБ;
+  - `AppState` хранит endpoint в памяти: новый `connect` — новая сессия,
+    `disconnect` — источник сбрасывается, UI показывает нули/«—»;
+  - ошибка метрик не ломает подключение: одно предупреждение в лог
+    (`Статистика трафика недоступна: …`), `available=false`;
+  - команда `traffic_stats` (`#[tauri::command(async)]`, синхронное тело на
+    async-рантайме — как `app_icon`/`subscription_fetch`);
+  - UI на «Главной»: строка «Трафик за сессию», компонент `SessionTraffic`
+    монтируется только при подключении и опрашивает раз в секунду; при ошибке
+    «—» без `ErrorBox`; единицы Б/КиБ/МиБ/ГиБ из словарей.
+- **Лицензии.** `THIRD_PARTY_NOTICES` в корне; `LICENSE` и notices в бандле.
+  Новых зависимостей S4-T4 не добавил.
 - **Dev-режим.** `SPLITROUTE_MOCK_HELPER=1` сохранён на всех ОС.
 
 ### Проверено (2026-11-14)
 
 - `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -D warnings`
-  — чисто. `cargo test --workspace` — **260 тестов** ok (1 `#[ignore]` —
+  — чисто. `cargo test --workspace` — **274 теста** ok (1 `#[ignore]` —
   реальный скан иконок).
-- `pnpm typecheck`, `pnpm lint` — чисто; `pnpm test` — **59 тестов** ok;
+- `pnpm typecheck`, `pnpm lint` — чисто; `pnpm test` — **66 тестов** ok;
   `pnpm build` ok.
-- Подписка (S4-T9/S4-T10) на реальном провайдере: с `SplitRoute/0.1.0` —
-  `200`, `text/plain`, base64 (844 байта, время 1.13–16.83 с в разных
-  запросах); реальное тело разобрано парсером → **2 профиля, 0 пропусков**,
-  оба Reality/TCP. С `Happ/4.1.0` — JSON 6044 байта за 17.15 с. Сервер
-  нестабилен: тот же запрос иногда висит >20–30 с; клиент больше не
-  блокирует окно и ждёт до 45 с.
-- Linux (CachyOS, реальная машина): `cargo test --workspace` — 168 lib +
-  интеграционные, 0 failed, 1 ignored; реальный скан каталога — **19
-  приложений, 18 иконок** (холодные 0.69 с, кэш 19 µs). `./scripts/package.sh`
-  — `.deb`/`.rpm` **33.47 МиБ**, AppImage **136.99 МиБ**; внутри AppImage
-  `splitroute`, `sing-box`, `splitroute-helper`, `LICENSE`,
-  `THIRD_PARTY_NOTICES`, `.desktop`; `strings` подтверждает `INVALID_FORMAT`
-  и `SplitRoute/0.1.0`.
-- Реальный скан macOS: **110 приложений**, **100 иконок**. `cargo test -p
-  splitroute --lib catalog::icons::tests::real_catalog_icons_are_found --
-  --ignored`: скан 0.4 мс, холодная загрузка всех иконок 1.35 с (debug), из
-  кэша 0.12 мс; суммарно 659 КиБ, максимум 12 КиБ на иконку.
-- Реальное окно `pnpm tauri dev` (`SPLITROUTE_MOCK_HELPER=1`): вкладка
-  «Установленные» показывает иконки Adguard, Antigravity, AnyDesk, App Store
-  32×32 и заглушки без ошибок.
-- **EN-локализация в реальном окне (S4-T3).** System Events в этой сессии
-  работал (без `-1728`), поэтому язык переключался настоящими кликами:
-  RU→EN→RU без перезапуска; все пять экранов пройдены по скриншотам (Home,
-  Locations, Applications, Settings, Logs) — русского UI-текста нет. После
-  перезапуска приложение открылось на английском (`state.json` →
-  `"language": "en"`), затем язык возвращён на `ru`. Русскими остаются только
-  имена локаций/приложений (внешние данные) и строка лога ядра.
-- Windows-код иконок (`windows_icons.rs`) типизирован изолированно:
-  `cargo check --all-targets --target x86_64-pc-windows-msvc` с
-  `windows-sys 0.61` — ок. Полный `cargo check -p splitroute` под MSVC
-  по-прежнему падает на `ring` (`assert.h not found`).
-- Windows-ветка реестра (`collect`/`uninstall_roots`/`read_uninstall_key`)
-  типизирована отдельной проверкой (S4-T1).
+- **Clash API на реальном sing-box 1.14.4** (минимальный конфиг без TUN):
+  `sing-box check` → 0; `GET /connections` без secret → `401`; с
+  `Authorization: Bearer` → `{"connections":[],"downloadTotal":0,…,"uploadTotal":0}`;
+  после 200 000 байт через mixed-inbound — `downloadTotal=200204`,
+  `uploadTotal=89`, суммы сохраняются после закрытия соединения.
+  Подробности — `docs/research.md` §19.
+- **Окно `pnpm tauri dev` (MockHelper):** «Главная» показывает «Трафик за
+  сессию: —»; после клика «Подключить» — «Подключено», время сессии идёт,
+  трафик остаётся «—», `ErrorBox` нет. System Events в сессии работает
+  (клик по accessibility-кнопке).
+- **Frontend-тесты:** `formatBytes` (RU/EN, 0/байты/КиБ/МиБ/ГиБ, отрицательные,
+  NaN), строка трафика (значения, «—», обновление раз в секунду), совпадение
+  ключей `ru`/`en` и отсутствие кириллицы в `en`.
+- **Rust-тесты:** парсинг `/connections` (лишние поля игнорируются, отсутствующие
+  суммы = 0, битый JSON — ошибка), чтение с Bearer-заголовком, `401`,
+  закрытый порт, обрыв тела, случайность порта/secret; `connect` включает
+  `experimental.clash_api`, `stop` сбрасывает endpoint; ошибка даёт
+  `available=false` и ровно одно предупреждение; golden-конфиги обновлены и
+  проходят `sing-box check`.
 
 ### Не проверено (причина)
 
-- **Загрузка подписки из UI после S4-T10** — в этой подцели не повторялась:
-  UI-автоматизация была доступна, но нажимались только вкладки и переключатель
-  языка. Проверены curl с обоими UA, парсер и e2e-тест через локальный
-  HTTP-сервер. Миграции UA нет, перезапуск ничего не меняет.
-- **Меню трея в EN** — подписи переведены кодом и покрыты компиляцией, но само
-  меню трея в рантайме не открывалось (проверка визуально не выполнена).
-- **Linux-рантайм** — пакеты и AppImage собраны, `cargo test` и реальный
-  скан иконок прошли, но установка (`dpkg`/`systemctl`/`pkexec`), запуск GUI,
-  TUN/per-app и DNS не проверены: по SSH нет GUI, `sudo -n` требует пароль.
-- **Иконки Linux** — проверены на реальном скане: 19 приложений, 18 иконок,
-  холодные 0.69 с, кэш 19 µs. Не проверены визуально в окне и SVG/XPM в
-  живых темах (SVG отдаётся как `data:image/svg+xml`, XPM не поддержан).
-- **Иконки Windows в рантайме** — нет Windows VM: проверены компиляция
-  Win32-вызовов и чистые функции BGRA/маски. Поведение `GetDIBits` на реальных
-  `.exe` (и допущение «белый пиксель маски = прозрачный») не подтверждено.
-- **10 из 110 приложений macOS без иконки** — предел источника: у 7
-  wrapper-бандлов нет своего `.icns`, у Calendar/Photo Booth/System Settings
-  иконка только в `Assets.car`. В UI — заглушка, не ошибка.
+- **Реальные ↑/↓ в окне через helper/TUN** — в сессии нет root и реальной
+  подписки. API и формат проверены на реальном ядре, код чтения — тестами.
+  Нужно: dev-helper под `sudo`, реальное подключение, трафик выбранного
+  приложения; ожидается рост сумм и сброс после переподключения.
+- **Статистика после перезапуска окна** — серия живёт в памяти приложения:
+  helper может остаться запущенным, но порт/secret потеряны → «—» до
+  переподключения. Это задокументировано, не баг.
+- **Linux/Windows для S4-T4** — нет машин; Clash API и HTTP-код
+  платформонезависимы, но в рантайме не проверялись.
+- **Меню трея в EN** — подписи переведены кодом, визуально не проверялось.
 - **Установка/запуск LaunchDaemon** — blocked: `security find-identity -v -p
-  codesigning` → 0; нужен Apple Development/Developer ID. Чек-лист — отчёт §6.
+  codesigning` → 0; нужен Apple Development/Developer ID.
 - **TUN, per-app, DNS, сон/пробуждение, смена сети на упакованных бинарях** —
   blocked: `sudo` требует пароль, реальной подписки в сессии нет.
-- **Linux/CachyOS (S3-T3, S2-T9):** `systemctl`, `pkexec`, права
-  `/run/splitroute`, `.deb`/`.rpm`/AppImage — нет машины. Каталог `.desktop`
-  и иконки на реальном Linux тоже не проверены.
-- **Windows (S3-T4):** служба под SYSTEM, `sc.exe`, UAC, pipe ACL, TUN,
-  `wintun.dll`, NSIS — нет VM. Реальные ярлыки, реестр `Uninstall` и иконки
-  `.exe` не проверены, только фикстуры и компиляция.
-- **Пометка несуществующих путей у сохранённых правил** (PRD §6.3) — не
-  реализована; вне объёма S4-T1/S4-T2.
+- **Linux-рантайм** (S3-T3, S3-T7): пакеты и AppImage собраны, тесты зелёные;
+  установка, `systemctl`/`pkexec`, GUI, TUN/per-app/DNS не проверены (нет
+  пароля sudo и GUI по SSH).
+- **Windows-рантайм** (S3-T4): служба, `sc.exe`, UAC, pipe ACL, TUN,
+  `wintun.dll`, NSIS — нет VM.
 
 ### Важные факты окружения
 
@@ -173,66 +121,36 @@
 - macOS 15.8.2 arm64, Rust 1.99.1, Tauri 2.12.5 / CLI 2.12.4, sing-box 1.14.4.
 - Установлены цели `x86_64-pc-windows-msvc` и `x86_64-unknown-linux-gnu`.
 - **Кросс-`cargo check -p splitroute` невозможен:** Windows — `ring`
-  (`assert.h not found`), Linux — `gio-sys`/`glib-sys`. Для Windows-веток
-  каталога/иконок проверяйте функции изолированным крейтом с `windows-sys 0.61`
-  и `--target x86_64-pc-windows-msvc`.
-- `sudo -n true` **не проходит**; системные службы не ставить без явного
-  действия пользователя.
-- **Debug-сборка** ищет сокет в `$TMPDIR/splitroute-helper.sock`. Для
-  установленного helper'а: macOS — `/var/run/splitroute/helper.sock`
-  (`SPLITROUTE_HELPER_SOCKET`), Linux — `/run/splitroute/helper.sock`,
-  Windows — `\\.\pipe\splitroute-helper` (`SPLITROUTE_HELPER_PIPE`).
-- **`externalBin` только в платформенных конфигах**; инвариант закреплён
-  `src-tauri/tests/packaging_config.rs`. Перед `tauri build` нужны
-  `./scripts/fetch-core.sh` (и `fetch-wintun.sh` на Windows).
-- **Helper: одно сообщение на соединение.** Smoke-клиент должен подключаться
-  заново на каждую команду.
-- **Bundle id `com.splitroute.app` заканчивается на `.app`:** Tauri
-  предупреждает о конфликте с расширением бандла. До публичной сборки
-  зафиксировать финальный идентификатор (PRD §13.3); смена затронет каталог
-  состояния и имена служб.
-- Установщик ищет helper и sing-box: `SPLITROUTE_HELPER_BIN` /
-  `SPLITROUTE_SING_BOX_BIN`, рядом с приложением, либо в
-  `src-tauri/binaries/sing-box-<triple>` (dev).
-- Секреты (URL подписки, HWID, UUID) не логировать и не коммитить.
+  (`assert.h not found`), Linux — `gio-sys`/`glib-sys`. Платформенные ветки
+  проверяйте изолированными крейтами/функциями.
+- `sudo -n true` **не проходит**; привилегированные действия — только с явным
+  подтверждением пользователя.
+- **Debug-сборка** ищет сокет в `$TMPDIR/splitroute-helper.sock`. Установленный
+  helper: macOS — `/var/run/splitroute/helper.sock`, Linux —
+  `/run/splitroute/helper.sock`, Windows — `\\.\pipe\splitroute-helper`;
+  переопределение — `SPLITROUTE_HELPER_SOCKET`/`SPLITROUTE_HELPER_PIPE`.
+- **Helper: одно сообщение на соединение.** Smoke-клиент подключается заново.
+- **Bundle id** `com.splitroute.app` заканчивается на `.app` — Tauri
+  предупреждает; финальный идентификатор решить до публичной сборки (PRD §13.3).
+- **Провайдер подписки:** формат зависит от UA; `SplitRoute/0.1.0` → base64
+  `vless://` (~1 с), `Happ/4.1.0` → JSON (может идти ~17 с). Сервер нестабилен,
+  таймаут 45 с не уменьшать.
+- **Linux-машина CachyOS доступна** (доступ выдан 2026-11-14; хост/каталог — в
+  чате, в репозиторий не коммитить). Нет git-репозитория: исходники
+  синхронизируются `rsync`. `sudo -n` требует пароль; GUI по SSH нет.
 - **Состояние:** `<config>/splitroute/state.json` (macOS —
-  `~/Library/Application Support/splitroute/state.json`, Linux —
-  `~/.config/splitroute/state.json`). UA по умолчанию — `SplitRoute/0.1.0`;
-  сохранённое значение не мигрирует и не перезаписывается (S4-T10).
-- **Провайдер подписки:** формат зависит от UA — `SplitRoute/0.1.0` отдаёт
-  base64-список `vless://` (обычно ~1 с), `Happ/4.1.0` — JSON (может идти
-  ~17 с). Сервер нестабилен: тот же запрос иногда висит >20–30 с без ответа.
-  Таймаут 45 с, `connect_timeout` 10 с; не уменьшать. Поддерживаются оба
-  формата, JSON-путь не единственный.
-- **Linux-машина CachyOS доступна** (пользователь выдал SSH-доступ
-  2026-11-14; хост/каталог — в чате, в репозиторий не коммитить). Там нет
-  git-репозитория: исходники синхронизируются `rsync`; `pnpm`, Rust и
-  webkit2gtk-4.1 установлены; **`sudo -n` требует пароль**, поэтому установка
-  пакетов и `systemctl`/`pkexec` не выполнялись. Сборка AppImage — только на
-  этой машине (`scripts/package.sh`), с macOS не кросс-собирается.
-  Артефакты: `target/release/bundle/{deb,rpm,appimage}`; AppImage 137 МиБ
-  (внутри `sing-box` 78 МиБ), `.deb`/`.rpm` 33.5 МиБ.
-- **`THIRD_PARTY_NOTICES` обновляется вручную** (раздел 11 файла):
-  `cargo metadata --all-features`, `pnpm licenses list --prod`.
-- **Каталог приложений:** пути читаются из системных списков; привилегий нет.
-  Не добавляйте рекурсию в macOS-скан молча — контейнеры (`Utilities`) дадут
-  неверные имена.
-- **Иконки:** кэш в Rust и в UI живёт до перезапуска процесса; «Обновить
-  список» его не сбрасывает (осознанно — иконка приложения меняется только с
-  обновлением самой программы). `.icns` без PNG-чанков, wrapper-бандлы и
-  `Assets.car` дают `null` → заглушка, это ожидаемо.
-- **UI-тексты** — `ru`/`en` в `src/shared/i18n/{ru,en}.ts`; `MessageKey` —
-  ключи `ru`, полноту `en` проверяет тест. Переключение — только через
-  `settings_update`; язык хранится в `preferences.language`. `errorText` берёт
-  локализованный заголовок по коду, `message` от Rust (логи, установщик)
-  остаётся русским и показывается как деталь.
-- **UI-автоматизация:** в сессии 2026-11-14 System Events отвечал нормально:
-  `click at {x,y}` и `key code` работали, DOM-кнопки видны как accessibility
-  `button` (например `button Home`). Координаты считаются из логических границ
-  окна (`get {position, size} of window 1`, масштаб Retina 1.5238/0.75).
-- После проверок: `pgrep -fl 'splitroute-helper|sing-box run'`,
-  `pgrep -fl 'target/debug/splitroute'`, `ls -d /tmp/sr-*`,
-  `launchctl print system/com.splitroute.helper`, `lsof -nP -iTCP:1420`.
+  `~/Library/Application Support/splitroute/state.json`). Секреты не логировать.
+- **Clash API (S4-T4):** только `127.0.0.1`, случайный порт и secret на сессию;
+  endpoint в `state.json` не сохраняется; в логи/диагностику не попадает.
+  `/connections` отдаёт кумулятивные суммы; `/traffic` — поток дельт, не
+  используется.
+- **UI-автоматизация:** System Events отвечает; клик по accessibility-кнопке
+  (`click at {x,y}`) и `key code` работают, координаты считаются из логических
+  границ окна (`get {position, size} of window 1`).
+- **Скриншоты** с реальным URL/HWID/адресом сервера в репозиторий не коммитить.
+- После проверок: `pgrep -x sing-box`, `pgrep -fl 'target/debug/splitroute'`,
+  `lsof -nP -iTCP:1420 -sTCP:LISTEN`, `ls -d /tmp/sr-*`,
+  `launchctl print system/com.splitroute.helper`.
 
 ### Проверка перед стартом
 
@@ -243,7 +161,7 @@ git status --short && git log --oneline -3
 pnpm install
 cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
 pnpm typecheck && pnpm lint && pnpm test
-pgrep -fl 'splitroute-helper|sing-box run' || echo "процессов нет"
+pgrep -x sing-box || echo "ядра нет"
 ```
 
 ---
@@ -253,95 +171,44 @@ pgrep -fl 'splitroute-helper|sing-box run' || echo "процессов нет"
 Выполнять только при появлении сертификата/целевых ОС и с явным подтверждением
 пользователя. Привилегированные действия автоматически не запускать.
 
+### macOS: реальные счётчики трафика (S4-T4)
+
+1. `pnpm tauri dev` с реальным helper'ом (не MockHelper), dev-helper под
+   `sudo` — см. AGENTS §4.5.
+2. Выбрать локацию, подключиться, пустить трафик через выбранное приложение
+   (например, `curl` с правилом по процессу или браузер с правилом `.app`).
+3. Ожидается: ↑/↓ растут раз в секунду; после «Отключить» — «—»; после
+   повторного «Подключить» — снова с нуля. В логах при живом ядре
+   предупреждений «Статистика трафика недоступна» нет.
+
 ### macOS: LaunchDaemon (S3-T2)
 
 Нужен сертификат Apple Development/Developer ID; ad-hoc не подходит (AMFI:
-`has no CMS blob`). Подписать helper, затем пройти чек-лист
-`docs/stage-3-report.md` §6: `codesign -dv` (не `adhoc`), установка через UI,
-`launchctl print system/com.splitroute.helper`, права `/var/run/splitroute`
-(`drwx--x--x root wheel`) и сокета (`srw------- <пользователь>:wheel`),
-подключение/отключение, удаление, отсутствие процессов.
+`has no CMS blob`). Чек-лист — `docs/stage-3-report.md` §6.
 
-### Linux (S3-T3, S2-T9, S4-T2)
-
-Сборка пакетов (CachyOS/Arch: нужны `patchelf`, `fuse2`, `webkit2gtk-4.1`,
-`libappindicator-gtk3`, `librsvg`; Node 22 + pnpm + rustup — AGENTS §5):
+### Linux (S3-T3, S3-T7, S2-T9)
 
 ```bash
 cd app
 export PATH="$HOME/.cargo/bin:$PATH"
 pnpm install
-./scripts/fetch-core.sh          # sing-box под linux-x64
+./scripts/fetch-core.sh
 ./scripts/package.sh             # deb, rpm, appimage
-# артефакты: target/release/bundle/{deb,rpm,appimage}/
 ```
 
-На macOS AppImage не собирается: `scripts/package.sh` выбирает цели по ОС,
-кросс-сборка Tauri-бандлов не поддерживается. Запуск AppImage без FUSE:
+Проверить установку/`systemctl`/`pkexec`/TUN/per-app/DNS по матрице
+`docs/stage-3-report.md` §9. AppImage без FUSE:
 `./SplitRoute_*.AppImage --appimage-extract-and-run`.
-
-**Сделано 2026-11-14 на CachyOS:** сборка прошла (`.deb`/`.rpm` 33.47 МиБ,
-AppImage 136.99 МиБ), `cargo test --workspace` зелёный (168 lib +
-интеграционные), реальный скан иконок — 19 приложений / 18 иконок. Внутри
-AppImage: `usr/bin/{splitroute,sing-box,splitroute-helper}`,
-`usr/lib/SplitRoute/{LICENSE,THIRD_PARTY_NOTICES}`,
-`usr/share/applications/SplitRoute.desktop`. **Не сделано:** установка,
-`systemctl`/`pkexec`, запуск GUI, TUN/per-app — `sudo -n` требует пароль,
-по SSH нет дисплея.
-
-Оставшиеся проверки (нужен пароль администратора и/или GUI на машине):
-
-```bash
-# вариант без установки: AppImage (FUSE2 установлен)
-./target/release/bundle/appimage/SplitRoute_*.AppImage
-# или с распаковкой, если FUSE недоступен
-./target/release/bundle/appimage/SplitRoute_*.AppImage --appimage-extract-and-run
-
-# после установки helper'а из UI (pkexec):
-systemctl status splitroute-helper.service
-ls -ld /run/splitroute
-stat -c '%a %U:%G %n' /run/splitroute/helper.sock
-pgrep -a -f 'splitroute-helper|sing-box run'
-```
-
-Ожидается: `LICENSE`/`THIRD_PARTY_NOTICES` в `/usr/lib/SplitRoute` (AppImage)
-или `/usr/share/doc/splitroute` (deb/rpm); сервис `active (running)`; каталог
-`711 root:root`; сокет `600` пользователя; `--allow-uid` = uid установившего.
-Для S4-T1/S4-T2: вкладка «Установленные» показывает приложения из
-`/usr/share/applications` и `~/.local/share/applications`, иконки из
-`hicolor` (PNG и SVG) отрисованы, поиск фильтрует, битые `.desktop` попадают
-в логи (`Debug`) и не ломают список; приложение без `Icon=` показывает
-заглушку. Отдельно проверить Flatpak/Snap-приложения: путь из `Exec` может
-быть sandbox-путём.
-
-> На CachyOS/Arch `.deb` и `.rpm` не ставятся напрямую — используйте AppImage
-> или соберите пакет для Arch отдельно. `.deb`/`.rpm` проверяются на
-> Ubuntu/Fedora.
 
 ### Windows (S3-T4, S4-T2)
 
-На Windows 10/11 x64 с VS Build Tools, Rust MSVC, Node 22 + pnpm, WebView2 и
-Git Bash:
-
-```bash
-cd app
-rustup target add x86_64-pc-windows-msvc
-./scripts/fetch-core.sh && ./scripts/fetch-wintun.sh
-./scripts/portable.sh          # распаковать и запустить start.bat (UAC)
-./scripts/package.sh           # NSIS-установщик
-```
-
-Проверить: `sc.exe query splitroute-helper-service` → `RUNNING` под SYSTEM;
-`wintun.dll` рядом с `sing-box.exe`; pipe доступен только SID пользователя;
-NSIS показывает страницу лицензии; `LICENSE` и `THIRD_PARTY_NOTICES` в
-каталоге приложения; TUN поднимается, выбранное приложение идёт через прокси.
-Для S4-T1/S4-T2: каталог находит ярлыки «Пуск» и записи `Uninstall`, правило
-создаётся с `process_path` к `.exe`; иконки `.exe` отрисованы с прозрачным
-фоном (проверить старые `.exe` с 24bpp-ресурсом — там альфа берётся из маски).
+`./scripts/fetch-core.sh && ./scripts/fetch-wintun.sh`, затем
+`./scripts/portable.sh` или `./scripts/package.sh`; проверить службу под SYSTEM,
+UAC, pipe ACL, `wintun.dll`, TUN/per-app, NSIS и лицензию.
 
 ---
 
-## Промпт следующей подцели: G4.4 (S4-T4, статистика трафика сессии)
+## Промпт следующей подцели: G4.5 (S4-T5, kill switch)
 
 Скопируйте текст ниже целиком в новую сессию. Запускайте из каталога `app/`.
 
@@ -350,98 +217,111 @@ NSIS показывает страницу лицензии; `LICENSE` и `THIRD
 Рабочий каталог: /Users/tsybin_d/Documents/Dev/Backend/vpn_client/app
 Перед командами: export PATH="$HOME/.cargo/bin:$PATH"
 
-ЦЕЛЬ: подцель G4.4 этапа 4 — S4-T4 «Статистика трафика сессии».
+ЦЕЛЬ: подцель G4.5 этапа 4 — S4-T5 «Kill switch (fail-closed)».
 После подцели остановись: коммит кода/тестов, отдельный коммит документации,
 обновление NEXT_SESSION.md. Следующие задачи этапа 4 не начинай.
 
 ПРОЧИТАЙ СНАЧАЛА
-- AGENTS.md §3, §10 (единый источник состояния в Rust), §12–§14, §17–§18.
-- PRD.md §6.2 (подключение), §6.7 (логи), §7 (экран «Главная»),
-  §8 (приватность).
-- TASKS.md: S4-T4 и этап 4.
-- NEXT_SESSION.md (этот файл), docs/research.md §18.
-- src-tauri/src/{lib.rs,commands/mod.rs,store/mod.rs,config/mod.rs},
-  crates/helper/src/{core.rs,handler.rs}, src-tauri/tests/config_golden.rs,
-  src/app/, src/features/connect/ConnectScreen.tsx,
-  src/shared/{api,state}/, src/shared/i18n/{ru,en}.ts.
+- AGENTS.md §3, §6–§7 (среда и подпись), §10 (архитектурные правила), §12–§14,
+  §17–§18.
+- PRD.md §6.2 (сейчас описано fail-open и «Kill switch (fail-closed) — v0.2»),
+  §6.5 (трей), §6.6 (настройки), §6.8 (права helper), §8, §10 (риски).
+- TASKS.md: S4-T5 и этап 4; docs/research.md §19 (статистика трафика, текущий
+  формат config/connect) и §13 (helper/установщики).
+- NEXT_SESSION.md (этот файл), src-tauri/src/{lib.rs,commands/mod.rs,store/mod.rs,
+  config/mod.rs,privileged/*}, crates/protocol/src/lib.rs,
+  crates/helper/src/{core.rs,handler.rs}, src/features/{connect,settings}/,
+  src/shared/{api,state,i18n}/, src-tauri/tests/.
 
 ТЕКУЩЕЕ СОСТОЯНИЕ
-- S4-T3 закрыт (`613a27e`): язык `ru`/`en` хранится в Rust-настройках, все
-  видимые строки — в словарях; новые строки добавляй сразу в оба словаря.
+- S4-T1…S4-T4, S4-T9, S4-T10 закрыты. Коммит S4-T4 — `cda798e`.
 - Подключение: UI → Tauri command `connect` → `build_config` → helper `start`;
-  ядро sing-box запускает helper как sidecar. Helper принимает только
-  `status/start/stop`, его протокол менять нельзя.
-- На главной уже есть время сессии из `started_at` helper'а. Счётчиков трафика
-  нет.
-- Проверено 2026-11-14: 260 Rust + 59 frontend тестов, clippy/typecheck/lint/
-  build зелёные. Иконки, подписка и локализация готовы, их не ломай.
+  helper запускает sing-box как sidecar и принимает только `status/start/stop`.
+  Протокол helper'а версии 1, одно сообщение на соединение; `install`/`uninstall`
+  по IPC запрещены.
+- `build_config` добавляет `experimental.clash_api` (loopback + secret) для
+  статистики; `AppState` хранит endpoint в памяти.
+- Конфиг — данные: `serde_json::Value`, `sing-box check` до запуска, TUN
+  `auto_route`/`strict_route`, DNS-режимы `proxy`/`system`.
+- Проверено 2026-11-14: 274 Rust + 66 frontend тестов, clippy/typecheck/lint/
+  build зелёные. Иконки, подписка, локализация и статистика готовы — не ломай.
+- `sudo -n true` не проходит: привилегированные проверки возможны только с
+  явным участием пользователя. Нет Windows VM; CachyOS доступна по SSH без GUI.
 
 КОНТРАКТ, КОТОРЫЙ НЕЛЬЗЯ ЛОМАТЬ
-- `crates/protocol` — единственный источник общих типов; формат IPC helper'а
-  (status/start/stop) не меняется. Новые поля моделей — только с правкой PRD и
-  типа в том же изменении.
+- `crates/protocol` — единственный источник общих типов. **Если kill switch
+  требует новой команды helper'а, это осознанное изменение протокола:** подними
+  `PROTOCOL_VERSION`, обнови обе стороны, добавь тесты сериализации/диспетчера и
+  проверку несовместимости. Без обоснования и правки PRD протокол не меняется.
+- Минимальная привилегированная поверхность helper'а: никаких `exec`, shell,
+  произвольных путей и правил от клиента. Только фиксированные команды и
+  проверенные аргументы.
 - UI не получает root, не вызывает shell и не обращается к ядру в обход
-  Tauri-команд.
-- Конфиг — данные, не код: генератор возвращает `serde_json::Value`, никаких
-  исполняемых строк. Любой локальный API ядра слушает только `127.0.0.1`.
-- Никакой телеметрии: внешних запросов, кроме подписки, проверки задержки и
-  самого прокси, быть не должно. Счётчики не покидают устройство.
-- Секреты не логировать и не коммитить. Новых тяжёлых зависимостей не
-  добавлять. Комментарии — на русском, идентификаторы — английские.
+  Tauri-команд. Конфиг — данные, не код; локальные API — только `127.0.0.1`.
+- Никакой телеметрии. Секреты, URL, HWID и UUID не логировать и не коммитить.
+- Новых тяжёлых зависимостей не добавлять без обоснования. Комментарии — на
+  русском, идентификаторы — английские.
 
 ЗАДАЧИ
 1. Решение и PRD (до кода).
-   - Определи безопасный способ получить счётчики ↑/↓ из sing-box (например,
-     локальный Clash API на `127.0.0.1` в `experimental.clash_api`: `/traffic`
-     или `/connections`). Проверь pinned sing-box 1.14.4 и зафиксируй выбор в
-     PRD §6.2/§7: что считается, где слушает API и как он защищён (только
-     loopback, без внешнего доступа), что показывается при ошибке.
-   - Если способ требует полей конфига — обнови `build_config` и
-     golden-файлы; конфиг обязан проходить `sing-box check`.
-2. Rust.
-   - Счётчики за сессию: суммарные ↑/↓, сброс при новом `start`, нули после
-     `stop`. Источник — ядро; helper не должен становиться прокси для метрик,
-     если локальный API можно читать из непривилегированного процесса.
-   - Не блокируй главный поток: опрос — фоновая задача или
-     `#[tauri::command(async)]`. Ошибка метрик не ломает подключение: пишется
-     `Warn` в лог, UI показывает «—»/нули.
-   - Отдай данные в UI типизированно (например `traffic_stats`), в байтах, с
-     пометкой «за сессию»; без секретов и адресов сервера.
-3. UI.
-   - На «Главной» рядом со временем сессии покажи ↑/↓ за сессию в читаемом
-     виде (КиБ/МиБ/ГиБ) с обновлением без перезагрузки окна.
-   - Подписи — через `ru`/`en`; при ошибке — нейтральное состояние без
-     `ErrorBox`. Не добавляй счётчики в трей и не шли их наружу.
-4. Тесты.
-   - Rust: парсинг ответа API, суммирование, сброс при `start`/`stop`, ошибка
-     источника → нули/`None`, golden-конфиг с новым блоком и `sing-box check`.
-   - Frontend: форматирование байт, отображение значений и состояния ошибки,
-     строки в обоих словарях.
+   - Определи, что именно значит fail-closed: при падении ядра/туннеля трафик
+     выбранных приложений **не выходит напрямую**. Реши, блокировать только
+     выбранные приложения или весь трафик, что происходит при штатном
+     `disconnect`, выходе приложения, сне/пробуждении и смене сети.
+   - Выбери механизм по ОС и обоснуй минимальный: macOS — `pf` anchor,
+     Linux — `nftables` (fallback `iptables`), Windows — WFP/firewall. Отдельно
+     опиши, кто ставит и снимает правила (helper при `start`/`stop` или
+     отдельная команда), как гарантируется снятие при аварии и как
+     пользователь может выключить защиту.
+   - Обнови PRD §6.2/§6.6/§6.8/§10 и при необходимости `docs/research.md`
+     (раздел с проверенными фактами и ограничениями). Если объём не влезает в
+     подцель — разбей S4-T5 на подзадачи (`S4-T5a/b/…`) в TASKS.md, реализуй
+     первую проверяемую часть и честно отметь остальное.
+2. Реализация.
+   - Платформенные правила — в `privileged/`/helper, изолированно по
+     `#[cfg(target_os)]`. Никаких shell-строк из UI; аргументы фиксированы.
+   - Настройка в UI: включение/выключение kill switch, понятное предупреждение
+     о последствиях, состояние (активен/выключен/ошибка). Строки — сразу в
+     `ru` и `en`.
+   - Если защита активна, при падении ядра UI показывает явную ошибку и не
+     делает вид, что трафик идёт через прокси. Не оставляй «залипших» правил
+     после `disconnect`/выхода.
+3. Тесты.
+   - Rust: генерация правил (чистые функции), протокол helper'а при изменении,
+     идемпотентность включения/выключения, ошибки прав → типизированный код,
+     отсутствие секретов в логах.
+   - Frontend: переключатель, состояния ошибки, строки в обоих словарях.
+   - `sing-box check` для конфигов не должен сломаться.
+4. Ручная проверка macOS (если доступны root и реальный профиль).
+   - Подключиться, запустить трафик выбранного приложения, убить ядро
+     (`kill <pid>` или через helper) — выбранное приложение не должно выйти
+     напрямую; в UI — явное предупреждение. После `disconnect` правила сняты,
+     прямой трафик восстановлен. Если root нет — остановись, отметь проверку
+     blocked и не выдавай её за выполненную.
 5. Документация.
-   - PRD §6.2/§7/§8: что считается и что не покидает устройство.
-   - docs/research.md: новый раздел с проверенными фактами и версией sing-box.
-   - TASKS.md: S4-T4 → done со ссылкой на коммит; NEXT_SESSION.md — состояние
-     и промпт G4.5 (S4-T5, kill switch) либо следующей незакрытой задачи.
+   - TASKS.md: S4-T5 → done (или разбитые подзадачи) со ссылкой на коммит.
+   - docs/research.md: проверенные факты, версии, ограничения по ОС.
+   - NEXT_SESSION.md: состояние и промпт следующей незакрытой задачи (S4-T6
+     автовыбор локации или S4-T7 доменные правила — по статусу TASKS.md).
 
 ПРОВЕРКИ
 - cargo fmt --all --check
 - cargo clippy --workspace --all-targets -- -D warnings
 - cargo test --workspace
 - pnpm typecheck && pnpm lint && pnpm test && pnpm build
-- Реальный `pnpm tauri dev` (MockHelper): счётчики не ломаются при mock-ядре.
-  С реальным helper/ядром — рост ↑/↓ при трафике выбранного приложения и
-  сброс после переподключения (если доступны root и подписка). UI-автоматизация
-  через System Events в этой сессии работала: клик по координатам и `key code`;
-  скриншоты с реальным URL/HWID не коммитить.
+- Реальный `pnpm tauri dev` (MockHelper) не должен ломаться; при доступных
+  root/подписке — ручной сценарий macOS из задачи 4.
 
 ОГРАНИЧЕНИЯ
-- Не менять протокол helper'а, установщики, иконки и локализацию сверх задачи.
+- Не менять протокол helper'а, установщики, иконки, локализацию и статистику
+  сверх задачи.
 - Не выполнять привилегированные действия без явного подтверждения.
 - Не выдавать непроверенное на других ОС за проверенное.
 
 ОТЧЁТ
-- TASKS.md: S4-T4 → done со ссылкой на коммит и кратким описанием.
-- NEXT_SESSION.md: состояние, что проверено, и самодостаточный промпт G4.5.
+- TASKS.md: статус S4-T5 со ссылкой на коммит и кратким описанием.
+- NEXT_SESSION.md: состояние, что проверено, самодостаточный промпт следующей
+  подцели.
 - Коммиты: feat:/test: для кода и тестов, отдельный docs: для документации.
 ```
 
@@ -449,56 +329,30 @@ NSIS показывает страницу лицензии; `LICENSE` и `THIRD
 
 ## Заметки
 
+- **S4-T4 (статистика):** источник — локальный Clash API ядра. Порт и secret
+  живут только в памяти; после перезапуска окна статистика покажет «—» до
+  переподключения. Считается весь трафик через ядро (proxy + direct через TUN).
+  Не добавляйте счётчики в трей и не отправляйте их наружу.
 - **S4-T3 (локализация):** новые видимые строки добавляйте в `ru.ts` и
   `en.ts`; `en` — `Record<MessageKey, string>`, тест запрещает кириллицу в
-  `en`. Язык меняется только через `settings_update` и применяется сразу;
-  `saveSettings` намеренно берёт язык из текущего store, а не из формы, чтобы
-  несохранённые поля не откатывали его. `message` от Rust остаётся русским —
-  это деталь, заголовок локализован по коду. Меню трея читает язык из store при
-  создании и в `settings_update`.
-- **S3-T2 blocked по подписи:** нужен Apple Development/Developer ID. Установщик
-  проверяет подпись до копирования; helper в бандле ad-hoc/linker-signed.
-- **S3-T7 blocked:** Linux/Windows-пункты не проверены. macOS-часть — отчёт §9.
-- **TUN на упакованных бинарях** не проверен: нет root и подписки. Не регресс —
-  dev-бинари проверены в S2-T8/S2-T10.
-- **Bundle id** `com.splitroute.app` даёт предупреждение Tauri (суффикс `.app`).
-  Решить до публичной сборки (PRD §13.3).
+  `en`. Язык меняется только через `settings_update` и применяется сразу.
+- **S4-T2 (иконки):** не переносите чтение иконок в `apps_installed` — ответ
+  вырастет на сотни килобайт. Ленивая загрузка + кэш по пути — осознанно.
+- **S4-T1 (каталог):** macOS-скан намеренно не рекурсивный (контейнеры
+  `Utilities` дают неверные имена). «Запущенные» — заглушка, источник
+  процессов в backlog.
+- **S3-T2 blocked по подписи:** нужен Apple Development/Developer ID.
+  Установщик проверяет подпись до копирования.
+- **S3-T7 blocked:** Linux/Windows-пункты матрицы не проверены.
+- **Bundle id** `com.splitroute.app` даёт предупреждение Tauri; решить до
+  публичной сборки (PRD §13.3).
 - **Лицензии:** `THIRD_PARTY_NOTICES` обновляется вручную; при смене версии
-  sing-box/wintun править разделы 2–3 и ссылки, иначе `packaging_config`-тест
-  упадёт — это намеренно. `image` уже был в списке транзитивных зависимостей,
-  поэтому S4-T2 notices не менял.
-- **Упаковка:** `externalBin` только в платформенных конфигах
-  (`packaging_config.rs`); перед `tauri build` — `fetch-core.sh` и
-  `build-helper-sidecar.sh`.
-- **Smoke helper'а:** одно сообщение на соединение; клиент приложения
-  переподключается на каждую команду.
-- **Каталог приложений:** macOS-скан намеренно не рекурсивный (контейнеры
-  `Utilities` дали бы неверные имена). `Exec`/`DisplayIcon` нормализуются
-  чистыми функциями — их и расширяйте тестами, а не системными вызовами.
-- **Иконки:** не переносить чтение иконок в `apps_installed` — ответ вырастет
-  на сотни килобайт. Ленивая загрузка + кэш по пути — осознанное решение.
-  Не добавляйте `Assets.car`/wrapper-бандлы молча: это отдельный парсер
-  compiled asset catalog; сейчас такие приложения дают заглушку.
-- **Подписка:** формат зависит от UA. `SplitRoute/0.1.0` (дефолт) → base64
-  `vless://` (обычно ~1 с), `Happ/4.1.0` → Happ-JSON (может идти ~17 с).
-  Поддерживаются оба; сервер нестабилен, таймаут 45 с. Не возвращайте
-  миграцию UA и не уменьшайте таймаут. base64-парсер покрывает TCP и
-  Reality/TLS; ws/grpc/http и security=none пропускаются — расширять при
-  появлении таких подписок.
-- **AppImage 137 МиБ** больше цели PRD 80 МиБ: внутри `sing-box` 78 МиБ и
-  `splitroute` 22 МиБ без strip. Оптимизация размера — отдельная задача, не
-  блокер функциональности. `.deb`/`.rpm` 33.5 МиБ.
-- **Linux-машина:** git-репозитория нет, исходники синхронизируются `rsync`;
-  не удаляйте `target` без нужды — сборка инкрементальная. `sudo` с паролем,
-  поэтому установка и сервисы — только с участием пользователя.
-- **Иконка приложения:** финал `splitroute-icon-pack/final/splitroute-1024.png`
-  (вне репозитория) прогнан через `pnpm tauri icon`; в `src-tauri/icons` —
-  `icon.icns`, `icon.ico`, 32/64/128/128@2x/512 и Windows Store, `bundle.icon`
-  обновлён. Трей: macOS — `tray-template.png` + `icon_as_template(true)`,
-  Windows/Linux — цветная `32x32.png` (белая моно на светлой теме не видна).
-  Для замены — снова 1024×1024 PNG RGBA и `pnpm tauri icon <path>`. Windows
-  `.ico` в рантайме не проверен.
+  sing-box/wintun править разделы 2–3, иначе тест `packaging_config` упадёт —
+  это намеренно.
+- **Упаковка:** `externalBin` только в платформенных конфигах; перед
+  `tauri build` — `fetch-core.sh` и `build-helper-sidecar.sh`.
+- **AppImage 137 МиБ** больше цели PRD 80 МиБ: внутри sing-box 78 МиБ и
+  `splitroute` без strip. Оптимизация размера — не блокер.
 - **`--allow-uid`/`--allow-sid`** фиксируют одного пользователя (G3.1).
-- Подпись нужна для распространения: Developer ID + notarization (macOS),
-  Authenticode/SmartScreen (Windows), подпись пакетов (Linux); `wintun.dll` —
-  только официальная подписанная.
+- **Секреты** (URL подписки, HWID, UUID, реальные адреса, `secret` Clash API)
+  в задачи, фикстуры, логи, отчёты и коммиты не попадают.
