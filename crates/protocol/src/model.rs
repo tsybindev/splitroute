@@ -122,6 +122,23 @@ pub struct InstalledApp {
     pub platform: Platform,
 }
 
+/// Запущенный процесс, найденный в ОС (S4-T11).
+///
+/// Отличается от `InstalledApp` наличием `pid` и путём к исполняемому файлу:
+/// на macOS это путь внутри `.app`, а не сам бандл. Иконки не запрашиваются:
+/// список строится по процессам, а не по каталогу приложений.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunningApp {
+    /// Идентификатор процесса в ОС.
+    pub pid: u32,
+    /// Человекочитаемое имя: имя `.app`-бандла или stem исполняемого файла.
+    pub name: String,
+    /// Абсолютный путь к исполняемому файлу (macOS — внутри `.app`).
+    pub path: String,
+    /// Платформа, на которой найден процесс.
+    pub platform: Platform,
+}
+
 /// Режим DNS (PRD §6.4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DnsMode {
@@ -295,6 +312,28 @@ mod tests {
             serde_json::json!({
                 "name": "Google Chrome",
                 "path": "/Applications/Google Chrome.app",
+                "platform": "macos",
+            })
+        );
+    }
+
+    #[test]
+    fn running_app_round_trip() {
+        let app = RunningApp {
+            pid: 4242,
+            name: "Google Chrome".to_string(),
+            path: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome".to_string(),
+            platform: Platform::Macos,
+        };
+        let encoded = serde_json::to_string(&app).unwrap();
+        let decoded: RunningApp = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded, app);
+        assert_eq!(
+            serde_json::to_value(&app).unwrap(),
+            serde_json::json!({
+                "pid": 4242,
+                "name": "Google Chrome",
+                "path": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
                 "platform": "macos",
             })
         );

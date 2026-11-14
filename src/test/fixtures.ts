@@ -6,6 +6,7 @@ import type {
   HelperStatus,
   InstalledApp,
   Profile,
+  RunningApp,
 } from "../shared/api/types";
 
 export function makeSettings(overrides: Partial<AppSettings> = {}): AppSettings {
@@ -92,6 +93,18 @@ export function makeInstalledApp(
   return {
     name: "Google Chrome",
     path: "/Applications/Google Chrome.app",
+    platform: "macos",
+    ...overrides,
+  };
+}
+
+export function makeRunningApp(
+  overrides: Partial<RunningApp> = {},
+): RunningApp {
+  return {
+    pid: 4242,
+    name: "Google Chrome",
+    path: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     platform: "macos",
     ...overrides,
   };

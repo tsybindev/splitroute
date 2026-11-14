@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Plus, RefreshCw, Search, Trash2 } from "lucide-react";
-import type { InstalledApp } from "../../shared/api/types";
+import type { InstalledApp, RunningApp } from "../../shared/api/types";
 import { t, type MessageKey } from "../../shared/i18n";
 import { useAppStore, type NewRuleInput } from "../../shared/state/appStore";
 import { Badge } from "../../shared/ui/Badge";
@@ -196,12 +196,135 @@ function InstalledApps() {
   );
 }
 
+// Иконки здесь не запрашиваются: процессов сотни, а чтение иконок по одному
+// пути замедлило бы список. Каталог с иконками — на вкладке «Установленные».
 function RunningApps() {
+  const apps = useAppStore((state) => state.runningApps);
+  const loading = useAppStore((state) => state.runningLoading);
+  const error = useAppStore((state) => state.runningError);
+  const busy = useAppStore((state) => state.busy);
+  const loadRunningApps = useAppStore((state) => state.loadRunningApps);
+  const addRuleFromRunning = useAppStore((state) => state.addRuleFromRunning);
+  const [query, setQuery] = useState("");
+  const [addedPath, setAddedPath] = useState<string | null>(null);
+
+  useEffect(() => {
+    void loadRunningApps();
+  }, [loadRunningApps]);
+
+  const filtered = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return apps;
+    return apps.filter((app) => app.name.toLowerCase().includes(needle));
+  }, [apps, query]);
+
+  const add = async (app: RunningApp) => {
+    await addRuleFromRunning(app);
+    setAddedPath(app.path);
+  };
+
   return (
-    <EmptyState
-      title={t("apps.tabs.running")}
-      hint={t("apps.tabs.runningHint")}
-    />
+    <div className="flex flex-col gap-3">
+      <Card title={t("apps.running.title")}>
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative flex-1">
+              <Search className="pointer-events-none absolute top-2.5 left-2.5 size-4 text-neutral-500" />
+              <input
+                id="running-search"
+                aria-label={t("apps.running.search")}
+                className={`${inputClass} pl-8`}
+                placeholder={t("apps.running.search")}
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+              />
+            </div>
+            <Button
+              onClick={() => void loadRunningApps()}
+              disabled={loading}
+            >
+              <RefreshCw className={`size-4 ${loading ? "animate-spin" : ""}`} />
+              {t("apps.running.refresh")}
+            </Button>
+          </div>
+
+          {error ? (
+            <ErrorBox
+              error={error}
+              showDetail
+              onRetry={() => void loadRunningApps()}
+            />
+          ) : null}
+
+          {loading && apps.length === 0 ? (
+            <p className="text-sm text-neutral-400">
+              {t("apps.running.loading")}
+            </p>
+          ) : null}
+
+          {!loading && apps.length === 0 && !error ? (
+            <EmptyState
+              title={t("apps.running.empty.title")}
+              hint={t("apps.running.empty.hint")}
+            />
+          ) : null}
+
+          {apps.length > 0 && filtered.length === 0 ? (
+            <EmptyState
+              title={t("apps.running.empty.title")}
+              hint={t("apps.running.noMatches", { query: query.trim() })}
+            />
+          ) : null}
+
+          {filtered.length > 0 ? (
+            <ul className="flex flex-col gap-2">
+              {filtered.map((app) => {
+                const added = addedPath === app.path;
+                return (
+                  <li
+                    key={app.path}
+                    className="flex items-center justify-between gap-3 rounded-lg border border-neutral-800 bg-neutral-900/60 px-4 py-3"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="truncate text-sm font-medium text-neutral-100">
+                          {app.name}
+                        </p>
+                        <Badge tone="neutral">
+                          {t("apps.running.pid", { pid: app.pid })}
+                        </Badge>
+                      </div>
+                      <p className="truncate font-mono text-xs text-neutral-500">
+                        {app.path}
+                      </p>
+                    </div>
+                    <Button
+                      variant={added ? "ghost" : "secondary"}
+                      aria-label={`${t("apps.running.add")}: ${app.name}`}
+                      disabled={Boolean(busy[`rule-${app.path}`]) || added}
+                      onClick={() => void add(app)}
+                      className="shrink-0"
+                    >
+                      <Plus className="size-4" />
+                      {added ? t("apps.running.added") : t("apps.running.add")}
+                    </Button>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : null}
+
+          <p className="text-xs text-neutral-500">
+            {t("apps.running.count", { count: filtered.length })}
+          </p>
+          {addedPath ? (
+            <p className="text-xs text-emerald-300">
+              {t("apps.running.addedHint")}
+            </p>
+          ) : null}
+        </div>
+      </Card>
+    </div>
   );
 }
 

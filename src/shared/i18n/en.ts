@@ -110,8 +110,20 @@ export const en: Record<MessageKey, string> = {
   "apps.tabs.installed": "Installed",
   "apps.installed.title": "Installed applications",
   "apps.tabs.running": "Running",
-  "apps.tabs.runningHint":
-    "The list of running processes will appear in the next version. For now, add an application from installed ones or manually.",
+  "apps.running.title": "Running processes",
+  "apps.running.search": "Search running processes",
+  "apps.running.loading": "Reading process list…",
+  "apps.running.refresh": "Refresh list",
+  "apps.running.empty.title": "No running processes found",
+  "apps.running.empty.hint":
+    "The list is empty or processes cannot be read. Add a rule manually on the “All rules” tab.",
+  "apps.running.noMatches": "Nothing found for “{query}”.",
+  "apps.running.add": "Add rule",
+  "apps.running.added": "Rule added",
+  "apps.running.addedHint":
+    "The rule was created disabled — enable it on the “All rules” tab.",
+  "apps.running.count": "Processes found: {count}",
+  "apps.running.pid": "PID {pid}",
   "apps.installed.search": "Search installed applications",
   "apps.installed.empty.title": "No applications found",
   "apps.installed.empty.hint":

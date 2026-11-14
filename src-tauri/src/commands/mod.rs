@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use splitroute_protocol::{
-    AppRule, CoreState, ErrorCode, HelperStatus, InstalledApp, LogLevel, Profile,
+    AppRule, CoreState, ErrorCode, HelperStatus, InstalledApp, LogLevel, Profile, RunningApp,
 };
 use tauri::Manager;
 
@@ -761,6 +761,50 @@ pub fn app_rule_from_installed(app: InstalledApp) -> AppRule {
     catalog::rule_from_app(&app)
 }
 
+/// Список запущенных процессов текущей ОС (S4-T11). `async`: обход процессов
+/// может занять десятки миллисекунд и не должен идти на главном потоке окна.
+/// Ошибки чтения не ломают вкладку: пустой список и причина в Debug-логе.
+#[tauri::command(async)]
+pub fn apps_running(state: tauri::State<'_, AppState>) -> Vec<RunningApp> {
+    apps_running_inner(&state)
+}
+
+pub(crate) fn apps_running_inner(state: &AppState) -> Vec<RunningApp> {
+    let report = catalog::running::scan();
+    for reason in &report.skipped {
+        state
+            .logs
+            .push(LogLevel::Debug, format!("Запущенные: {reason}"));
+    }
+    if report.system_skipped > 0 {
+        state.logs.push(
+            LogLevel::Debug,
+            format!(
+                "Запущенные: пропущено системных процессов: {}",
+                report.system_skipped
+            ),
+        );
+    }
+    if report.truncated > 0 {
+        state.logs.push(
+            LogLevel::Debug,
+            format!("Запущенные: список ограничен, скрыто: {}", report.truncated),
+        );
+    }
+    state.logs.push(
+        LogLevel::Info,
+        format!("Запущенные процессы: найдено {}", report.apps.len()),
+    );
+    report.apps
+}
+
+/// Правило из запущенного процесса: macOS — `path_regex` по `.app`, если путь
+/// внутри бандла, иначе `process_path`; Windows/Linux — `process_path`.
+#[tauri::command]
+pub fn app_rule_from_running(app: RunningApp) -> AppRule {
+    catalog::running::rule_from_running(&app)
+}
+
 /// Иконка приложения как data URL (S4-T2). `async`, чтобы чтение `.icns`/`.exe`
 /// и декодирование PNG не выполнялись на главном потоке: в Tauri 2 синхронные
 /// команды идут на main thread. `None` — штатный fallback без иконки.
@@ -1173,6 +1217,41 @@ mod tests {
             platform: Platform::Windows,
         };
         assert!(app_icon(unknown).is_none());
+    }
+
+    #[test]
+    fn apps_running_returns_sorted_limited_list_and_logs_summary() {
+        let state = state_with(Ok(fixture()));
+        let apps = apps_running_inner(&state);
+        assert!(apps.len() <= catalog::running::MAX_RUNNING);
+        assert!(apps
+            .iter()
+            .all(|app| app.pid > 0 && !app.path.trim().is_empty()));
+        let names: Vec<String> = apps.iter().map(|app| app.name.to_lowercase()).collect();
+        let mut sorted = names.clone();
+        sorted.sort();
+        assert_eq!(names, sorted, "список отсортирован по имени");
+        assert!(state
+            .logs
+            .list(None, 100)
+            .iter()
+            .any(|entry| entry.message.contains("Запущенные процессы: найдено")));
+    }
+
+    #[test]
+    fn app_rule_from_running_is_disabled_and_uses_bundle_regex() {
+        let rule = app_rule_from_running(RunningApp {
+            pid: 42,
+            name: "Google Chrome".to_string(),
+            path: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome".to_string(),
+            platform: Platform::Macos,
+        });
+        assert!(!rule.enabled);
+        assert_eq!(
+            rule.path_regex,
+            vec![r"^/Applications/Google Chrome\.app/".to_string()]
+        );
+        assert!(rule.process_path.is_empty());
     }
 
     #[test]

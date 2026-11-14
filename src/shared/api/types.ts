@@ -67,6 +67,14 @@ export interface InstalledApp {
   platform: Platform;
 }
 
+/** Запущенный процесс (S4-T11): путь — исполняемый файл, на macOS внутри `.app`. */
+export interface RunningApp {
+  pid: number;
+  name: string;
+  path: string;
+  platform: Platform;
+}
+
 export type DnsMode = "proxy" | "system";
 export type Language = "ru" | "en";
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error";

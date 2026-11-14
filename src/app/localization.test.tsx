@@ -14,6 +14,7 @@ const apiMock = vi.hoisted(() => ({
   helperStatus: vi.fn(),
   logsList: vi.fn(),
   appsInstalled: vi.fn(),
+  appsRunning: vi.fn(),
 }));
 
 vi.mock("../shared/api/client", () => ({
@@ -44,6 +45,7 @@ describe("EN-локализация экранов", () => {
     apiMock.helperStatus.mockResolvedValue(stoppedStatus);
     apiMock.logsList.mockResolvedValue([]);
     apiMock.appsInstalled.mockResolvedValue([]);
+    apiMock.appsRunning.mockResolvedValue([]);
   });
 
   it("не оставляет русского текста ни на одном экране", async () => {
@@ -72,6 +74,15 @@ describe("EN-локализация экранов", () => {
       ).toBeInTheDocument(),
     );
     await waitFor(() => expect(apiMock.appsInstalled).toHaveBeenCalled());
+    expectNoRussianText();
+
+    await user.click(screen.getByRole("tab", { name: "Running" }));
+    await waitFor(() => expect(apiMock.appsRunning).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(
+        screen.getByText("No running processes found"),
+      ).toBeInTheDocument(),
+    );
     expectNoRussianText();
 
     await user.click(screen.getByRole("button", { name: "Settings" }));

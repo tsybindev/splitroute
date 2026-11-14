@@ -9,6 +9,7 @@ pub mod icons;
 pub mod linux;
 pub mod linux_icons;
 pub mod macos;
+pub mod running;
 pub mod windows_icons;
 
 // Windows-разбор собирается и в тестовой конфигурации: чистые функции

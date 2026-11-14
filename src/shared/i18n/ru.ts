@@ -108,8 +108,20 @@ export const ru = {
   "apps.tabs.installed": "Установленные",
   "apps.installed.title": "Установленные приложения",
   "apps.tabs.running": "Запущенные",
-  "apps.tabs.runningHint":
-    "Список запущенных процессов появится в следующей версии. Пока добавьте приложение из установленных или вручную.",
+  "apps.running.title": "Запущенные процессы",
+  "apps.running.search": "Поиск по запущенным процессам",
+  "apps.running.loading": "Читаем список процессов…",
+  "apps.running.refresh": "Обновить список",
+  "apps.running.empty.title": "Запущенные процессы не найдены",
+  "apps.running.empty.hint":
+    "Список пуст или процессы недоступны для чтения. Добавьте правило вручную на вкладке «Все правила».",
+  "apps.running.noMatches": "По запросу «{query}» ничего не найдено.",
+  "apps.running.add": "Добавить правило",
+  "apps.running.added": "Правило добавлено",
+  "apps.running.addedHint":
+    "Правило создано выключенным — включите его на вкладке «Все правила».",
+  "apps.running.count": "Найдено процессов: {count}",
+  "apps.running.pid": "PID {pid}",
   "apps.installed.search": "Поиск по установленным приложениям",
   "apps.installed.empty.title": "Приложения не найдены",
   "apps.installed.empty.hint":

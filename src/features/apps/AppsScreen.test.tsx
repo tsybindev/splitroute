@@ -4,13 +4,20 @@ import userEvent from "@testing-library/user-event";
 import { AppsScreen } from "./AppsScreen";
 import { clearIconCache } from "./AppIcon";
 import { resetAppStore, useAppStore } from "../../shared/state/appStore";
-import { makeInstalledApp, makeRule } from "../../test/fixtures";
+import type { RunningApp } from "../../shared/api/types";
+import {
+  makeInstalledApp,
+  makeRule,
+  makeRunningApp,
+} from "../../test/fixtures";
 
 const apiMock = vi.hoisted(() => ({
   rulesUpsert: vi.fn(),
   rulesDelete: vi.fn(),
   appsInstalled: vi.fn(),
+  appsRunning: vi.fn(),
   appRuleFromInstalled: vi.fn(),
+  appRuleFromRunning: vi.fn(),
   appIcon: vi.fn(),
 }));
 
@@ -27,12 +34,20 @@ async function openRulesTab() {
   return user;
 }
 
+async function openRunningTab() {
+  const user = userEvent.setup();
+  render(<AppsScreen />);
+  await user.click(screen.getByRole("tab", { name: "Запущенные" }));
+  return user;
+}
+
 describe("AppsScreen", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     clearIconCache();
     resetAppStore();
     apiMock.appsInstalled.mockResolvedValue([]);
+    apiMock.appsRunning.mockResolvedValue([]);
     // По умолчанию иконок нет: у большинства тестов каталог не про них.
     apiMock.appIcon.mockResolvedValue(null);
   });
@@ -123,6 +138,124 @@ describe("AppsScreen", () => {
 
     await waitFor(() =>
       expect(apiMock.appRuleFromInstalled).toHaveBeenCalledWith(app),
+    );
+    expect(apiMock.rulesUpsert).toHaveBeenCalledWith(rule);
+    expect(
+      screen.getByText(
+        "Правило создано выключенным — включите его на вкладке «Все правила».",
+      ),
+    ).toBeInTheDocument();
+    expect(useAppStore.getState().rules).toEqual([rule]);
+  });
+
+  it("показывает загрузку запущенных процессов", async () => {
+    let resolve!: (apps: RunningApp[]) => void;
+    apiMock.appsRunning.mockReturnValue(
+      new Promise<RunningApp[]>((done) => {
+        resolve = done;
+      }),
+    );
+    const user = userEvent.setup();
+    render(<AppsScreen />);
+    await user.click(screen.getByRole("tab", { name: "Запущенные" }));
+
+    expect(screen.getByText("Читаем список процессов…")).toBeInTheDocument();
+    resolve([]);
+    await waitFor(() =>
+      expect(
+        screen.getByText("Запущенные процессы не найдены"),
+      ).toBeInTheDocument(),
+    );
+  });
+
+  it("показывает пустое состояние запущенных процессов", async () => {
+    await openRunningTab();
+    expect(
+      await screen.findByText("Запущенные процессы не найдены"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Найдено процессов: 0")).toBeInTheDocument();
+  });
+
+  it("показывает ошибку списка процессов с повтором", async () => {
+    apiMock.appsRunning.mockRejectedValue({
+      code: "UNKNOWN",
+      message: "Не удалось прочитать процессы",
+    });
+    await openRunningTab();
+
+    await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
+    expect(
+      screen.getByText("Не удалось прочитать процессы"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Повторить" })).toBeInTheDocument();
+  });
+
+  it("фильтрует запущенные процессы по имени", async () => {
+    const user = userEvent.setup();
+    apiMock.appsRunning.mockResolvedValue([
+      makeRunningApp(),
+      makeRunningApp({
+        pid: 7,
+        name: "Telegram",
+        path: "/Applications/Telegram.app/Contents/MacOS/Telegram",
+      }),
+    ]);
+    render(<AppsScreen />);
+    await user.click(screen.getByRole("tab", { name: "Запущенные" }));
+
+    await screen.findByText("Google Chrome");
+    expect(screen.getByText("Telegram")).toBeInTheDocument();
+    expect(screen.getByText("PID 4242")).toBeInTheDocument();
+
+    await user.type(
+      screen.getByLabelText("Поиск по запущенным процессам"),
+      "tele",
+    );
+    expect(screen.queryByText("Google Chrome")).not.toBeInTheDocument();
+    expect(screen.getByText("Telegram")).toBeInTheDocument();
+    expect(screen.getByText("Найдено процессов: 1")).toBeInTheDocument();
+  });
+
+  it("показывает пустое состояние поиска процессов без совпадений", async () => {
+    const user = userEvent.setup();
+    apiMock.appsRunning.mockResolvedValue([makeRunningApp()]);
+    render(<AppsScreen />);
+    await user.click(screen.getByRole("tab", { name: "Запущенные" }));
+
+    await screen.findByText("Google Chrome");
+    await user.type(
+      screen.getByLabelText("Поиск по запущенным процессам"),
+      "zzz",
+    );
+    expect(
+      screen.getByText("По запросу «zzz» ничего не найдено."),
+    ).toBeInTheDocument();
+  });
+
+  it("создаёт правило из запущенного процесса через ядро", async () => {
+    const user = userEvent.setup();
+    const app = makeRunningApp();
+    const rule = makeRule({
+      id: "rule-running",
+      enabled: false,
+      process_name: [],
+      path_regex: ["^/Applications/Google Chrome\\.app/"],
+    });
+    apiMock.appsRunning.mockResolvedValue([app]);
+    apiMock.appRuleFromRunning.mockResolvedValue(rule);
+    apiMock.rulesUpsert.mockResolvedValue([rule]);
+
+    render(<AppsScreen />);
+    await user.click(screen.getByRole("tab", { name: "Запущенные" }));
+    await screen.findByText("Google Chrome");
+    await user.click(
+      screen.getByRole("button", {
+        name: `Добавить правило: ${app.name}`,
+      }),
+    );
+
+    await waitFor(() =>
+      expect(apiMock.appRuleFromRunning).toHaveBeenCalledWith(app),
     );
     expect(apiMock.rulesUpsert).toHaveBeenCalledWith(rule);
     expect(

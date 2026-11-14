@@ -132,6 +132,8 @@ pub fn run() {
             commands::rules_delete,
             commands::apps_installed,
             commands::app_rule_from_installed,
+            commands::apps_running,
+            commands::app_rule_from_running,
             commands::app_icon,
             commands::settings_get,
             commands::settings_update,

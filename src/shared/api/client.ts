@@ -14,6 +14,7 @@ import type {
   LogEntry,
   LogLevel,
   ProfilesResponse,
+  RunningApp,
   SubscriptionFetchResponse,
   TrafficStats,
   UpdateChannel,
@@ -65,6 +66,10 @@ export const api = {
   appsInstalled: () => invoke<InstalledApp[]>("apps_installed"),
   appRuleFromInstalled: (app: InstalledApp) =>
     invoke<AppRule>("app_rule_from_installed", { app }),
+  // Процессы читает Rust из ОС без привилегий; список уже отфильтрован и отсортирован.
+  appsRunning: () => invoke<RunningApp[]>("apps_running"),
+  appRuleFromRunning: (app: RunningApp) =>
+    invoke<AppRule>("app_rule_from_running", { app }),
   // Иконка приходит готовым data URL или null: UI не разбирает форматы файлов.
   appIcon: (app: InstalledApp) => invoke<string | null>("app_icon", { app }),
   settingsGet: () => invoke<AppSettings>("settings_get"),

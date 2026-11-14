@@ -20,6 +20,7 @@ import type {
   LogLevel,
   Platform,
   Profile,
+  RunningApp,
   UpdateChannel,
   UpdateCheckResult,
   UpdateProgress,
@@ -46,6 +47,9 @@ interface AppState {
   installedApps: InstalledApp[];
   installedLoading: boolean;
   installedError: CommandError | null;
+  runningApps: RunningApp[];
+  runningLoading: boolean;
+  runningError: CommandError | null;
   helperStatus: HelperStatus | null;
   helperStatusError: CommandError | null;
   connection: ConnectionState;
@@ -75,8 +79,10 @@ interface AppState {
   toggleConnection: () => Promise<void>;
   loadRules: () => Promise<void>;
   loadInstalledApps: () => Promise<void>;
+  loadRunningApps: () => Promise<void>;
   addRule: (input: NewRuleInput) => Promise<void>;
   addRuleFromInstalled: (app: InstalledApp) => Promise<void>;
+  addRuleFromRunning: (app: RunningApp) => Promise<void>;
   toggleRule: (rule: AppRule) => Promise<void>;
   deleteRule: (id: string) => Promise<void>;
   loadSettings: () => Promise<void>;
@@ -106,6 +112,9 @@ const initialState = {
   installedApps: [] as InstalledApp[],
   installedLoading: false,
   installedError: null,
+  runningApps: [] as RunningApp[],
+  runningLoading: false,
+  runningError: null,
   helperStatus: null,
   helperStatusError: null,
   connection: "disconnected" as ConnectionState,
@@ -368,6 +377,19 @@ export const useAppStore = create<AppState>((set, get) => {
       }
     },
 
+    /// Список процессов обновляется по кнопке: между вызовами он не опрашивается.
+    loadRunningApps: async () => {
+      set({ runningLoading: true });
+      try {
+        const runningApps = await api.appsRunning();
+        set({ runningApps, runningError: null });
+      } catch (error) {
+        set({ runningError: toCommandError(error) });
+      } finally {
+        set({ runningLoading: false });
+      }
+    },
+
     addRule: async (input) => {
       await withBusy("rule", async () => {
         try {
@@ -385,6 +407,20 @@ export const useAppStore = create<AppState>((set, get) => {
       await withBusy(`rule-${app.path}`, async () => {
         try {
           const rule = await api.appRuleFromInstalled(app);
+          const rules = await api.rulesUpsert(rule);
+          set({ rules, actionError: null });
+        } catch (error) {
+          set({ actionError: toCommandError(error) });
+        }
+      });
+    },
+
+    /// Правило из запущенного процесса также строит ядро: macOS — regex по
+    /// `.app`, остальные — путь к исполняемому файлу (PRD §6.3).
+    addRuleFromRunning: async (app) => {
+      await withBusy(`rule-${app.path}`, async () => {
+        try {
+          const rule = await api.appRuleFromRunning(app);
           const rules = await api.rulesUpsert(rule);
           set({ rules, actionError: null });
         } catch (error) {
