@@ -9,11 +9,12 @@
 - **Этап 3: S3-T1, S3-T3, S3-T4, S3-T5, S3-T6, S3-T8 — done.**
   **S3-T2 — blocked** (нет сертификата Apple). **S3-T7 — blocked** (нет
   Linux/Windows; macOS-часть выполнена).
-- **Этап 4: S4-T1 и S4-T2 — done.** Следующая — S4-T3 (EN-локализация).
-- Дата проверки: **2026-11-14**. Ветка `main`. Последние коммиты: код G4.2 —
-  `ae1fe6d`, документация G4.2 — следующий (`git log -1`). Отчёт этапа 3:
+- **Этап 4: S4-T1, S4-T2, S4-T9 — done.** Следующая — S4-T3 (EN-локализация).
+- Дата проверки: **2026-11-14**. Ветка `main`. Последние коммиты: `06701bf`
+  (fix: зависание подписки), `1b1b9fe` (docs G4.2), `ae1fe6d` (feat: иконки).
+  Отчёт этапа 3:
   [docs/stage-3-report.md](./docs/stage-3-report.md) §9. Факты:
-  [docs/research.md](./docs/research.md) §13–§15.
+  [docs/research.md](./docs/research.md) §13–§16.
 - Системные сервисы, сокеты, пайпы, dev-серверы и процессы после проверок не
   остались.
 
@@ -34,6 +35,13 @@
   локализованный заголовок и точный текст установщика. Состояния helper'а:
   установлен / не установлен / устарел (`HELPER_PROTOCOL`) / не отвечает
   (`HELPER_TIMEOUT`/`HELPER_UNAVAILABLE`) — `src/shared/lib/helperState.ts`.
+- **Подписка (S4-T9).** `subscription_fetch` — `#[tauri::command(async)]`:
+  блокирующий HTTP ушёл в thread pool, окно не замерзает. Таймаут 45 с
+  (провайдер отвечает ~17 с), `connect_timeout` 10 с. Сохранённый в старых
+  `state.json` UA-дефолт `SplitRoute/0.1.0` мигрирует в `Happ/4.1.0` при
+  загрузке; пользовательское значение не перезаписывается. Поддерживается
+  только Happ-JSON; base64/vless-подписки — backlog (PRD §2), для текущего
+  провайдера не нужны.
 - **Каталог приложений (S4-T1).** `crates/protocol::InstalledApp {name, path,
   platform}`; команда `apps_installed` (`src-tauri/src/catalog/`):
   - macOS — `.app` в `/Applications`, `/System/Applications`, `~/Applications`,
@@ -74,10 +82,14 @@
 ### Проверено (2026-11-14)
 
 - `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -D warnings`
-  — чисто. `cargo test --workspace` — **237 тестов** ok (1 `#[ignore]` —
+  — чисто. `cargo test --workspace` — **239 тестов** ok (1 `#[ignore]` —
   реальный скан иконок).
 - `pnpm typecheck`, `pnpm lint` — чисто; `pnpm test` — **51 тест** ok;
   `pnpm build` ok.
+- Зависание подписки (S4-T9) разобрано: сохранённый UA `SplitRoute/0.1.0` —
+  провайдер принимает соединение и молчит (curl: 30 с, 0 байт); с
+  `Happ/4.1.0` — `200` за 17.15 с, JSON 6044 байта. Исправление покрыто
+  тестами миграции; `subscription_fetch` теперь в thread pool.
 - Реальный скан macOS: **110 приложений**, **100 иконок**. `cargo test -p
   splitroute --lib catalog::icons::tests::real_catalog_icons_are_found --
   --ignored`: скан 0.4 мс, холодная загрузка всех иконок 1.35 с (debug), из
@@ -96,9 +108,15 @@
 
 ### Не проверено (причина)
 
-- **Иконки Linux в рантайме** — нет Linux-машины: `.desktop` `Icon=`,
-  hicolor-PNG/SVG и приоритет размеров проверены синтетическими каталогами.
-  SVG отдаётся как `data:image/svg+xml` без растеризации, XPM не поддержан.
+- **Повторная загрузка подписки из UI после S4-T9** — клик в окне
+  недоступен (System Events `-1728`); проверены curl с Happ-UA, миграция и
+  компиляция async-ветки. Пользователю достаточно перезапустить приложение:
+  сохранённый старый UA мигрирует при загрузке.
+- **Иконки Linux в рантайме** — машина CachyOS появилась (сообщено
+  2026-11-14), но сборка и проверка ещё не выполнялись: `.desktop` `Icon=`,
+  hicolor-PNG/SVG и приоритет размеров пока проверены только синтетическими
+  каталогами. SVG отдаётся как `data:image/svg+xml` без растеризации, XPM не
+  поддержан.
 - **Иконки Windows в рантайме** — нет Windows VM: проверены компиляция
   Win32-вызовов и чистые функции BGRA/маски. Поведение `GetDIBits` на реальных
   `.exe` (и допущение «белый пиксель маски = прозрачный») не подтверждено.
@@ -146,6 +164,17 @@
   `SPLITROUTE_SING_BOX_BIN`, рядом с приложением, либо в
   `src-tauri/binaries/sing-box-<triple>` (dev).
 - Секреты (URL подписки, HWID, UUID) не логировать и не коммитить.
+- **Состояние:** `<config>/splitroute/state.json` (macOS —
+  `~/Library/Application Support/splitroute/state.json`, Linux —
+  `~/.config/splitroute/state.json`). Сохранённый UA старого дефолта
+  `SplitRoute/0.1.0` мигрирует в `Happ/4.1.0` при загрузке (S4-T9).
+- **Провайдер подписки медленный:** с корректным UA ответ ~17 с и близко к
+  прежнему таймауту 20 с. Сейчас таймаут 45 с, `connect_timeout` 10 с; не
+  уменьшать без проверки. При неверном UA сервер принимает соединение и не
+  отвечает (не отдаёт ошибку).
+- **Linux-машина CachyOS доступна** (пользователь сообщил 2026-11-14):
+  можно закрыть S3-T7/S2-T9 и проверить иконки. Сборка AppImage — только на
+  этой машине (`scripts/package.sh`), с macOS не кросс-собирается.
 - **`THIRD_PARTY_NOTICES` обновляется вручную** (раздел 11 файла):
   `cargo metadata --all-features`, `pnpm licenses list --prod`.
 - **Каталог приложений:** пути читаются из системных списков; привилегий нет.
@@ -192,11 +221,23 @@ pgrep -fl 'splitroute-helper|sing-box run' || echo "процессов нет"
 
 ### Linux (S3-T3, S2-T9, S4-T2)
 
+Сборка пакетов (CachyOS/Arch: нужны `patchelf`, `fuse2`, `webkit2gtk-4.1`,
+`libappindicator-gtk3`, `librsvg`; Node 22 + pnpm + rustup — AGENTS §5):
+
 ```bash
 cd app
 export PATH="$HOME/.cargo/bin:$PATH"
-./scripts/fetch-core.sh
-./scripts/package.sh
+pnpm install
+./scripts/fetch-core.sh          # sing-box под linux-x64
+./scripts/package.sh             # deb, rpm, appimage
+# артефакты: target/release/bundle/{deb,rpm,appimage}/
+```
+
+На macOS AppImage не собирается: `scripts/package.sh` выбирает цели по ОС,
+кросс-сборка Tauri-бандлов не поддерживается. Запуск AppImage без FUSE:
+`./SplitRoute_*.AppImage --appimage-extract-and-run`.
+
+```bash
 dpkg-deb -c target/release/bundle/deb/*.deb | grep share/doc
 sudo apt install ./target/release/bundle/deb/*.deb
 # UI → Настройки → Helper → «Установить» (pkexec)
@@ -374,6 +415,13 @@ NSIS показывает страницу лицензии; `LICENSE` и `THIRD
   на сотни килобайт. Ленивая загрузка + кэш по пути — осознанное решение.
   Не добавляйте `Assets.car`/wrapper-бандлы молча: это отдельный парсер
   compiled asset catalog; сейчас такие приложения дают заглушку.
+- **Подписка:** провайдер отдаёт JSON только при `Happ/4.1.0`; с другим UA
+  соединение висит без ответа. Старый сохранённый дефолт мигрирует (S4-T9),
+  но не меняйте дефолт обратно. base64/vless-подписки — backlog, не этап 4.
+- **Иконка приложения:** `src-tauri/icons/icon.png` (сейчас 512×512) и
+  трей (`include_bytes!("../icons/icon.png")`). Для замены — исходник
+  1024×1024 PNG RGBA и `pnpm tauri icon <path>` (сгенерирует `icon.icns`,
+  `icon.ico`, размерные PNG); при необходимости переключить трей на 32×32.
 - **`--allow-uid`/`--allow-sid`** фиксируют одного пользователя (G3.1).
 - Подпись нужна для распространения: Developer ID + notarization (macOS),
   Authenticode/SmartScreen (Windows), подпись пакетов (Linux); `wintun.dll` —
