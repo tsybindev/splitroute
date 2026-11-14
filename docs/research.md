@@ -848,3 +848,48 @@ Rust 1.99.1, sing-box 1.14.4. Реальный провайдер и root в с�
 - если фича понадобится после MVP: только `rule_set` с локальными SRS (без
   скачивания на старте), явный переключатель профиля с предупреждением, приоритет
   правил зафиксирован golden-тестами и проверен `sing-box check`.
+
+---
+
+## 27. CI-сборка Windows и Linux (проверено 2026-11-14)
+
+Репозиторий — `github.com/tsybindev/splitroute` (публичный), workflow —
+`.github/workflows/build.yml`.
+
+| Что | Результат |
+|---|---|
+| Матрица | `ubuntu-22.04` и `windows-latest`; macOS в CI нет |
+| Linux-пакеты | `SplitRoute_0.1.0_amd64.deb` (34 МиБ), `SplitRoute-0.1.0-1.x86_64.rpm` (34 МиБ), `SplitRoute_0.1.0_amd64.AppImage` (105 МиБ) |
+| Windows-пакет | `SplitRoute_0.1.0_x64-setup.exe` (NSIS, 23 МиБ) |
+| Тесты | `cargo test --workspace --locked`: 377 на Unix, 241 на Windows (Unix-only под `cfg(unix)`); фронтенд — 96 |
+| Длительность | 5–6 мин с кэшем Rust/pnpm, до 16 мин на холодную (первый release-билд) |
+
+Что вскрыл первый прогон (всё исправлено отдельными коммитами):
+
+1. **`privileged::linux` не собирался на Windows.** Модуль компилируется с
+   `cfg(test)` на любой ОС ради тестов генерации юнита, но напрямую использовал
+   `std::os::unix::fs::PermissionsExt` (E0433/E0599). Права теперь выставляет
+   локальный `set_mode`: на Unix — как раньше, на остальных ОС — no-op.
+2. **`target/` в корне workspace.** `tauri build` пишет пакеты в
+   `target/release/bundle`, а не `src-tauri/target/release/bundle`.
+3. **CRLF в checkout.** Три golden-теста сравнивают JSON побайтово и падали
+   только из-за `\r\n`. Добавлен `.gitattributes` (`* text=auto eol=lf`) — заодно
+   CRLF больше не попадёт в shell-скрипты.
+4. **Тесты, завязанные на Unix.** Литералы `/opt/...`, `/Applications/...`,
+   `.desktop` с Unix-Exec и `sh -n` заменены на пути из `temp_dir()` либо
+   помечены `cfg(unix)`; на Windows закрытый loopback-порт может ответить
+   таймаутом, а не RST — тест принимает оба сетевых кода.
+5. **Артефакт AppImage тянул промежуточный `SplitRoute.AppDir`** (и конфликтовал
+   именами при распаковке на регистронезависимой ФС) — в артефакт попадают
+   только `.deb`/`.rpm`/`.AppImage`/`.exe`.
+
+Ограничения:
+
+- Пакеты **не подписаны** (`SPLITROUTE_ALLOW_UNSIGNED=1`), updater-артефактов
+  нет; SmartScreen и Gatekeeper будут предупреждать.
+- CI проверяет сборку, unit-тесты и содержимое бандла. TUN, установка
+  helper-сервиса, per-app-маршрутизация и DNS не проверяются — ручной smoke
+  (S3-T7) остаётся blocked.
+- Ветка `main` собирается и на push, и на pull request; macOS-job не добавлен,
+  потому что подпись/нотаризация не настроены, а `.app`/`.dmg` собираются
+  локально (README).

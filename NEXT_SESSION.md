@@ -15,13 +15,16 @@
 - Дата проверки: **2026-11-14**. Ветка `main`. Последний коммит кода — `1525df3`
   (feat: автоподключение при запуске), документация — отдельный коммит после
   него.
-- **CI:** `.github/workflows/build.yml` собирает Windows (NSIS) и Linux
-  (`deb`/`rpm`/AppImage) на GitHub Actions; macOS в CI нет. Репозиторий —
-  `github.com/tsybindev/splitroute`.
+- **CI:** `.github/workflows/build.yml`, репозиторий публичный
+  (`github.com/tsybindev/splitroute`). Прогон 2026-11-14 зелёный: `windows-latest`
+  → NSIS `.exe`, `ubuntu-22.04` → `.deb`/`.rpm`/`.AppImage`, ~6 мин с кэшем;
+  артефакты `splitroute-windows`/`splitroute-linux` в разделе Actions. Пакеты
+  неподписанные (`SPLITROUTE_ALLOW_UNSIGNED=1`), macOS-job нет. Найденные первым
+  прогоном проблемы и ограничения — research §27.
 - Факты: [docs/research.md](./docs/research.md) §19 (статистика), §20 (kill
   switch), §21 (задержки и автовыбор), §22 (автообновление), §23 (запущенные
   процессы), §24 (пометка несуществующих путей), §25 (автоподключение),
-  §26 (доменные правила — решение A).
+  §26 (доменные правила — решение A), §27 (CI Windows/Linux).
 
 ### Что работает
 
@@ -125,6 +128,9 @@
   --all-targets` — чисто.
 - `pnpm typecheck`, `pnpm lint` — чисто; `pnpm test` — **96 тестов** ok;
   `pnpm build` ok.
+- **CI** (2026-11-14): `gh run` для `main` зелёный на `windows-latest` и
+  `ubuntu-22.04` — сборка, `cargo test --workspace --locked`, фронтенд-проверки
+  и пакеты; артефакты скачаны и проверены по именам и размерам (research §27).
 - `pnpm tauri dev` с `SPLITROUTE_MOCK_HELPER=1`: окно `SplitRoute` открывается,
   процесс `target/debug/splitroute` работает; после проверки остановлен, порт
   1420 свободен, `sing-box`/`splitroute` не остались.
