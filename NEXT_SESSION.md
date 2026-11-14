@@ -7,14 +7,17 @@
 
 - Этапы 0–2 закрыты (в этапе 2 S2-T9 blocked: нет CachyOS).
 - **Этап 3: S3-T1, S3-T3, S3-T4, S3-T5, S3-T6, S3-T8 — done.**
-  **S3-T2 — blocked** (нет сертификата Apple). **S3-T7 — blocked** (нет
-  Linux/Windows; macOS-часть выполнена).
-- **Этап 4: S4-T1, S4-T2, S4-T9 — done.** Следующая — S4-T3 (EN-локализация).
-- Дата проверки: **2026-11-14**. Ветка `main`. Последние коммиты: `06701bf`
-  (fix: зависание подписки), `1b1b9fe` (docs G4.2), `ae1fe6d` (feat: иконки).
-  Отчёт этапа 3:
+  **S3-T2 — blocked** (нет сертификата Apple). **S3-T7 — blocked частично:**
+  macOS-часть выполнена; на CachyOS собраны `.deb`/`.rpm`/AppImage и прогнаны
+  тесты (см. ниже), но установка, `systemctl`/`pkexec`, TUN и GUI не проверены;
+  Windows VM нет.
+- **Этап 4: S4-T1, S4-T2, S4-T9, S4-T10 — done.** Следующая — S4-T3
+  (EN-локализация).
+- Дата проверки: **2026-11-14**. Ветка `main`. Последние коммиты: `9fd1bdf`
+  (feat: base64/vless), `06701bf` (fix: зависание подписки), `1b1b9fe` (docs
+  G4.2), `ae1fe6d` (feat: иконки). Отчёт этапа 3:
   [docs/stage-3-report.md](./docs/stage-3-report.md) §9. Факты:
-  [docs/research.md](./docs/research.md) §13–§16.
+  [docs/research.md](./docs/research.md) §13–§17.
 - Системные сервисы, сокеты, пайпы, dev-серверы и процессы после проверок не
   остались.
 
@@ -35,13 +38,15 @@
   локализованный заголовок и точный текст установщика. Состояния helper'а:
   установлен / не установлен / устарел (`HELPER_PROTOCOL`) / не отвечает
   (`HELPER_TIMEOUT`/`HELPER_UNAVAILABLE`) — `src/shared/lib/helperState.ts`.
-- **Подписка (S4-T9).** `subscription_fetch` — `#[tauri::command(async)]`:
-  блокирующий HTTP ушёл в thread pool, окно не замерзает. Таймаут 45 с
-  (провайдер отвечает ~17 с), `connect_timeout` 10 с. Сохранённый в старых
-  `state.json` UA-дефолт `SplitRoute/0.1.0` мигрирует в `Happ/4.1.0` при
-  загрузке; пользовательское значение не перезаписывается. Поддерживается
-  только Happ-JSON; base64/vless-подписки — backlog (PRD §2), для текущего
-  провайдера не нужны.
+- **Подписка (S4-T9, S4-T10).** `subscription_fetch` — `#[tauri::command(async)]`:
+  блокирующий HTTP ушёл в thread pool, окно не замерзает. Таймаут 45 с,
+  `connect_timeout` 10 с. Формат тела определяется автоматически: Happ-JSON,
+  base64 или открытый текст `vless://` (Reality/TLS, `pbk`/`sid`/`sni`/`fp`/
+  `alpn`, `flow`, TCP, IPv6; остальное пропускается с причиной). User-Agent
+  по умолчанию — собственный `SplitRoute/0.1.0` (провайдер отдаёт base64
+  быстрее и стабильнее); `Happ/4.1.0` остаётся опцией. Сохранённый UA не
+  перезаписывается, миграции нет. Неизвестное тело → `INVALID_FORMAT`.
+  base64/vless больше не backlog (PRD §2 обновлён).
 - **Каталог приложений (S4-T1).** `crates/protocol::InstalledApp {name, path,
   platform}`; команда `apps_installed` (`src-tauri/src/catalog/`):
   - macOS — `.app` в `/Applications`, `/System/Applications`, `~/Applications`,
@@ -82,14 +87,23 @@
 ### Проверено (2026-11-14)
 
 - `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -D warnings`
-  — чисто. `cargo test --workspace` — **239 тестов** ok (1 `#[ignore]` —
+  — чисто. `cargo test --workspace` — **255 тестов** ok (1 `#[ignore]` —
   реальный скан иконок).
 - `pnpm typecheck`, `pnpm lint` — чисто; `pnpm test` — **51 тест** ok;
   `pnpm build` ok.
-- Зависание подписки (S4-T9) разобрано: сохранённый UA `SplitRoute/0.1.0` —
-  провайдер принимает соединение и молчит (curl: 30 с, 0 байт); с
-  `Happ/4.1.0` — `200` за 17.15 с, JSON 6044 байта. Исправление покрыто
-  тестами миграции; `subscription_fetch` теперь в thread pool.
+- Подписка (S4-T9/S4-T10) на реальном провайдере: с `SplitRoute/0.1.0` —
+  `200`, `text/plain`, base64 (844 байта, время 1.13–16.83 с в разных
+  запросах); реальное тело разобрано парсером → **2 профиля, 0 пропусков**,
+  оба Reality/TCP. С `Happ/4.1.0` — JSON 6044 байта за 17.15 с. Сервер
+  нестабилен: тот же запрос иногда висит >20–30 с; клиент больше не
+  блокирует окно и ждёт до 45 с.
+- Linux (CachyOS, реальная машина): `cargo test --workspace` — 168 lib +
+  интеграционные, 0 failed, 1 ignored; реальный скан каталога — **19
+  приложений, 18 иконок** (холодные 0.69 с, кэш 19 µs). `./scripts/package.sh`
+  — `.deb`/`.rpm` **33.47 МиБ**, AppImage **136.99 МиБ**; внутри AppImage
+  `splitroute`, `sing-box`, `splitroute-helper`, `LICENSE`,
+  `THIRD_PARTY_NOTICES`, `.desktop`; `strings` подтверждает `INVALID_FORMAT`
+  и `SplitRoute/0.1.0`.
 - Реальный скан macOS: **110 приложений**, **100 иконок**. `cargo test -p
   splitroute --lib catalog::icons::tests::real_catalog_icons_are_found --
   --ignored`: скан 0.4 мс, холодная загрузка всех иконок 1.35 с (debug), из
@@ -108,15 +122,15 @@
 
 ### Не проверено (причина)
 
-- **Повторная загрузка подписки из UI после S4-T9** — клик в окне
-  недоступен (System Events `-1728`); проверены curl с Happ-UA, миграция и
-  компиляция async-ветки. Пользователю достаточно перезапустить приложение:
-  сохранённый старый UA мигрирует при загрузке.
-- **Иконки Linux в рантайме** — машина CachyOS появилась (сообщено
-  2026-11-14), но сборка и проверка ещё не выполнялись: `.desktop` `Icon=`,
-  hicolor-PNG/SVG и приоритет размеров пока проверены только синтетическими
-  каталогами. SVG отдаётся как `data:image/svg+xml` без растеризации, XPM не
-  поддержан.
+- **Загрузка подписки из UI после S4-T10** — клик в окне недоступен (System
+  Events `-1728`); проверены curl с обоими UA, парсер и e2e-тест через
+  локальный HTTP-сервер. Миграции UA нет, перезапуск ничего не меняет.
+- **Linux-рантайм** — пакеты и AppImage собраны, `cargo test` и реальный
+  скан иконок прошли, но установка (`dpkg`/`systemctl`/`pkexec`), запуск GUI,
+  TUN/per-app и DNS не проверены: по SSH нет GUI, `sudo -n` требует пароль.
+- **Иконки Linux** — проверены на реальном скане: 19 приложений, 18 иконок,
+  холодные 0.69 с, кэш 19 µs. Не проверены визуально в окне и SVG/XPM в
+  живых темах (SVG отдаётся как `data:image/svg+xml`, XPM не поддержан).
 - **Иконки Windows в рантайме** — нет Windows VM: проверены компиляция
   Win32-вызовов и чистые функции BGRA/маски. Поведение `GetDIBits` на реальных
   `.exe` (и допущение «белый пиксель маски = прозрачный») не подтверждено.
@@ -166,15 +180,21 @@
 - Секреты (URL подписки, HWID, UUID) не логировать и не коммитить.
 - **Состояние:** `<config>/splitroute/state.json` (macOS —
   `~/Library/Application Support/splitroute/state.json`, Linux —
-  `~/.config/splitroute/state.json`). Сохранённый UA старого дефолта
-  `SplitRoute/0.1.0` мигрирует в `Happ/4.1.0` при загрузке (S4-T9).
-- **Провайдер подписки медленный:** с корректным UA ответ ~17 с и близко к
-  прежнему таймауту 20 с. Сейчас таймаут 45 с, `connect_timeout` 10 с; не
-  уменьшать без проверки. При неверном UA сервер принимает соединение и не
-  отвечает (не отдаёт ошибку).
-- **Linux-машина CachyOS доступна** (пользователь сообщил 2026-11-14):
-  можно закрыть S3-T7/S2-T9 и проверить иконки. Сборка AppImage — только на
+  `~/.config/splitroute/state.json`). UA по умолчанию — `SplitRoute/0.1.0`;
+  сохранённое значение не мигрирует и не перезаписывается (S4-T10).
+- **Провайдер подписки:** формат зависит от UA — `SplitRoute/0.1.0` отдаёт
+  base64-список `vless://` (обычно ~1 с), `Happ/4.1.0` — JSON (может идти
+  ~17 с). Сервер нестабилен: тот же запрос иногда висит >20–30 с без ответа.
+  Таймаут 45 с, `connect_timeout` 10 с; не уменьшать. Поддерживаются оба
+  формата, JSON-путь не единственный.
+- **Linux-машина CachyOS доступна** (пользователь выдал SSH-доступ
+  2026-11-14; хост/каталог — в чате, в репозиторий не коммитить). Там нет
+  git-репозитория: исходники синхронизируются `rsync`; `pnpm`, Rust и
+  webkit2gtk-4.1 установлены; **`sudo -n` требует пароль**, поэтому установка
+  пакетов и `systemctl`/`pkexec` не выполнялись. Сборка AppImage — только на
   этой машине (`scripts/package.sh`), с macOS не кросс-собирается.
+  Артефакты: `target/release/bundle/{deb,rpm,appimage}`; AppImage 137 МиБ
+  (внутри `sing-box` 78 МиБ), `.deb`/`.rpm` 33.5 МиБ.
 - **`THIRD_PARTY_NOTICES` обновляется вручную** (раздел 11 файла):
   `cargo metadata --all-features`, `pnpm licenses list --prod`.
 - **Каталог приложений:** пути читаются из системных списков; привилегий нет.
@@ -237,24 +257,43 @@ pnpm install
 кросс-сборка Tauri-бандлов не поддерживается. Запуск AppImage без FUSE:
 `./SplitRoute_*.AppImage --appimage-extract-and-run`.
 
+**Сделано 2026-11-14 на CachyOS:** сборка прошла (`.deb`/`.rpm` 33.47 МиБ,
+AppImage 136.99 МиБ), `cargo test --workspace` зелёный (168 lib +
+интеграционные), реальный скан иконок — 19 приложений / 18 иконок. Внутри
+AppImage: `usr/bin/{splitroute,sing-box,splitroute-helper}`,
+`usr/lib/SplitRoute/{LICENSE,THIRD_PARTY_NOTICES}`,
+`usr/share/applications/SplitRoute.desktop`. **Не сделано:** установка,
+`systemctl`/`pkexec`, запуск GUI, TUN/per-app — `sudo -n` требует пароль,
+по SSH нет дисплея.
+
+Оставшиеся проверки (нужен пароль администратора и/или GUI на машине):
+
 ```bash
-dpkg-deb -c target/release/bundle/deb/*.deb | grep share/doc
-sudo apt install ./target/release/bundle/deb/*.deb
-# UI → Настройки → Helper → «Установить» (pkexec)
+# вариант без установки: AppImage (FUSE2 установлен)
+./target/release/bundle/appimage/SplitRoute_*.AppImage
+# или с распаковкой, если FUSE недоступен
+./target/release/bundle/appimage/SplitRoute_*.AppImage --appimage-extract-and-run
+
+# после установки helper'а из UI (pkexec):
 systemctl status splitroute-helper.service
 ls -ld /run/splitroute
 stat -c '%a %U:%G %n' /run/splitroute/helper.sock
 pgrep -a -f 'splitroute-helper|sing-box run'
 ```
 
-Ожидается: `/usr/share/doc/splitroute/{LICENSE,THIRD_PARTY_NOTICES}`;
-сервис `active (running)`; каталог `711 root:root`; сокет `600` пользователя;
-`--allow-uid` = uid установившего. Для S4-T1/S4-T2: вкладка «Установленные»
-показывает приложения из `/usr/share/applications` и
-`~/.local/share/applications`, иконки из `hicolor` (PNG и SVG) отрисованы,
-поиск фильтрует, битые `.desktop` попадают в логи (`Debug`) и не ломают
-список; приложение без `Icon=` показывает заглушку. Отдельно проверить
-Flatpak/Snap-приложения: путь из `Exec` может быть sandbox-путём.
+Ожидается: `LICENSE`/`THIRD_PARTY_NOTICES` в `/usr/lib/SplitRoute` (AppImage)
+или `/usr/share/doc/splitroute` (deb/rpm); сервис `active (running)`; каталог
+`711 root:root`; сокет `600` пользователя; `--allow-uid` = uid установившего.
+Для S4-T1/S4-T2: вкладка «Установленные» показывает приложения из
+`/usr/share/applications` и `~/.local/share/applications`, иконки из
+`hicolor` (PNG и SVG) отрисованы, поиск фильтрует, битые `.desktop` попадают
+в логи (`Debug`) и не ломают список; приложение без `Icon=` показывает
+заглушку. Отдельно проверить Flatpak/Snap-приложения: путь из `Exec` может
+быть sandbox-путём.
+
+> На CachyOS/Arch `.deb` и `.rpm` не ставятся напрямую — используйте AppImage
+> или соберите пакет для Arch отдельно. `.deb`/`.rpm` проверяются на
+> Ubuntu/Fedora.
 
 ### Windows (S3-T4, S4-T2)
 
@@ -309,8 +348,9 @@ NSIS показывает страницу лицензии; `LICENSE` и `THIRD
 - Ошибки Rust приходят как `CommandError { code, message }`; `ErrorBox`
   показывает локализованный заголовок по коду и `message` установщика как
   есть (сейчас по-русски). Коды ошибок стабильны и не переводятся.
-- Проверено 2026-11-14: 237 Rust + 51 frontend тестов, clippy -D warnings,
-  typecheck/lint/build зелёные. Иконки каталога (S4-T2) готовы, их не трогай.
+- Проверено 2026-11-14: 255 Rust + 51 frontend тестов, clippy -D warnings,
+  typecheck/lint/build зелёные. Иконки каталога (S4-T2) и подписка
+  (S4-T9/S4-T10) готовы, их не трогай.
 
 КОНТРАКТ, КОТОРЫЙ НЕЛЬЗЯ ЛОМАТЬ
 - `crates/protocol` — единственный источник общих типов; формат IPC helper'а
@@ -415,9 +455,18 @@ NSIS показывает страницу лицензии; `LICENSE` и `THIRD
   на сотни килобайт. Ленивая загрузка + кэш по пути — осознанное решение.
   Не добавляйте `Assets.car`/wrapper-бандлы молча: это отдельный парсер
   compiled asset catalog; сейчас такие приложения дают заглушку.
-- **Подписка:** провайдер отдаёт JSON только при `Happ/4.1.0`; с другим UA
-  соединение висит без ответа. Старый сохранённый дефолт мигрирует (S4-T9),
-  но не меняйте дефолт обратно. base64/vless-подписки — backlog, не этап 4.
+- **Подписка:** формат зависит от UA. `SplitRoute/0.1.0` (дефолт) → base64
+  `vless://` (обычно ~1 с), `Happ/4.1.0` → Happ-JSON (может идти ~17 с).
+  Поддерживаются оба; сервер нестабилен, таймаут 45 с. Не возвращайте
+  миграцию UA и не уменьшайте таймаут. base64-парсер покрывает TCP и
+  Reality/TLS; ws/grpc/http и security=none пропускаются — расширять при
+  появлении таких подписок.
+- **AppImage 137 МиБ** больше цели PRD 80 МиБ: внутри `sing-box` 78 МиБ и
+  `splitroute` 22 МиБ без strip. Оптимизация размера — отдельная задача, не
+  блокер функциональности. `.deb`/`.rpm` 33.5 МиБ.
+- **Linux-машина:** git-репозитория нет, исходники синхронизируются `rsync`;
+  не удаляйте `target` без нужды — сборка инкрементальная. `sudo` с паролем,
+  поэтому установка и сервисы — только с участием пользователя.
 - **Иконка приложения:** `src-tauri/icons/icon.png` (сейчас 512×512) и
   трей (`include_bytes!("../icons/icon.png")`). Для замены — исходник
   1024×1024 PNG RGBA и `pnpm tauri icon <path>` (сгенерирует `icon.icns`,
