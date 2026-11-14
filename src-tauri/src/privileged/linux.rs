@@ -11,17 +11,31 @@
 //! фиксированные пути и пути из `InstallPaths` — пользовательский ввод в них
 //! не попадает.
 //!
-//! Модуль собирается и на macOS в тестовой конфигурации: генерация юнита и
+//! Модуль собирается и на других ОС в тестовой конфигурации: генерация юнита и
 //! скриптов — чистые функции, поэтому их можно проверить без Linux-хоста.
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super::{HelperInstaller, InstallerError};
+
+/// Права файла выставляются только на Unix: на других ОС модуль собирается
+/// ради тестов генерации юнита и скриптов, где режим не проверяется.
+fn set_mode(path: &Path, mode: u32) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(mode))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, mode);
+        Ok(())
+    }
+}
 
 /// Имя systemd-юнита helper'а.
 pub const HELPER_UNIT: &str = "splitroute-helper.service";
@@ -93,7 +107,7 @@ impl HelperInstaller for LinuxInstaller {
         fs::write(&staged_unit, unit_contents(&paths)).map_err(|error| {
             InstallerError::Failed(format!("не удалось записать юнит: {error}"))
         })?;
-        fs::set_permissions(&staged_unit, fs::Permissions::from_mode(0o644))
+        set_mode(&staged_unit, 0o644)
             .map_err(|error| InstallerError::Failed(format!("юнит: {error}")))?;
 
         let staged = StagedPaths {
@@ -310,7 +324,7 @@ fn copy_binary(source: &Path, destination: &Path) -> Result<(), InstallerError> 
             source.display()
         ))
     })?;
-    fs::set_permissions(destination, fs::Permissions::from_mode(0o755)).map_err(|error| {
+    set_mode(destination, 0o755).map_err(|error| {
         InstallerError::Failed(format!("права на {}: {error}", destination.display()))
     })
 }
@@ -347,7 +361,7 @@ fn run_privileged_script(directory: &Path, name: &str, script: &str) -> Result<(
     let script_path = directory.join(format!("{name}.sh"));
     fs::write(&script_path, script)
         .map_err(|error| InstallerError::Failed(format!("скрипт установки: {error}")))?;
-    fs::set_permissions(&script_path, fs::Permissions::from_mode(0o700))
+    set_mode(&script_path, 0o700)
         .map_err(|error| InstallerError::Failed(format!("права на скрипт: {error}")))?;
 
     let output = Command::new(pkexec)
@@ -412,7 +426,7 @@ impl Staging {
         ));
         fs::create_dir_all(&path)
             .map_err(|error| InstallerError::Failed(format!("временный каталог: {error}")))?;
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).map_err(|error| {
+        set_mode(&path, 0o700).map_err(|error| {
             InstallerError::Failed(format!("права на временный каталог: {error}"))
         })?;
         Ok(Self { path })
