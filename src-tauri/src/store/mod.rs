@@ -22,6 +22,79 @@ pub struct SubscriptionSettings {
     pub auto_update_hours: u16,
 }
 
+/// Порог деградации по умолчанию: новая локация должна быть быстрее на 100 мс.
+pub const DEFAULT_DEGRADATION_MS: u16 = 100;
+/// Интервал фоновой проверки задержек, секунды.
+pub const DEFAULT_INTERVAL_SECS: u32 = 60;
+/// Сколько подряд проверок должна длиться деградация.
+pub const DEFAULT_CONFIRMATIONS: u8 = 2;
+/// Сколько подряд неудачных замеров текущей локации достаточно для переключения.
+pub const DEFAULT_FAILURES_TO_SWITCH: u8 = 2;
+
+/// Автовыбор и автопереключение локации (PRD §6.1, §6.6).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AutoSelectSettings {
+    /// Автовыбор лучшей локации после ручной проверки задержек.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Автопереключение при деградации во время активного подключения.
+    #[serde(default)]
+    pub auto_switch: bool,
+    /// Минимальное улучшение задержки, мс.
+    #[serde(default = "default_degradation_ms")]
+    pub degradation_ms: u16,
+    /// Интервал проверки, секунды.
+    #[serde(default = "default_interval_secs")]
+    pub interval_secs: u32,
+    /// Сколько проверок подряд подтверждают деградацию.
+    #[serde(default = "default_confirmations")]
+    pub confirmations: u8,
+    /// Сколько неудачных замеров подряд у текущей локации достаточно.
+    #[serde(default = "default_failures_to_switch")]
+    pub failures_to_switch: u8,
+}
+
+fn default_degradation_ms() -> u16 {
+    DEFAULT_DEGRADATION_MS
+}
+
+fn default_interval_secs() -> u32 {
+    DEFAULT_INTERVAL_SECS
+}
+
+fn default_confirmations() -> u8 {
+    DEFAULT_CONFIRMATIONS
+}
+
+fn default_failures_to_switch() -> u8 {
+    DEFAULT_FAILURES_TO_SWITCH
+}
+
+impl Default for AutoSelectSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            auto_switch: false,
+            degradation_ms: DEFAULT_DEGRADATION_MS,
+            interval_secs: DEFAULT_INTERVAL_SECS,
+            confirmations: DEFAULT_CONFIRMATIONS,
+            failures_to_switch: DEFAULT_FAILURES_TO_SWITCH,
+        }
+    }
+}
+
+impl AutoSelectSettings {
+    /// Приводит значения к допустимым диапазонам: ручная правка state.json и
+    /// старые записи не должны ломать фоновые проверки.
+    pub fn normalized(mut self) -> Self {
+        self.degradation_ms = self.degradation_ms.min(2000);
+        self.interval_secs = self.interval_secs.clamp(15, 3600);
+        self.confirmations = self.confirmations.clamp(1, 5);
+        self.failures_to_switch = self.failures_to_switch.clamp(1, 5);
+        self
+    }
+}
+
 /// Поведение приложения и системная интеграция.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppPreferences {
@@ -32,6 +105,9 @@ pub struct AppPreferences {
     /// Старые state.json не содержат поля — читаются как `ru`.
     #[serde(default)]
     pub language: Language,
+    /// Старые state.json не содержат блока — читаются с выключенными функциями.
+    #[serde(default)]
+    pub auto_select: AutoSelectSettings,
 }
 
 /// Полные настройки приложения для UI.
@@ -74,6 +150,7 @@ impl Default for AppSettings {
                 connect_on_start: false,
                 close_to_tray: true,
                 language: Language::Ru,
+                auto_select: AutoSelectSettings::default(),
             },
         }
     }
@@ -147,8 +224,11 @@ impl Store {
         self.inner.lock().unwrap().settings.clone()
     }
 
-    /// Сохраняет настройки. HWID проверяется перед записью.
+    /// Сохраняет настройки. HWID проверяется перед записью, диапазоны
+    /// автовыбора приводятся к допустимым значениям.
     pub fn update_settings(&self, settings: AppSettings) -> Result<AppSettings, StoreError> {
+        let mut settings = settings;
+        settings.preferences.auto_select = settings.preferences.auto_select.normalized();
         if settings.subscription.hwid.len() != 16
             || !settings
                 .subscription
@@ -339,6 +419,44 @@ mod tests {
         }"#;
         let preferences: AppPreferences = serde_json::from_str(raw).unwrap();
         assert_eq!(preferences.language, Language::Ru);
+    }
+
+    /// Старый state.json без блока автовыбора читается с безопасными значениями.
+    #[test]
+    fn legacy_preferences_without_auto_select_read_as_disabled() {
+        let raw = r#"{
+            "launch_at_login": true,
+            "launch_minimized": false,
+            "connect_on_start": false,
+            "close_to_tray": true
+        }"#;
+        let preferences: AppPreferences = serde_json::from_str(raw).unwrap();
+        let auto = preferences.auto_select;
+        assert!(!auto.enabled);
+        assert!(!auto.auto_switch);
+        assert_eq!(auto.degradation_ms, DEFAULT_DEGRADATION_MS);
+        assert_eq!(auto.interval_secs, DEFAULT_INTERVAL_SECS);
+        assert_eq!(auto.confirmations, DEFAULT_CONFIRMATIONS);
+        assert_eq!(auto.failures_to_switch, DEFAULT_FAILURES_TO_SWITCH);
+    }
+
+    #[test]
+    fn auto_select_values_are_normalized_on_save() {
+        let store = Store::load(temp_path("auto-select"));
+        let mut settings = store.settings();
+        settings.preferences.auto_select = AutoSelectSettings {
+            enabled: true,
+            auto_switch: true,
+            degradation_ms: 9000,
+            interval_secs: 1,
+            confirmations: 0,
+            failures_to_switch: 9,
+        };
+        let saved = store.update_settings(settings).unwrap();
+        assert_eq!(saved.preferences.auto_select.degradation_ms, 2000);
+        assert_eq!(saved.preferences.auto_select.interval_secs, 15);
+        assert_eq!(saved.preferences.auto_select.confirmations, 1);
+        assert_eq!(saved.preferences.auto_select.failures_to_switch, 5);
     }
 
     #[test]

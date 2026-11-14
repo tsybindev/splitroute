@@ -68,6 +68,11 @@ export const en: Record<MessageKey, string> = {
   "connect.killSwitch.blocked":
     "The core has stopped. The kill switch is blocking direct traffic — disconnect to remove protection.",
   "connect.killSwitch.disarm": "Disconnect and remove protection",
+  "connect.autoSelect": "Location auto-select",
+  "connect.autoSelect.on": "Enabled",
+  "connect.autoSelect.off": "Disabled",
+  "connect.autoSelect.interval": "Checked every {seconds} s",
+  "connect.autoSelect.lastCheck": "Best: {name} — {ms} ms",
 
   "profiles.title": "Locations",
   "profiles.refresh": "Refresh subscription",
@@ -79,6 +84,10 @@ export const en: Record<MessageKey, string> = {
   "profiles.fetchedAt": "Updated: {time}",
   "profiles.skipped": "Profiles skipped: {count}",
   "profiles.refreshing": "Refreshing…",
+  "profiles.ping": "Check latency",
+  "profiles.pinging": "Checking…",
+  "profiles.latencyMs": "{ms} ms",
+  "profiles.best": "Best",
 
   "apps.title": "Applications",
   "apps.explanation":
@@ -145,6 +154,19 @@ export const en: Record<MessageKey, string> = {
   "settings.killSwitch.hint":
     "If the core crashes, all direct internet access is blocked until you disconnect. The local network stays reachable.",
   "settings.killSwitch.applies": "Applies on the next connection.",
+  "settings.autoSelect.title": "Location auto-select",
+  "settings.autoSelect.enable": "Pick the fastest location",
+  "settings.autoSelect.enableHint":
+    "After a latency check the location with the lowest TCP latency is selected.",
+  "settings.autoSelect.switch": "Switch on degradation",
+  "settings.autoSelect.switchHint":
+    "While connected, check latency and switch if the current location becomes slower.",
+  "settings.autoSelect.degradation": "Degradation threshold, ms",
+  "settings.autoSelect.interval": "Check interval, s",
+  "settings.autoSelect.confirmations": "Confirmations in a row",
+  "settings.autoSelect.failures": "Failed checks to switch",
+  "settings.autoSelect.hint":
+    "Latency is a TCP connect to the server; it does not measure proxy speed.",
   "settings.app.title": "Application",
   "settings.app.autostart": "Launch at login",
   "settings.app.launchMinimized": "Launch minimized",
@@ -198,6 +220,9 @@ export const en: Record<MessageKey, string> = {
     "Could not enable the kill switch. Check the helper privileges.",
   "errors.CORE_STOPPED":
     "The core stopped. The kill switch is blocking direct traffic.",
+  "errors.PING_TIMEOUT": "The server did not respond in time.",
+  "errors.PING_UNREACHABLE": "Could not establish a TCP connection to the server.",
+  "errors.PING_DNS": "Could not resolve the server address.",
   "errors.CONFIG": "Could not build the config.",
   "errors.STORE": "Could not save data.",
   "errors.INSTALLER_PRIVILEGES": "Administrator rights required.",

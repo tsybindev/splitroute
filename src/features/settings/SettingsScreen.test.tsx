@@ -151,6 +151,37 @@ describe("SettingsScreen", () => {
     );
   });
 
+  it("включает автовыбор и автопереключение и сохраняет параметры", async () => {
+    const user = userEvent.setup();
+    const settings = makeSettings();
+    apiMock.settingsUpdate.mockImplementation(async (next) => next);
+    useAppStore.setState({ settings });
+
+    render(<SettingsScreen />);
+    expect(screen.getByText(/TCP-connect/)).toBeInTheDocument();
+
+    await user.click(
+      screen.getByLabelText("Выбирать самую быструю локацию"),
+    );
+    await user.click(screen.getByLabelText("Переключать при деградации"));
+    await user.click(screen.getByRole("button", { name: "Сохранить настройки" }));
+
+    await waitFor(() =>
+      expect(apiMock.settingsUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          preferences: expect.objectContaining({
+            auto_select: expect.objectContaining({
+              enabled: true,
+              auto_switch: true,
+              degradation_ms: 100,
+              interval_secs: 60,
+            }),
+          }),
+        }),
+      ),
+    );
+  });
+
   it("показывает статус helper'а из helper_status", async () => {
     useAppStore.setState({
       settings: makeSettings(),

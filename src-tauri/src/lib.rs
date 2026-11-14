@@ -3,6 +3,7 @@
 pub mod catalog;
 pub mod commands;
 pub mod config;
+pub mod latency;
 pub mod logging;
 pub mod privileged;
 pub mod store;
@@ -121,7 +122,9 @@ pub fn run() {
             commands::helper_uninstall,
             commands::subscription_fetch,
             commands::profiles_list,
+            commands::profiles_ping,
             commands::profile_select,
+            commands::profile_switch,
             commands::rules_list,
             commands::rules_upsert,
             commands::rules_delete,

@@ -10,6 +10,7 @@ import type {
   CommandError,
   HelperStatus,
   InstalledApp,
+  LatencyResponse,
   LogEntry,
   LogLevel,
   ProfilesResponse,
@@ -46,8 +47,13 @@ export const api = {
       userAgent: userAgent ?? null,
     }),
   profilesList: () => invoke<ProfilesResponse>("profiles_list"),
+  // Задержки меряет Rust: TCP-connect с таймаутом, без ядра и секретов.
+  profilesPing: () => invoke<LatencyResponse>("profiles_ping"),
   profileSelect: (id: string) =>
     invoke<ProfilesResponse>("profile_select", { id }),
+  // Переключение с переподключением: stop → выбор → start.
+  profileSwitch: (id: string) =>
+    invoke<ProfilesResponse>("profile_switch", { id }),
   rulesList: () => invoke<AppRule[]>("rules_list"),
   rulesUpsert: (rule: AppRule) =>
     invoke<AppRule[]>("rules_upsert", { rule }),

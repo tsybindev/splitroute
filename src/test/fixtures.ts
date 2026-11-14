@@ -33,6 +33,15 @@ export function makeSettings(overrides: Partial<AppSettings> = {}): AppSettings 
       connect_on_start: false,
       close_to_tray: true,
       language: "ru",
+      auto_select: {
+        enabled: false,
+        auto_switch: false,
+        degradation_ms: 100,
+        interval_secs: 60,
+        confirmations: 2,
+        failures_to_switch: 2,
+        ...overrides.preferences?.auto_select,
+      },
       ...overrides.preferences,
     },
   };

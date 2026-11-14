@@ -103,11 +103,13 @@ export function ConnectScreen() {
   const rules = useAppStore((state) => state.rules);
   const helperStatus = useAppStore((state) => state.helperStatus);
   const helperStatusError = useAppStore((state) => state.helperStatusError);
+  const latency = useAppStore((state) => state.latency);
   const actionError = useAppStore((state) => state.actionError);
   const busy = useAppStore((state) => state.busy);
   const toggleConnection = useAppStore((state) => state.toggleConnection);
   const disconnect = useAppStore((state) => state.disconnect);
   const pollConnection = useAppStore((state) => state.pollConnection);
+  const autoSwitchCheck = useAppStore((state) => state.autoSwitchCheck);
   const setActiveTab = useAppStore((state) => state.setActiveTab);
 
   const selected = profiles.find((profile) => profile.id === selectedProfileId);
@@ -120,6 +122,16 @@ export function ConnectScreen() {
   const killSwitchSetting = settings?.network.kill_switch ?? false;
   const killSwitchActive = helperStatus?.kill_switch?.enabled ?? false;
   const killSwitchError = helperStatus?.kill_switch?.error;
+  const autoSelect = settings?.preferences.auto_select;
+  const autoSwitchEnabled = autoSelect?.auto_switch ?? false;
+  const bestProfile = latency?.best_profile_id
+    ? profiles.find((profile) => profile.id === latency.best_profile_id)
+    : undefined;
+  const bestLatency = latency?.best_profile_id
+    ? (latency.results.find(
+        (result) => result.profile_id === latency.best_profile_id,
+      )?.latency_ms ?? null)
+    : null;
 
   // Пока защита включена, следим за ядром: helper продолжает блокировать
   // трафик и после падения sing-box, поэтому UI не должен показывать «подключено».
@@ -130,6 +142,23 @@ export function ConnectScreen() {
     }, 2000);
     return () => clearInterval(timer);
   }, [killSwitchSetting, connection, pollConnection]);
+
+  // Автопереключение — только при явно включённой настройке и активном
+  // подключении. Решение принимает Rust, здесь только интервал опроса.
+  useEffect(() => {
+    if (!autoSwitchEnabled || connection !== "connected") return;
+    const interval = Math.max(15, autoSelect?.interval_secs ?? 60) * 1000;
+    void autoSwitchCheck();
+    const timer = setInterval(() => {
+      void autoSwitchCheck();
+    }, interval);
+    return () => clearInterval(timer);
+  }, [
+    autoSwitchEnabled,
+    autoSelect?.interval_secs,
+    connection,
+    autoSwitchCheck,
+  ]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -253,6 +282,28 @@ export function ConnectScreen() {
           {connection === "error" && killSwitchActive ? (
             <p className="mt-2 text-xs text-amber-300">
               {t("connect.killSwitch.blocked")}
+            </p>
+          ) : null}
+        </Card>
+        <Card title={t("connect.autoSelect")}>
+          <Badge tone={autoSwitchEnabled ? "success" : "neutral"}>
+            {autoSwitchEnabled
+              ? t("connect.autoSelect.on")
+              : t("connect.autoSelect.off")}
+          </Badge>
+          {autoSwitchEnabled && autoSelect ? (
+            <p className="mt-2 text-xs text-neutral-500">
+              {t("connect.autoSelect.interval", {
+                seconds: autoSelect.interval_secs,
+              })}
+            </p>
+          ) : null}
+          {bestProfile && bestLatency !== null ? (
+            <p className="mt-2 text-xs text-neutral-500">
+              {t("connect.autoSelect.lastCheck", {
+                name: bestProfile.name,
+                ms: bestLatency,
+              })}
             </p>
           ) : null}
         </Card>

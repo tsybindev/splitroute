@@ -14,6 +14,7 @@ import type {
   HelperStatus,
   InstalledApp,
   Language,
+  LatencyResponse,
   LogEntry,
   LogLevel,
   Platform,
@@ -35,6 +36,7 @@ interface AppState {
   selectedProfileId: string | null;
   fetchedAt: number | null;
   skippedCount: number;
+  latency: LatencyResponse | null;
   rules: AppRule[];
   installedApps: InstalledApp[];
   installedLoading: boolean;
@@ -53,6 +55,9 @@ interface AppState {
   initialize: () => Promise<void>;
   subscribe: () => Promise<() => void>;
   refreshSubscription: () => Promise<void>;
+  pingProfiles: () => Promise<void>;
+  autoSwitchCheck: () => Promise<void>;
+  switchProfile: (id: string) => Promise<void>;
   selectProfile: (id: string) => Promise<void>;
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
@@ -81,6 +86,7 @@ const initialState = {
   selectedProfileId: null,
   fetchedAt: null,
   skippedCount: 0,
+  latency: null as LatencyResponse | null,
   rules: [] as AppRule[],
   installedApps: [] as InstalledApp[],
   installedLoading: false,
@@ -186,8 +192,80 @@ export const useAppStore = create<AppState>((set, get) => {
             fetchError: null,
             actionError: null,
           });
+          // Автовыбор: после успешного обновления список локаций уже известен.
+          if (get().settings?.preferences.auto_select.enabled) {
+            void get().pingProfiles();
+          }
         } catch (error) {
           set({ fetchError: toCommandError(error) });
+        }
+      });
+    },
+
+    /// Ручная проверка задержек. Если включён автовыбор и туннель не поднят,
+    /// сохраняется лучшая локация; при активном подключении выбор не меняется —
+    /// этим занимается автопереключение.
+    pingProfiles: async () => {
+      await withBusy("ping", async () => {
+        try {
+          const latency = await api.profilesPing();
+          set({ latency, actionError: null });
+          const settings = get().settings;
+          const best = latency.best_profile_id;
+          if (
+            settings?.preferences.auto_select.enabled &&
+            get().connection !== "connected" &&
+            best &&
+            best !== get().selectedProfileId
+          ) {
+            const response = await api.profileSelect(best);
+            set({ selectedProfileId: response.selected_profile_id });
+          }
+        } catch (error) {
+          set({ actionError: toCommandError(error) });
+        }
+      });
+    },
+
+    /// Фоновая проверка автопереключения: решение принимает Rust (гистерезис и
+    /// серии неудач), UI только выполняет явно рекомендованное переключение.
+    autoSwitchCheck: async () => {
+      const state = get();
+      const auto = state.settings?.preferences.auto_select;
+      if (!auto?.auto_switch || state.connection !== "connected") return;
+      if (state.busy["auto-switch"]) return;
+      await withBusy("auto-switch", async () => {
+        try {
+          const latency = await api.profilesPing();
+          set({ latency });
+          if (latency.switch_to && latency.switch_to !== get().selectedProfileId) {
+            await get().switchProfile(latency.switch_to);
+          }
+        } catch (error) {
+          set({ actionError: toCommandError(error) });
+        }
+      });
+    },
+
+    /// Переключение с переподключением. Ядро само возвращается к прежней
+    /// локации при ошибке старта, поэтому после сбоя перечитываем состояние.
+    switchProfile: async (id) => {
+      await withBusy("switch", async () => {
+        try {
+          const response = await api.profileSwitch(id);
+          set({ selectedProfileId: response.selected_profile_id, actionError: null });
+        } catch (error) {
+          set({ actionError: toCommandError(error) });
+          await get().refreshHelperStatus();
+          try {
+            const response = await api.profilesList();
+            set({
+              profiles: response.profiles,
+              selectedProfileId: response.selected_profile_id,
+            });
+          } catch {
+            // Причина уже показана в actionError.
+          }
         }
       });
     },

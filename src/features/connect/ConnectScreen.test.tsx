@@ -10,9 +10,17 @@ const apiMock = vi.hoisted(() => ({
   disconnect: vi.fn(),
   trafficStats: vi.fn(),
   helperStatus: vi.fn(),
+  profilesPing: vi.fn(),
+  profileSwitch: vi.fn(),
 }));
 
 const noTraffic = { available: false, upload_total: 0, download_total: 0 };
+const emptyLatency = {
+  results: [],
+  best_profile_id: null,
+  switch_to: null,
+  checked_at: 1,
+};
 
 vi.mock("../../shared/api/client", () => ({
   api: apiMock,
@@ -27,6 +35,9 @@ describe("ConnectScreen", () => {
     apiMock.trafficStats.mockResolvedValue(noTraffic);
     apiMock.helperStatus.mockReset();
     apiMock.helperStatus.mockResolvedValue(stoppedStatus);
+    apiMock.profilesPing.mockReset();
+    apiMock.profilesPing.mockResolvedValue(emptyLatency);
+    apiMock.profileSwitch.mockReset();
     resetAppStore();
   });
 
@@ -266,5 +277,59 @@ describe("ConnectScreen", () => {
     });
     rerender(<ConnectScreen />);
     expect(screen.getByText("Не отвечает")).toBeInTheDocument();
+  });
+
+  it("показывает состояние автовыбора локации", () => {
+    const settings = makeSettings();
+    settings.preferences.auto_select.auto_switch = true;
+    useAppStore.setState({
+      settings,
+      profiles: [makeProfile()],
+      selectedProfileId: "profile-1",
+      helperStatus: runningStatus,
+      connection: "connected",
+    });
+
+    render(<ConnectScreen />);
+    expect(screen.getByText("Автовыбор локации")).toBeInTheDocument();
+    expect(screen.getByText("Включён")).toBeInTheDocument();
+    expect(screen.getByText("Проверка каждые 60 с")).toBeInTheDocument();
+  });
+
+  it("автопереключается по рекомендации Rust", async () => {
+    const settings = makeSettings();
+    settings.preferences.auto_select.auto_switch = true;
+    const first = makeProfile({ id: "profile-1", name: "Первая" });
+    const second = makeProfile({ id: "profile-2", name: "Вторая" });
+    apiMock.profilesPing.mockResolvedValue({
+      results: [
+        { profile_id: "profile-1", latency_ms: 300 },
+        { profile_id: "profile-2", latency_ms: 40 },
+      ],
+      best_profile_id: "profile-2",
+      switch_to: "profile-2",
+      checked_at: 1,
+    });
+    apiMock.profileSwitch.mockResolvedValue({
+      profiles: [first, second],
+      selected_profile_id: "profile-2",
+      fetched_at: 1,
+    });
+    useAppStore.setState({
+      settings,
+      profiles: [first, second],
+      selectedProfileId: "profile-1",
+      helperStatus: runningStatus,
+      connection: "connected",
+    });
+
+    render(<ConnectScreen />);
+
+    await waitFor(() =>
+      expect(apiMock.profileSwitch).toHaveBeenCalledWith("profile-2"),
+    );
+    await waitFor(() =>
+      expect(useAppStore.getState().selectedProfileId).toBe("profile-2"),
+    );
   });
 });

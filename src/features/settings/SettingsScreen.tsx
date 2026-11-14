@@ -83,6 +83,17 @@ function SettingsForm({ initial }: { initial: AppSettings }) {
   const updatePreferences = (patch: Partial<AppSettings["preferences"]>) =>
     setForm({ ...form, preferences: { ...form.preferences, ...patch } });
 
+  const updateAutoSelect = (
+    patch: Partial<AppSettings["preferences"]["auto_select"]>,
+  ) =>
+    setForm({
+      ...form,
+      preferences: {
+        ...form.preferences,
+        auto_select: { ...form.preferences.auto_select, ...patch },
+      },
+    });
+
   const runHelperAction = async (action: "install" | "uninstall") => {
     setHelperError(null);
     setHelperNotice(null);
@@ -297,6 +308,103 @@ function SettingsForm({ initial }: { initial: AppSettings }) {
         </p>
         <p className="mt-1 pl-6 text-xs text-neutral-500">
           {t("settings.killSwitch.applies")}
+        </p>
+      </Card>
+
+      <Card title={t("settings.autoSelect.title")}>
+        <Checkbox
+          checked={form.preferences.auto_select.enabled}
+          onChange={(value) => updateAutoSelect({ enabled: value })}
+          label={t("settings.autoSelect.enable")}
+        />
+        <p className="mt-1 pl-6 text-xs text-neutral-500">
+          {t("settings.autoSelect.enableHint")}
+        </p>
+        <div className="mt-3">
+          <Checkbox
+            checked={form.preferences.auto_select.auto_switch}
+            onChange={(value) => updateAutoSelect({ auto_switch: value })}
+            label={t("settings.autoSelect.switch")}
+          />
+        </div>
+        <p className="mt-1 pl-6 text-xs text-neutral-500">
+          {t("settings.autoSelect.switchHint")}
+        </p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-3">
+          <Field
+            label={t("settings.autoSelect.degradation")}
+            htmlFor="auto-degradation"
+          >
+            <input
+              id="auto-degradation"
+              type="number"
+              min={0}
+              max={2000}
+              step={10}
+              className={inputClass}
+              value={form.preferences.auto_select.degradation_ms}
+              onChange={(event) =>
+                updateAutoSelect({
+                  degradation_ms: Number(event.target.value),
+                })
+              }
+            />
+          </Field>
+          <Field
+            label={t("settings.autoSelect.interval")}
+            htmlFor="auto-interval"
+          >
+            <input
+              id="auto-interval"
+              type="number"
+              min={15}
+              max={3600}
+              className={inputClass}
+              value={form.preferences.auto_select.interval_secs}
+              onChange={(event) =>
+                updateAutoSelect({ interval_secs: Number(event.target.value) })
+              }
+            />
+          </Field>
+          <Field
+            label={t("settings.autoSelect.confirmations")}
+            htmlFor="auto-confirmations"
+          >
+            <input
+              id="auto-confirmations"
+              type="number"
+              min={1}
+              max={5}
+              className={inputClass}
+              value={form.preferences.auto_select.confirmations}
+              onChange={(event) =>
+                updateAutoSelect({
+                  confirmations: Number(event.target.value),
+                })
+              }
+            />
+          </Field>
+          <Field
+            label={t("settings.autoSelect.failures")}
+            htmlFor="auto-failures"
+          >
+            <input
+              id="auto-failures"
+              type="number"
+              min={1}
+              max={5}
+              className={inputClass}
+              value={form.preferences.auto_select.failures_to_switch}
+              onChange={(event) =>
+                updateAutoSelect({
+                  failures_to_switch: Number(event.target.value),
+                })
+              }
+            />
+          </Field>
+        </div>
+        <p className="mt-2 text-xs text-neutral-500">
+          {t("settings.autoSelect.hint")}
         </p>
       </Card>
 

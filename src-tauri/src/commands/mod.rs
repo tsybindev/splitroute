@@ -6,11 +6,14 @@
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
-use splitroute_protocol::{AppRule, ErrorCode, HelperStatus, InstalledApp, LogLevel, Profile};
+use splitroute_protocol::{
+    AppRule, CoreState, ErrorCode, HelperStatus, InstalledApp, LogLevel, Profile,
+};
 use tauri::Manager;
 
 use crate::catalog;
 use crate::config::{build_config, ConfigError};
+use crate::latency::{self, LatencyProbe, LatencyTracker, PingResult, SwitchPolicy};
 use crate::logging::{LogBuffer, LogEntry};
 use crate::privileged::{HelperClient, HelperClientError, HelperInstaller, InstallerError};
 use crate::store::{now_secs, AppSettings, Store, StoreError};
@@ -101,6 +104,8 @@ pub struct AppState {
     pub fetcher: Arc<dyn SubscriptionFetcher>,
     pub logs: LogBuffer,
     traffic: Mutex<TrafficState>,
+    probe: Arc<dyn LatencyProbe>,
+    latency: Mutex<LatencyTracker>,
 }
 
 impl AppState {
@@ -110,6 +115,22 @@ impl AppState {
         store: Store,
         fetcher: Arc<dyn SubscriptionFetcher>,
     ) -> Self {
+        Self::with_probe(
+            helper,
+            installer,
+            store,
+            fetcher,
+            Arc::new(latency::TcpProbe),
+        )
+    }
+
+    fn with_probe(
+        helper: Arc<dyn HelperClient>,
+        installer: Arc<dyn HelperInstaller>,
+        store: Store,
+        fetcher: Arc<dyn SubscriptionFetcher>,
+        probe: Arc<dyn LatencyProbe>,
+    ) -> Self {
         Self {
             helper,
             installer,
@@ -117,7 +138,25 @@ impl AppState {
             fetcher,
             logs: LogBuffer::default(),
             traffic: Mutex::new(TrafficState::default()),
+            probe,
+            latency: Mutex::new(LatencyTracker::default()),
         }
+    }
+
+    /// Тестовая подмена источника задержек: сеть в юнит-тестах не нужна.
+    #[cfg(test)]
+    pub(crate) fn with_test_probe(self, probe: Arc<dyn LatencyProbe>) -> Self {
+        Self { probe, ..self }
+    }
+
+    fn lock_latency(&self) -> std::sync::MutexGuard<'_, LatencyTracker> {
+        self.latency
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    pub(crate) fn reset_latency(&self) {
+        self.lock_latency().reset();
     }
 
     /// Новый `start` — новая сессия: старые счётчики недоступны.
@@ -185,6 +224,17 @@ pub struct SubscriptionFetchResponse {
     pub skipped: Vec<SkippedProfile>,
     pub selected_profile_id: Option<String>,
     pub fetched_at: Option<u64>,
+}
+
+/// Результат проверки задержек для экрана «Локации».
+#[derive(Debug, Clone, Serialize)]
+pub struct LatencyResponse {
+    pub results: Vec<PingResult>,
+    pub best_profile_id: Option<String>,
+    /// Локация, на которую стоит переключиться: только при включённом
+    /// автопереключении и активном подключении.
+    pub switch_to: Option<String>,
+    pub checked_at: u64,
 }
 
 fn profiles_response(store: &Store) -> ProfilesResponse {
@@ -279,7 +329,176 @@ pub(crate) fn disconnect_inner(state: &AppState) -> Result<HelperStatus, Command
     // После `stop` статистика недоступна и UI показывает нули/«—».
     state.set_traffic_endpoint(None);
     state.logs.push(LogLevel::Info, "Подключение остановлено");
+    state.reset_latency();
     Ok(status)
+}
+
+/// Замеряет задержки всех локаций и обновляет состояние автопереключения.
+///
+/// В логи попадают только имена локаций и числа: адреса серверов не пишутся.
+pub(crate) fn profiles_ping_inner(state: &AppState) -> LatencyResponse {
+    let data = state.store.data();
+    let auto = data.settings.preferences.auto_select.clone();
+    let results = latency::measure(state.probe.as_ref(), &data.profiles, latency::PROBE_TIMEOUT);
+    let best = latency::best_profile(&results).cloned();
+
+    let running = state
+        .helper
+        .status()
+        .map(|status| status.state == CoreState::Running)
+        .unwrap_or(false);
+    let switch_to = if auto.auto_switch && running {
+        let policy = SwitchPolicy {
+            degradation_ms: auto.degradation_ms,
+            confirmations: auto.confirmations,
+            failures_to_switch: auto.failures_to_switch,
+        };
+        state
+            .lock_latency()
+            .observe(data.selected_profile_id.as_deref(), &results, policy)
+    } else {
+        // Выключенная настройка не должна накапливать серии и «дёргать» туннель
+        // сразу после включения.
+        state.reset_latency();
+        None
+    };
+
+    let names: std::collections::HashMap<&str, &str> = data
+        .profiles
+        .iter()
+        .map(|profile| (profile.id.as_str(), profile.name.as_str()))
+        .collect();
+    for result in &results {
+        let Some(name) = names.get(result.profile_id.as_str()) else {
+            continue;
+        };
+        match result.latency_ms {
+            Some(latency_ms) => state.logs.push(
+                LogLevel::Debug,
+                format!("Задержка: {name} — {latency_ms} мс"),
+            ),
+            None => state.logs.push(
+                LogLevel::Debug,
+                format!(
+                    "Задержка: {name} — ошибка ({})",
+                    result
+                        .error
+                        .unwrap_or(latency::PingErrorCode::Unreachable)
+                        .as_str()
+                ),
+            ),
+        }
+    }
+
+    let available = results
+        .iter()
+        .filter(|result| result.latency_ms.is_some())
+        .count();
+    state.logs.push(
+        LogLevel::Info,
+        format!(
+            "Проверка задержек: доступно {available} из {}",
+            results.len()
+        ),
+    );
+    if let Some(best) = &best {
+        if let Some(name) = names.get(best.profile_id.as_str()) {
+            state.logs.push(
+                LogLevel::Info,
+                format!(
+                    "Лучшая локация: {name} — {} мс",
+                    best.latency_ms.unwrap_or_default()
+                ),
+            );
+        }
+    }
+
+    LatencyResponse {
+        results,
+        best_profile_id: best.map(|result| result.profile_id),
+        switch_to,
+        checked_at: now_secs(),
+    }
+}
+
+/// Переключает локацию с переподключением (PRD §6.1).
+///
+/// Подключённое состояние меняется только через `stop` → выбор → `start` с тем
+/// же флагом kill switch. Если новый старт не удался, приложение возвращается к
+/// прежней локации: сеть не остаётся без туннеля, а правила kill switch — в
+/// неожиданном состоянии.
+pub(crate) fn switch_profile_inner(
+    state: &AppState,
+    id: &str,
+) -> Result<HelperStatus, CommandError> {
+    let data = state.store.data();
+    let target = data
+        .profiles
+        .iter()
+        .find(|profile| profile.id == id)
+        .ok_or_else(|| {
+            CommandError::new(
+                "PROFILE_MISSING",
+                "Выбранная локация отсутствует в подписке.",
+            )
+        })?;
+    let target_name = target.name.clone();
+    let previous = data.selected_profile_id.clone();
+    let previous_name = previous
+        .as_deref()
+        .and_then(|id| data.profiles.iter().find(|profile| profile.id == id))
+        .map(|profile| profile.name.clone());
+    let status = state.helper.status()?;
+
+    if previous.as_deref() == Some(id) {
+        state.store.select_profile(id)?;
+        return Ok(status);
+    }
+    // Без активного туннеля переключение — это только сохранение выбора.
+    if status.state != CoreState::Running {
+        state.store.select_profile(id)?;
+        state.reset_latency();
+        return Ok(status);
+    }
+
+    state.helper.stop()?;
+    state.set_traffic_endpoint(None);
+    state.store.select_profile(id)?;
+    state.reset_latency();
+
+    match connect_inner(state) {
+        Ok(status) => {
+            if let Some(previous_name) = previous_name {
+                state.logs.push(
+                    LogLevel::Info,
+                    format!("Переключение локации: {previous_name} → {target_name}"),
+                );
+            }
+            Ok(status)
+        }
+        Err(error) => {
+            if let Some(previous) = previous {
+                let _ = state.store.select_profile(&previous);
+                match connect_inner(state) {
+                    Ok(_) => state.logs.push(
+                        LogLevel::Warn,
+                        format!(
+                            "Не удалось переключиться на {target_name}: \
+                             восстановлена прежняя локация"
+                        ),
+                    ),
+                    Err(_) => state.logs.push(
+                        LogLevel::Warn,
+                        format!(
+                            "Не удалось переключиться на {target_name}: \
+                             прежняя локация не запустилась"
+                        ),
+                    ),
+                }
+            }
+            Err(error)
+        }
+    }
 }
 
 /// Читает счётчики у текущей сессии. Ошибка не влияет на подключение: в лог
@@ -482,6 +701,26 @@ pub fn profile_select(
     id: String,
 ) -> Result<ProfilesResponse, CommandError> {
     state.store.select_profile(&id)?;
+    Ok(profiles_response(&state.store))
+}
+
+/// Проверка задержек не должна блокировать окно: TCP-connect с таймаутом и
+/// параллельными замерами выполняется в thread pool Tauri.
+#[tauri::command(async)]
+pub fn profiles_ping(state: tauri::State<'_, AppState>) -> LatencyResponse {
+    profiles_ping_inner(&state)
+}
+
+/// Переключение локации с переподключением. Без активного туннеля меняется
+/// только сохранённый выбор; подключённое состояние проходит через `stop`/`start`.
+#[tauri::command]
+pub fn profile_switch(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<ProfilesResponse, CommandError> {
+    let status = switch_profile_inner(&state, &id)?;
+    crate::tray::publish(&app, &status);
     Ok(profiles_response(&state.store))
 }
 
@@ -960,6 +1199,246 @@ mod tests {
 
         let stopped = disconnect_inner(&state).unwrap();
         assert!(!stopped.kill_switch.enabled, "после stop правила сняты");
+    }
+
+    /// Предсказуемые задержки по адресу профиля из фикстуры.
+    struct FixedProbe;
+
+    impl LatencyProbe for FixedProbe {
+        fn probe(
+            &self,
+            profile: &Profile,
+            _timeout: std::time::Duration,
+        ) -> Result<u16, latency::PingErrorCode> {
+            match profile.server.as_str() {
+                "203.0.113.10" => Ok(40),
+                "203.0.113.20" => Ok(120),
+                _ => Err(latency::PingErrorCode::Unreachable),
+            }
+        }
+    }
+
+    /// Текущая локация медленная, альтернатива быстрая.
+    struct DegradedProbe;
+
+    impl LatencyProbe for DegradedProbe {
+        fn probe(
+            &self,
+            profile: &Profile,
+            _timeout: std::time::Duration,
+        ) -> Result<u16, latency::PingErrorCode> {
+            match profile.server.as_str() {
+                "203.0.113.10" => Ok(300),
+                "203.0.113.20" => Ok(50),
+                _ => Err(latency::PingErrorCode::Unreachable),
+            }
+        }
+    }
+
+    #[test]
+    fn profiles_ping_reports_latencies_and_hides_addresses() {
+        let state = state_with(Ok(fixture())).with_test_probe(Arc::new(FixedProbe));
+        subscription_fetch_inner(
+            &state,
+            Some("https://example.invalid/sub".to_string()),
+            None,
+            None,
+        )
+        .unwrap();
+
+        let response = profiles_ping_inner(&state);
+        assert_eq!(response.results.len(), 2);
+        assert_eq!(response.results[0].latency_ms, Some(40));
+        assert_eq!(response.results[1].latency_ms, Some(120));
+        assert_eq!(
+            response.best_profile_id.as_deref(),
+            Some(response.results[0].profile_id.as_str())
+        );
+        assert!(response.switch_to.is_none(), "автопереключение выключено");
+
+        let logs = state.logs.list(None, 50);
+        assert!(logs.iter().any(|entry| entry.message.contains("Задержка")));
+        assert!(
+            logs.iter()
+                .all(|entry| !entry.message.contains("203.0.113")),
+            "адрес сервера не должен попадать в лог"
+        );
+    }
+
+    #[test]
+    fn auto_switch_waits_for_confirmations_and_reconnects() {
+        let helper = Arc::new(MockHelperClient::new());
+        let state = AppState::new(
+            helper.clone(),
+            Arc::new(UnsupportedInstaller),
+            Store::load(temp_path("auto-switch")),
+            Arc::new(MockFetcher {
+                body: Ok(fixture()),
+            }),
+        )
+        .with_test_probe(Arc::new(DegradedProbe));
+        subscription_fetch_inner(
+            &state,
+            Some("https://example.invalid/sub".to_string()),
+            None,
+            None,
+        )
+        .unwrap();
+        let mut settings = state.store.settings();
+        settings.preferences.auto_select.auto_switch = true;
+        settings.preferences.auto_select.confirmations = 2;
+        settings_update_inner(&state, settings).unwrap();
+        connect_inner(&state).unwrap();
+
+        assert!(profiles_ping_inner(&state).switch_to.is_none());
+        let second = profiles_ping_inner(&state);
+        let target = second
+            .switch_to
+            .clone()
+            .expect("переключение после двух проверок");
+        assert_eq!(second.best_profile_id.as_deref(), Some(target.as_str()));
+
+        let status = switch_profile_inner(&state, &target).unwrap();
+        assert_eq!(status.state, CoreState::Running);
+        assert_eq!(helper.stop_calls(), 1);
+        assert_eq!(helper.start_calls(), 2);
+        assert_eq!(
+            helper.last_config().unwrap()["outbounds"][0]["server"],
+            "203.0.113.20"
+        );
+        assert_eq!(
+            state.store.data().selected_profile_id.as_deref(),
+            Some(target.as_str())
+        );
+        assert!(state
+            .logs
+            .list(None, 50)
+            .iter()
+            .any(|entry| entry.message.contains("Переключение локации")));
+    }
+
+    #[test]
+    fn switch_without_tunnel_only_saves_selection() {
+        let helper = Arc::new(MockHelperClient::new());
+        let state = AppState::new(
+            helper.clone(),
+            Arc::new(UnsupportedInstaller),
+            Store::load(temp_path("switch-idle")),
+            Arc::new(MockFetcher {
+                body: Ok(fixture()),
+            }),
+        );
+        subscription_fetch_inner(
+            &state,
+            Some("https://example.invalid/sub".to_string()),
+            None,
+            None,
+        )
+        .unwrap();
+        let second = state.store.data().profiles[1].id.clone();
+
+        let status = switch_profile_inner(&state, &second).unwrap();
+        assert_eq!(status.state, CoreState::Stopped);
+        assert_eq!(helper.start_calls(), 0);
+        assert_eq!(
+            state.store.data().selected_profile_id.as_deref(),
+            Some(second.as_str())
+        );
+        assert_eq!(
+            switch_profile_inner(&state, "missing").unwrap_err().code,
+            "PROFILE_MISSING"
+        );
+    }
+
+    /// Второй `start` (новая локация) падает, восстановление прежней проходит.
+    struct FailSecondStartHelper {
+        inner: MockHelperClient,
+        starts: std::sync::atomic::AtomicU32,
+    }
+
+    impl FailSecondStartHelper {
+        fn new() -> Self {
+            Self {
+                inner: MockHelperClient::new(),
+                starts: std::sync::atomic::AtomicU32::new(0),
+            }
+        }
+    }
+
+    impl HelperClient for FailSecondStartHelper {
+        fn status(&self) -> Result<HelperStatus, HelperClientError> {
+            self.inner.status()
+        }
+
+        fn start(
+            &self,
+            config: serde_json::Value,
+            kill_switch: bool,
+        ) -> Result<HelperStatus, HelperClientError> {
+            if self
+                .starts
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                == 1
+            {
+                return Err(HelperClientError::Helper {
+                    code: ErrorCode::StartFailed,
+                    message: "синтетическая ошибка старта".to_string(),
+                });
+            }
+            self.inner.start(config, kill_switch)
+        }
+
+        fn stop(&self) -> Result<HelperStatus, HelperClientError> {
+            self.inner.stop()
+        }
+    }
+
+    #[test]
+    fn failed_switch_restores_previous_location_and_kill_switch() {
+        let helper = Arc::new(FailSecondStartHelper::new());
+        let state = AppState::new(
+            helper.clone(),
+            Arc::new(UnsupportedInstaller),
+            Store::load(temp_path("switch-restore")),
+            Arc::new(MockFetcher {
+                body: Ok(fixture()),
+            }),
+        );
+        subscription_fetch_inner(
+            &state,
+            Some("https://example.invalid/sub".to_string()),
+            None,
+            None,
+        )
+        .unwrap();
+        let mut settings = state.store.settings();
+        settings.network.kill_switch = true;
+        settings_update_inner(&state, settings).unwrap();
+        let first = state.store.data().selected_profile_id.clone().unwrap();
+        let second = state.store.data().profiles[1].id.clone();
+        connect_inner(&state).unwrap();
+
+        let error = switch_profile_inner(&state, &second).unwrap_err();
+        assert_eq!(error.code, "HELPER_ERROR");
+        assert_eq!(
+            state.store.data().selected_profile_id.as_deref(),
+            Some(first.as_str()),
+            "после неудачного переключения выбран прежний профиль"
+        );
+        assert_eq!(
+            helper.status().unwrap().state,
+            CoreState::Running,
+            "прежняя локация восстановлена, сеть не осталась без туннеля"
+        );
+        assert!(
+            helper.inner.last_kill_switch(),
+            "kill switch не снимается при переключении"
+        );
+        assert!(state
+            .logs
+            .list(Some(LogLevel::Warn), 20)
+            .iter()
+            .any(|entry| entry.message.contains("восстановлена прежняя локация")));
     }
 
     #[test]

@@ -66,6 +66,11 @@ export const ru = {
   "connect.killSwitch.blocked":
     "Ядро остановлено. Kill switch блокирует прямой трафик — отключитесь, чтобы снять защиту.",
   "connect.killSwitch.disarm": "Отключить и снять защиту",
+  "connect.autoSelect": "Автовыбор локации",
+  "connect.autoSelect.on": "Включён",
+  "connect.autoSelect.off": "Не включён",
+  "connect.autoSelect.interval": "Проверка каждые {seconds} с",
+  "connect.autoSelect.lastCheck": "Лучшая: {name} — {ms} мс",
 
   "profiles.title": "Локации",
   "profiles.refresh": "Обновить подписку",
@@ -77,6 +82,10 @@ export const ru = {
   "profiles.fetchedAt": "Обновлено: {time}",
   "profiles.skipped": "Пропущено профилей: {count}",
   "profiles.refreshing": "Обновление…",
+  "profiles.ping": "Проверить задержки",
+  "profiles.pinging": "Проверка…",
+  "profiles.latencyMs": "{ms} мс",
+  "profiles.best": "Лучшая",
 
   "apps.title": "Приложения",
   "apps.explanation":
@@ -143,6 +152,19 @@ export const ru = {
   "settings.killSwitch.hint":
     "Если ядро упадёт, прямой выход в интернет будет заблокирован до отключения. Локальная сеть остаётся доступной.",
   "settings.killSwitch.applies": "Применяется при следующем подключении.",
+  "settings.autoSelect.title": "Автовыбор локации",
+  "settings.autoSelect.enable": "Выбирать самую быструю локацию",
+  "settings.autoSelect.enableHint":
+    "После проверки задержек выбирается локация с минимальной TCP-задержкой.",
+  "settings.autoSelect.switch": "Переключать при деградации",
+  "settings.autoSelect.switchHint":
+    "При активном подключении проверять задержки и переключаться, если текущая локация стала медленнее.",
+  "settings.autoSelect.degradation": "Порог деградации, мс",
+  "settings.autoSelect.interval": "Интервал проверки, с",
+  "settings.autoSelect.confirmations": "Подтверждений подряд",
+  "settings.autoSelect.failures": "Неудачных замеров",
+  "settings.autoSelect.hint":
+    "Задержка — TCP-connect до сервера; скорость прокси она не учитывает.",
   "settings.app.title": "Приложение",
   "settings.app.autostart": "Запускать при входе в систему",
   "settings.app.launchMinimized": "Запускать свёрнутым",
@@ -197,6 +219,9 @@ export const ru = {
     "Не удалось включить kill switch. Проверьте права helper'а.",
   "errors.CORE_STOPPED":
     "Ядро остановилось. Kill switch блокирует прямой трафик.",
+  "errors.PING_TIMEOUT": "Сервер не ответил за отведённое время.",
+  "errors.PING_UNREACHABLE": "Не удалось установить TCP-соединение с сервером.",
+  "errors.PING_DNS": "Не удалось разрешить адрес сервера.",
   "errors.CONFIG": "Не удалось собрать конфиг.",
   "errors.STORE": "Не удалось сохранить данные.",
   "errors.INSTALLER_PRIVILEGES": "Нужны права администратора.",

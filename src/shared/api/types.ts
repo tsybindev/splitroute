@@ -89,12 +89,23 @@ export interface SubscriptionSettings {
   auto_update_hours: number;
 }
 
+/** Автовыбор и автопереключение локации (PRD §6.1, §6.6). */
+export interface AutoSelectSettings {
+  enabled: boolean;
+  auto_switch: boolean;
+  degradation_ms: number;
+  interval_secs: number;
+  confirmations: number;
+  failures_to_switch: number;
+}
+
 export interface AppPreferences {
   launch_at_login: boolean;
   launch_minimized: boolean;
   connect_on_start: boolean;
   close_to_tray: boolean;
   language: Language;
+  auto_select: AutoSelectSettings;
 }
 
 export interface AppSettings {
@@ -130,6 +141,22 @@ export interface TrafficStats {
   available: boolean;
   upload_total: number;
   download_total: number;
+}
+
+export type PingErrorCode = "PING_TIMEOUT" | "PING_UNREACHABLE" | "PING_DNS";
+
+/** Замер одной локации: TCP-connect до `server:port` (S4-T6). */
+export interface LatencyResult {
+  profile_id: string;
+  latency_ms: number | null;
+  error?: PingErrorCode;
+}
+
+export interface LatencyResponse {
+  results: LatencyResult[];
+  best_profile_id: string | null;
+  switch_to: string | null;
+  checked_at: number;
 }
 
 export interface CommandError {

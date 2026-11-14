@@ -7,6 +7,7 @@ import { makeProfile } from "../../test/fixtures";
 
 const apiMock = vi.hoisted(() => ({
   profileSelect: vi.fn(),
+  profilesPing: vi.fn(),
   subscriptionFetch: vi.fn(),
 }));
 
@@ -75,6 +76,62 @@ describe("ProfilesScreen", () => {
     await waitFor(() =>
       expect(apiMock.subscriptionFetch).toHaveBeenCalledTimes(1),
     );
+  });
+
+  it("проверяет задержки, сортирует и помечает лучшую", async () => {
+    const user = userEvent.setup();
+    const slow = makeProfile({ id: "slow", name: "Медленная" });
+    const fast = makeProfile({ id: "fast", name: "Быстрая" });
+    apiMock.profilesPing.mockResolvedValue({
+      results: [
+        { profile_id: "slow", latency_ms: 180 },
+        { profile_id: "fast", latency_ms: 40 },
+      ],
+      best_profile_id: "fast",
+      switch_to: null,
+      checked_at: 1,
+    });
+    useAppStore.setState({
+      profiles: [slow, fast],
+      selectedProfileId: "slow",
+    });
+
+    render(<ProfilesScreen />);
+    await user.click(
+      screen.getByRole("button", { name: "Проверить задержки" }),
+    );
+
+    expect(await screen.findByText("180 мс")).toBeInTheDocument();
+    expect(screen.getByText("40 мс")).toBeInTheDocument();
+    expect(screen.getByText("Лучшая")).toBeInTheDocument();
+    const items = screen.getAllByRole("listitem");
+    expect(items[0]).toHaveTextContent("Быстрая");
+    expect(items[1]).toHaveTextContent("Медленная");
+  });
+
+  it("показывает типизированную ошибку замера", async () => {
+    const user = userEvent.setup();
+    apiMock.profilesPing.mockResolvedValue({
+      results: [
+        { profile_id: "profile-1", latency_ms: null, error: "PING_TIMEOUT" },
+      ],
+      best_profile_id: null,
+      switch_to: null,
+      checked_at: 1,
+    });
+    useAppStore.setState({
+      profiles: [makeProfile()],
+      selectedProfileId: "profile-1",
+    });
+
+    render(<ProfilesScreen />);
+    await user.click(
+      screen.getByRole("button", { name: "Проверить задержки" }),
+    );
+
+    expect(
+      await screen.findByText("Сервер не ответил за отведённое время."),
+    ).toBeInTheDocument();
   });
 
   it("выбирает локацию из списка", async () => {
