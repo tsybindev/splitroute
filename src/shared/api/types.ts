@@ -60,6 +60,14 @@ export interface AppRule {
   enabled: boolean;
 }
 
+/**
+ * Правило с вычисленным в Rust признаком отсутствующего пути (PRD §6.3).
+ * `missing_paths` не сохраняется: это проекция `rules_list`, а не данные правила.
+ */
+export interface AppRuleView extends AppRule {
+  missing_paths?: string[];
+}
+
 /** Запись каталога установленных приложений (PRD §6.3). Иконок пока нет. */
 export interface InstalledApp {
   name: string;

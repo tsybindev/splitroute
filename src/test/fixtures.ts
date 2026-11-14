@@ -1,7 +1,7 @@
 // Синтетические данные для тестов UI. Без реальных URL, HWID и UUID.
 
 import type {
-  AppRule,
+  AppRuleView,
   AppSettings,
   HelperStatus,
   InstalledApp,
@@ -74,7 +74,7 @@ export function makeProfile(overrides: Partial<Profile> = {}): Profile {
   };
 }
 
-export function makeRule(overrides: Partial<AppRule> = {}): AppRule {
+export function makeRule(overrides: Partial<AppRuleView> = {}): AppRuleView {
   return {
     id: "rule-1",
     name: "Google Chrome",

@@ -290,6 +290,67 @@ describe("AppsScreen", () => {
     );
   });
 
+  it("помечает правило с несуществующим путём как неактивное", async () => {
+    const gone = "/Applications/Old App.app";
+    const rule = makeRule({
+      id: "rule-gone",
+      name: "Old App",
+      process_name: [],
+      path_regex: [],
+      process_path: [gone],
+      missing_paths: [gone],
+    });
+    useAppStore.setState({ rules: [rule] });
+
+    await openRulesTab();
+
+    expect(screen.getByText("Неактивно")).toBeInTheDocument();
+    expect(
+      screen.getByTitle(
+        `Путь не найден: ${gone}. Правило сохранено и начнёт работать, когда файл появится.`,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("не мешает включить правило с несуществующим путём", async () => {
+    const user = userEvent.setup();
+    const rule = makeRule({
+      id: "rule-gone",
+      name: "Old App",
+      process_name: [],
+      path_regex: [],
+      process_path: ["/Applications/Old App.app"],
+      missing_paths: ["/Applications/Old App.app"],
+    });
+    useAppStore.setState({ rules: [rule] });
+    apiMock.rulesUpsert.mockResolvedValue([{ ...rule, enabled: false }]);
+
+    await openRulesTab();
+    await user.click(screen.getByRole("button", { name: /Через прокси/ }));
+
+    await waitFor(() =>
+      expect(apiMock.rulesUpsert).toHaveBeenCalledWith({
+        id: rule.id,
+        name: rule.name,
+        platform: rule.platform,
+        process_name: [],
+        process_path: ["/Applications/Old App.app"],
+        path_regex: [],
+        enabled: false,
+      }),
+    );
+  });
+
+  it("не помечает активное правило с regex", async () => {
+    useAppStore.setState({ rules: [makeRule()] });
+    await openRulesTab();
+
+    expect(screen.queryByText("Неактивно")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTitle(/Путь не найден/),
+    ).not.toBeInTheDocument();
+  });
+
   it("добавляет правило по имени процесса", async () => {
     const user = await openRulesTab();
     apiMock.rulesUpsert.mockResolvedValue([]);

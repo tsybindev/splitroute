@@ -102,6 +102,9 @@ export const en: Record<MessageKey, string> = {
   "apps.add.submit": "Add rule",
   "apps.empty": "No rules yet. Add an application whose traffic should go through the proxy.",
   "apps.enabled": "Through proxy",
+  "apps.inactive": "Inactive",
+  "apps.inactive.hint":
+    "Path not found: {paths}. The rule is saved and will apply once the file appears.",
   "apps.delete": "Delete rule",
   "apps.ruleCount": "Rules: {count}",
   "apps.add.invalid": "Fill in the rule name and value.",

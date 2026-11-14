@@ -10,8 +10,8 @@ use serde_json::Value;
 pub mod model;
 
 pub use model::{
-    AppRule, DnsMode, InstalledApp, Language, LogLevel, Platform, Profile, Protocol, RunningApp,
-    Settings, TlsConfig, TlsKind, Transport,
+    AppRule, AppRuleView, DnsMode, InstalledApp, Language, LogLevel, Platform, Profile, Protocol,
+    RunningApp, Settings, TlsConfig, TlsKind, Transport,
 };
 
 /// Версия протокола IPC. Несовпадение — повод переустановить helper.

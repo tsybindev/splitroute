@@ -6,6 +6,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { t } from "../i18n";
 import type {
   AppRule,
+  AppRuleView,
   AppSettings,
   CommandError,
   HelperStatus,
@@ -59,10 +60,11 @@ export const api = {
   // Переключение с переподключением: stop → выбор → start.
   profileSwitch: (id: string) =>
     invoke<ProfilesResponse>("profile_switch", { id }),
-  rulesList: () => invoke<AppRule[]>("rules_list"),
+  // Пути проверяет Rust: отсутствующий путь приходит как `missing_paths`.
+  rulesList: () => invoke<AppRuleView[]>("rules_list"),
   rulesUpsert: (rule: AppRule) =>
-    invoke<AppRule[]>("rules_upsert", { rule }),
-  rulesDelete: (id: string) => invoke<AppRule[]>("rules_delete", { id }),
+    invoke<AppRuleView[]>("rules_upsert", { rule }),
+  rulesDelete: (id: string) => invoke<AppRuleView[]>("rules_delete", { id }),
   appsInstalled: () => invoke<InstalledApp[]>("apps_installed"),
   appRuleFromInstalled: (app: InstalledApp) =>
     invoke<AppRule>("app_rule_from_installed", { app }),

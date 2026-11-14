@@ -6,6 +6,7 @@ pub mod config;
 pub mod latency;
 pub mod logging;
 pub mod privileged;
+pub mod rules;
 pub mod store;
 pub mod subscription;
 pub mod traffic;

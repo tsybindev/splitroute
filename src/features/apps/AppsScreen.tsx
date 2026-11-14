@@ -27,6 +27,18 @@ function ruleValues(rule: {
 
 const emptyInput: NewRuleInput = { name: "", kind: "process", value: "" };
 
+// Правило сохранено, но пути на диске нет: Rust проверяет только однозначные
+// пути (PRD §6.3), поэтому пометка не бывает ложной. Включение и удаление
+// правила остаются доступны.
+function MissingPathBadge({ paths }: { paths: string[] }) {
+  if (paths.length === 0) return null;
+  return (
+    <span title={t("apps.inactive.hint", { paths: paths.join(", ") })}>
+      <Badge tone="warn">{t("apps.inactive")}</Badge>
+    </span>
+  );
+}
+
 // Порядок вкладок — как в PRD §7; по умолчанию открыт каталог.
 const tabLabels: Record<AppsTab, MessageKey> = {
   running: "apps.tabs.running",
@@ -422,9 +434,12 @@ function RulesTab() {
               className="flex items-center justify-between gap-3 rounded-lg border border-neutral-800 bg-neutral-900/60 px-4 py-3"
             >
               <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-neutral-100">
-                  {rule.name}
-                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="truncate text-sm font-medium text-neutral-100">
+                    {rule.name}
+                  </p>
+                  <MissingPathBadge paths={rule.missing_paths ?? []} />
+                </div>
                 <p className="truncate font-mono text-xs text-neutral-500">
                   {ruleValues(rule)}
                 </p>

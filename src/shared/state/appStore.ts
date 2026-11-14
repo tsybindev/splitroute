@@ -9,6 +9,7 @@ import {
 } from "../api/client";
 import type {
   AppRule,
+  AppRuleView,
   AppSettings,
   CommandError,
   ConnectionState,
@@ -43,7 +44,7 @@ interface AppState {
   fetchedAt: number | null;
   skippedCount: number;
   latency: LatencyResponse | null;
-  rules: AppRule[];
+  rules: AppRuleView[];
   installedApps: InstalledApp[];
   installedLoading: boolean;
   installedError: CommandError | null;
@@ -83,7 +84,7 @@ interface AppState {
   addRule: (input: NewRuleInput) => Promise<void>;
   addRuleFromInstalled: (app: InstalledApp) => Promise<void>;
   addRuleFromRunning: (app: RunningApp) => Promise<void>;
-  toggleRule: (rule: AppRule) => Promise<void>;
+  toggleRule: (rule: AppRuleView) => Promise<void>;
   deleteRule: (id: string) => Promise<void>;
   loadSettings: () => Promise<void>;
   saveSettings: (settings: AppSettings) => Promise<void>;
@@ -108,7 +109,7 @@ const initialState = {
   fetchedAt: null,
   skippedCount: 0,
   latency: null as LatencyResponse | null,
-  rules: [] as AppRule[],
+  rules: [] as AppRuleView[],
   installedApps: [] as InstalledApp[],
   installedLoading: false,
   installedError: null,
@@ -429,10 +430,21 @@ export const useAppStore = create<AppState>((set, get) => {
       });
     },
 
+    /// Вычисленный признак `missing_paths` обратно в правило не возвращается:
+    /// ядро хранит только данные правила и проверяет пути заново при чтении.
     toggleRule: async (rule) => {
+      const payload: AppRule = {
+        id: rule.id,
+        name: rule.name,
+        platform: rule.platform,
+        process_name: rule.process_name,
+        process_path: rule.process_path,
+        path_regex: rule.path_regex,
+        enabled: !rule.enabled,
+      };
       await withBusy(`rule-${rule.id}`, async () => {
         try {
-          const rules = await api.rulesUpsert({ ...rule, enabled: !rule.enabled });
+          const rules = await api.rulesUpsert(payload);
           set({ rules, actionError: null });
         } catch (error) {
           set({ actionError: toCommandError(error) });

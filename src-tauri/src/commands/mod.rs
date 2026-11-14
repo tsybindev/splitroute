@@ -7,7 +7,8 @@ use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use splitroute_protocol::{
-    AppRule, CoreState, ErrorCode, HelperStatus, InstalledApp, LogLevel, Profile, RunningApp,
+    AppRule, AppRuleView, CoreState, ErrorCode, HelperStatus, InstalledApp, LogLevel, Profile,
+    RunningApp,
 };
 use tauri::Manager;
 
@@ -16,6 +17,7 @@ use crate::config::{build_config, ConfigError};
 use crate::latency::{self, LatencyProbe, LatencyTracker, PingResult, SwitchPolicy};
 use crate::logging::{LogBuffer, LogEntry};
 use crate::privileged::{HelperClient, HelperClientError, HelperInstaller, InstallerError};
+use crate::rules;
 use crate::store::{now_secs, AppSettings, Store, StoreError, UpdateChannel};
 use crate::subscription::{
     fetch_and_parse, FetchError, FetchRequest, SkippedProfile, SubscriptionFetcher,
@@ -731,9 +733,16 @@ pub fn profile_switch(
     Ok(profiles_response(&state.store))
 }
 
-#[tauri::command]
-pub fn rules_list(state: tauri::State<'_, AppState>) -> Vec<AppRule> {
-    state.store.rules()
+/// Список правил allowlist с признаком отсутствующего пути (PRD §6.3).
+/// `async`: проверка путей — локальный `stat`, он не должен идти на главном
+/// потоке окна, если правил много или диск медленный.
+#[tauri::command(async)]
+pub fn rules_list(state: tauri::State<'_, AppState>) -> Vec<AppRuleView> {
+    rules_list_inner(&state)
+}
+
+pub(crate) fn rules_list_inner(state: &AppState) -> Vec<AppRuleView> {
+    rules::views(state.store.rules())
 }
 
 /// Каталог установленных приложений текущей ОС (PRD §6.3). Причины пропуска
@@ -813,20 +822,22 @@ pub fn app_icon(app: InstalledApp) -> Option<String> {
     catalog::icons::icon_for(&app)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn rules_upsert(
     state: tauri::State<'_, AppState>,
     rule: AppRule,
-) -> Result<Vec<AppRule>, CommandError> {
-    Ok(state.store.upsert_rule(rule)?)
+) -> Result<Vec<AppRuleView>, CommandError> {
+    let rules = state.store.upsert_rule(rule)?;
+    Ok(rules::views(rules))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn rules_delete(
     state: tauri::State<'_, AppState>,
     id: String,
-) -> Result<Vec<AppRule>, CommandError> {
-    Ok(state.store.delete_rule(&id)?)
+) -> Result<Vec<AppRuleView>, CommandError> {
+    let rules = state.store.delete_rule(&id)?;
+    Ok(rules::views(rules))
 }
 
 #[tauri::command]
@@ -1199,6 +1210,56 @@ mod tests {
         assert_eq!(rules.len(), 1);
         assert_eq!(state.store.rules().len(), 1);
         assert_eq!(state.store.delete_rule("r1").unwrap().len(), 0);
+    }
+
+    #[test]
+    fn rules_list_marks_missing_paths_without_touching_saved_rules() {
+        let state = state_with(Ok(fixture()));
+        let live_path = temp_path("rule-live");
+        std::fs::write(&live_path, b"").unwrap();
+        let live = live_path.to_string_lossy().to_string();
+        let gone = "/nonexistent/splitroute/Old App.app".to_string();
+        for (id, path) in [("rule-gone", gone.clone()), ("rule-live", live.clone())] {
+            state
+                .store
+                .upsert_rule(AppRule {
+                    id: id.to_string(),
+                    name: id.to_string(),
+                    platform: Platform::Linux,
+                    process_name: Vec::new(),
+                    process_path: vec![path],
+                    path_regex: Vec::new(),
+                    enabled: true,
+                })
+                .unwrap();
+        }
+        let regex_rule = AppRule {
+            id: "rule-regex".to_string(),
+            name: "regex".to_string(),
+            platform: Platform::Macos,
+            process_name: Vec::new(),
+            process_path: Vec::new(),
+            path_regex: vec!["^/Applications/.*\\.app/".to_string()],
+            enabled: true,
+        };
+        state.store.upsert_rule(regex_rule.clone()).unwrap();
+
+        let views = rules_list_inner(&state);
+        let by_id = |id: &str| views.iter().find(|view| view.rule.id == id).unwrap();
+        assert_eq!(by_id("rule-gone").missing_paths, vec![gone]);
+        assert!(by_id("rule-live").missing_paths.is_empty());
+        // Regex с метасимволами не проверяется: ложного «неактивно» нет.
+        assert!(by_id("rule-regex").missing_paths.is_empty());
+        // Сохранённые данные — по-прежнему только `AppRule`.
+        assert_eq!(
+            state
+                .store
+                .rules()
+                .into_iter()
+                .find(|r| r.id == "rule-regex"),
+            Some(regex_rule)
+        );
+        let _ = std::fs::remove_file(&live_path);
     }
 
     #[test]

@@ -111,6 +111,20 @@ pub struct AppRule {
     pub enabled: bool,
 }
 
+/// Правило allowlist вместе с вычисленным для UI признаком отсутствующего пути
+/// (PRD §6.3).
+///
+/// Сохраняется только `AppRule`: `missing_paths` считается при чтении списка,
+/// потому что файл может появиться или исчезнуть между запусками. Поэтому поле
+/// не попадает в `state.json` и не читается из него — это проекция, а не данные.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppRuleView {
+    #[serde(flatten)]
+    pub rule: AppRule,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub missing_paths: Vec<String>,
+}
+
 /// Установленное приложение из каталога (PRD §6.3, §7). Иконок пока нет.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InstalledApp {
@@ -295,6 +309,61 @@ mod tests {
         let decoded: AppRule = serde_json::from_str(&encoded).unwrap();
         assert_eq!(decoded, rule);
         assert!(!encoded.contains("process_path"));
+    }
+
+    #[test]
+    fn app_rule_view_flattens_rule_and_omits_empty_status() {
+        let view = AppRuleView {
+            rule: AppRule {
+                id: "rule-1".to_string(),
+                name: "Google Chrome".to_string(),
+                platform: Platform::Macos,
+                process_name: Vec::new(),
+                process_path: Vec::new(),
+                path_regex: vec![r"^/Applications/Google Chrome\.app/".to_string()],
+                enabled: true,
+            },
+            missing_paths: Vec::new(),
+        };
+        let value = serde_json::to_value(&view).unwrap();
+        assert_eq!(value["name"], "Google Chrome");
+        assert_eq!(value["enabled"], true);
+        assert!(value.get("missing_paths").is_none());
+    }
+
+    #[test]
+    fn app_rule_view_round_trip_keeps_missing_paths() {
+        let view = AppRuleView {
+            rule: AppRule {
+                id: "rule-1".to_string(),
+                name: "Old App".to_string(),
+                platform: Platform::Linux,
+                process_name: Vec::new(),
+                process_path: vec!["/opt/old/app".to_string()],
+                path_regex: Vec::new(),
+                enabled: true,
+            },
+            missing_paths: vec!["/opt/old/app".to_string()],
+        };
+        let encoded = serde_json::to_string(&view).unwrap();
+        let decoded: AppRuleView = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded, view);
+    }
+
+    #[test]
+    fn app_rule_ignores_computed_status_on_write() {
+        // UI может отправить обратно правило из списка: вычисленный признак не
+        // должен попадать в сохранённые данные.
+        let raw = r#"{
+            "id": "rule-1",
+            "name": "Old App",
+            "platform": "linux",
+            "process_path": ["/opt/old/app"],
+            "enabled": true,
+            "missing_paths": ["/opt/old/app"]
+        }"#;
+        let rule: AppRule = serde_json::from_str(raw).unwrap();
+        assert_eq!(rule.name, "Old App");
     }
 
     #[test]
