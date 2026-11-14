@@ -331,7 +331,10 @@ pub fn helper_uninstall(state: tauri::State<'_, AppState>) -> Result<(), Command
     Ok(state.installer.uninstall()?)
 }
 
-#[tauri::command]
+/// `async` обязателен: запрос к провайдеру блокирующий и может идти десятки
+/// секунд. В Tauri 2 синхронные команды выполняются на главном потоке, из-за
+/// чего загрузка подписки замораживала всё окно до ответа или таймаута.
+#[tauri::command(async)]
 pub fn subscription_fetch(
     state: tauri::State<'_, AppState>,
     url: Option<String>,

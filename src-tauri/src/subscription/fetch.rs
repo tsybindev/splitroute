@@ -73,6 +73,12 @@ pub trait SubscriptionFetcher: Send + Sync {
     fn fetch(&self, request: &FetchRequest) -> Result<String, FetchError>;
 }
 
+/// Провайдеры могут отвечать медленно (на практике — около 17 с), поэтому
+/// общий таймаут с запасом: 20 с обрывали успешный ответ.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
+/// Соединение с недоступным хостом не должно ждать весь общий таймаут.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// HTTP-загрузчик на `reqwest` + rustls.
 pub struct ReqwestFetcher {
     timeout: Duration,
@@ -81,7 +87,7 @@ pub struct ReqwestFetcher {
 impl ReqwestFetcher {
     pub fn new() -> Self {
         Self {
-            timeout: Duration::from_secs(20),
+            timeout: REQUEST_TIMEOUT,
         }
     }
 }
@@ -98,6 +104,7 @@ impl SubscriptionFetcher for ReqwestFetcher {
             return Err(FetchError::MissingUrl);
         }
         let client = reqwest::blocking::Client::builder()
+            .connect_timeout(CONNECT_TIMEOUT)
             .timeout(self.timeout)
             .build()
             .map_err(|error| FetchError::Network(network_message(&error)))?;

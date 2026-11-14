@@ -39,6 +39,12 @@ pub struct AppSettings {
     pub preferences: AppPreferences,
 }
 
+/// User-Agent, с которым провайдер отдаёт Happ-JSON. Старый дефолт
+/// `SplitRoute/0.1.0` провайдеры встречают молчанием (запрос висит) или
+/// base64-списком, поэтому сохранённое значение мигрирует при загрузке.
+pub const DEFAULT_USER_AGENT: &str = "Happ/4.1.0";
+const LEGACY_DEFAULT_USER_AGENT: &str = "SplitRoute/0.1.0";
+
 /// 16 hex-символов из CSPRNG. Не выводится из аппаратных идентификаторов.
 pub fn generate_hwid() -> String {
     uuid::Uuid::new_v4()
@@ -55,9 +61,7 @@ impl Default for AppSettings {
             subscription: SubscriptionSettings {
                 url: String::new(),
                 hwid: generate_hwid(),
-                // Провайдер отдаёт Happ-JSON только при этом User-Agent;
-                // с произвольным UA возвращается base64-список vless-ссылок.
-                user_agent: "Happ/4.1.0".to_string(),
+                user_agent: DEFAULT_USER_AGENT.to_string(),
                 auto_update_hours: 12,
             },
             network: Settings::default(),
@@ -85,6 +89,16 @@ pub struct StoredData {
     /// Время последнего успешного обновления подписки (unix, секунды).
     #[serde(default)]
     pub profiles_fetched_at: Option<u64>,
+}
+
+impl StoredData {
+    /// Миграции сохранённого состояния. Пользовательские значения, отличные от
+    /// старого дефолта, не перезаписываются.
+    fn migrate(&mut self) {
+        if self.settings.subscription.user_agent == LEGACY_DEFAULT_USER_AGENT {
+            self.settings.subscription.user_agent = DEFAULT_USER_AGENT.to_string();
+        }
+    }
 }
 
 /// Ошибка чтения/записи состояния.
@@ -116,7 +130,8 @@ impl Store {
     /// Загружает состояние из файла или создаёт значения по умолчанию.
     pub fn load(path: impl Into<PathBuf>) -> Self {
         let path = path.into();
-        let data = read_data(&path).unwrap_or_default();
+        let mut data = read_data(&path).unwrap_or_default();
+        data.migrate();
         Self {
             inner: Mutex::new(data),
             path,
@@ -317,6 +332,32 @@ mod tests {
         );
         assert!(settings.preferences.close_to_tray);
         assert!(store.data().profiles.is_empty());
+    }
+
+    /// Старый дефолт остался в state.json у существующих установок: провайдер
+    /// на него не отвечает, поэтому он мигрирует при загрузке.
+    #[test]
+    fn legacy_default_user_agent_migrates_on_load() {
+        let path = temp_path("legacy-ua");
+        let mut data = StoredData::default();
+        data.settings.subscription.user_agent = "SplitRoute/0.1.0".to_string();
+        write_data(&path, &data).unwrap();
+
+        let store = Store::load(&path);
+        assert_eq!(store.settings().subscription.user_agent, DEFAULT_USER_AGENT);
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn custom_user_agent_is_not_overwritten() {
+        let path = temp_path("custom-ua");
+        let mut data = StoredData::default();
+        data.settings.subscription.user_agent = "MyClient/9.9".to_string();
+        write_data(&path, &data).unwrap();
+
+        let store = Store::load(&path);
+        assert_eq!(store.settings().subscription.user_agent, "MyClient/9.9");
+        let _ = fs::remove_file(&path);
     }
 
     #[test]
