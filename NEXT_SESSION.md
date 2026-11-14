@@ -9,9 +9,10 @@
 - **Этап 3: S3-T1, S3-T3, S3-T4, S3-T5, S3-T6, S3-T8 — done.**
   **S3-T2 — blocked** (нет сертификата Apple). **S3-T7 — blocked** (нет
   Linux/Windows; macOS-часть выполнена).
+- **Этап 4: S4-T1 — done.** Следующая — S4-T2 (иконки приложений).
 - Дата проверки: **2026-11-14**. Ветка `main`; последний коммит — документация
-  G3.4 (`git log -1`). Отчёт: [docs/stage-3-report.md](./docs/stage-3-report.md)
-  §9. Факты: [docs/research.md](./docs/research.md) §13.
+  G4.1 (`git log -1`). Отчёт этапа 3: [docs/stage-3-report.md](./docs/stage-3-report.md)
+  §9. Факты: [docs/research.md](./docs/research.md) §13–§14.
 - Системные сервисы, сокеты, пайпы и процессы после проверок не остались.
 
 ### Что работает
@@ -31,46 +32,56 @@
   локализованный заголовок и точный текст установщика. Состояния helper'а:
   установлен / не установлен / устарел (`HELPER_PROTOCOL`) / не отвечает
   (`HELPER_TIMEOUT`/`HELPER_UNAVAILABLE`) — `src/shared/lib/helperState.ts`.
-  Пароль не читается и не хранится.
-- **Лицензии.** `THIRD_PARTY_NOTICES` в корне; `LICENSE` и notices в бандле:
-  macOS — `Contents/Resources` (проверено `cmp`), DMG — страница GPL-3.0,
-  portable — рядом с бинарём; `.deb`/`.rpm`/AppImage — `/usr/share/doc/splitroute/`,
-  NSIS — `licenseFile` (по конфигу и тестам).
-- **Упаковка.** `tauri.linux.conf.json`, `tauri.windows.conf.json`
-  (`externalBin` только там), `scripts/{fetch-core,fetch-wintun,build-helper-sidecar,package,portable}.sh`.
+- **Каталог приложений (S4-T1).** `crates/protocol::InstalledApp {name, path,
+  platform}`; команда `apps_installed` (`src-tauri/src/catalog/`):
+  - macOS — `.app` в `/Applications`, `/System/Applications`, `~/Applications`,
+    один уровень без рекурсии; имя — stem бандла;
+  - Linux — `.desktop` в `/usr/share/applications` и
+    `~/.local/share/applications`; имя из `Name`, путь из первого токена `Exec`
+    (снимается `env VAR=…`, отбрасываются field-коды); относительные и
+    отсутствующие бинари пропускаются;
+  - Windows — ярлыки меню «Пуск» (ProgramData + APPDATA, рекурсивно) и
+    `Uninstall` в HKLM/HKCU/WOW6432Node по `DisplayIcon`; свой разбор Shell Link.
+  - Битые записи пропускаются с причиной в лог `Debug`, результат
+    дедуплицируется по `path` и сортируется по имени.
+  - `app_rule_from_installed` создаёт **выключенное** правило: macOS —
+    `path_regex ^<escaped .app>/`, Windows/Linux — `process_path`.
+  - UI: вкладки «Запущенные / Установленные / Все правила» (PRD §7), поиск по
+    имени, пустые состояния, типизированная ошибка с повтором.
+- **Лицензии.** `THIRD_PARTY_NOTICES` в корне; `LICENSE` и notices в бандле
+  (macOS — `Contents/Resources`, `.deb`/`.rpm`/AppImage —
+  `/usr/share/doc/splitroute/`, NSIS — `licenseFile`).
 - **Dev-режим.** `SPLITROUTE_MOCK_HELPER=1` сохранён на всех ОС.
 
 ### Проверено (2026-11-14)
 
 - `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -D warnings`
-  — чисто. `cargo test --workspace` — **183 теста** ok.
-- `pnpm typecheck`, `pnpm lint`, `pnpm test` — **35 тестов** ok; `pnpm build` ok.
-- `./scripts/package.sh` → `SplitRoute.app` (96.80 МиБ) и `.dmg`
-  (32.87 МиБ); sidecar'ы в `Contents/MacOS/`; `LICENSE` и
-  `THIRD_PARTY_NOTICES` в `Contents/Resources/` побайтово совпадают с корнем;
-  DMG показывает текст GPL-3.0.
-- `./scripts/portable.sh` → `SplitRoute-portable-macos-arm64.tar.gz` (33 MiB):
-  приложение, `sing-box` 1.14.4, helper, лицензия и notices.
-- Запуск `.app` (`open -n`) и корректное завершение по `SIGTERM`; остатков
-  `splitroute-helper`/`sing-box run` нет.
-- **Smoke упакованными бинарями** (helper и sing-box из `.app`, конфиг без TUN):
-  сокет `0600`, `status` → `stopped`, `start` → `running` + pid + версия,
-  конфиг `0600`, mixed-inbound слушает, `stop` → `stopped`, конфиг удалён,
-  процесс завершён, порт свободен, `SIGTERM` удаляет сокет.
-- Helper в бандле: `Signature=adhoc`, `flags=0x20002(adhoc,linker-signed)` —
-  установщик отклонит его до копирования (по коду).
+  — чисто. `cargo test --workspace` — **208 тестов** ok.
+- `pnpm typecheck`, `pnpm lint`, `pnpm test` — **41 тест** ok; `pnpm build` ok.
+- Реальный скан macOS: **110 приложений** из трёх каталогов, сортировка и
+  дедупликация корректны; контейнеры (`/System/Applications/Utilities`,
+  `Chrome Apps.localized`) пропущены как не-`.app`.
+- Windows-ветка реестра (`collect`/`uninstall_roots`/`read_uninstall_key`)
+  типизирована отдельной `cargo check --target x86_64-pc-windows-msvc` с
+  `windows-sys 0.61` — чисто. Полный `cargo check -p splitroute` под MSVC
+  по-прежнему падает на `ring` (`assert.h not found`).
+- Ранее (этап 3): сборка `.app`/`.dmg`/portable, smoke упакованных helper +
+  sing-box без root — см. `docs/stage-3-report.md` §9.
 
 ### Не проверено (причина)
 
 - **Установка/запуск LaunchDaemon** — blocked: `security find-identity -v -p
   codesigning` → 0; нужен Apple Development/Developer ID. Чек-лист — отчёт §6.
 - **TUN, per-app, DNS, сон/пробуждение, смена сети на упакованных бинарях** —
-  blocked: `sudo` требует пароль, реальной подписки в сессии нет. Функционально
-  проверено 2026-11-12 на dev-бинарях (S2-T8/S2-T10).
+  blocked: `sudo` требует пароль, реальной подписки в сессии нет.
 - **Linux/CachyOS (S3-T3, S2-T9):** `systemctl`, `pkexec`, права
-  `/run/splitroute`, `.deb`/`.rpm`/AppImage — нет машины.
+  `/run/splitroute`, `.deb`/`.rpm`/AppImage — нет машины. Каталог `.desktop`
+  на реальном Linux тоже не проверен.
 - **Windows (S3-T4):** служба под SYSTEM, `sc.exe`, UAC, pipe ACL, TUN,
-  `wintun.dll`, NSIS — нет VM; кросс-сборка установщиков не поддерживается.
+  `wintun.dll`, NSIS — нет VM. Реальные ярлыки и реестр `Uninstall` не
+  проверены, только фикстуры.
+- **Пометка несуществующих путей у сохранённых правил** (PRD §6.3) — не
+  реализована; вне объёма S4-T1.
 
 ### Важные факты окружения
 
@@ -78,8 +89,8 @@
 - macOS 15.8.2 arm64, Rust 1.99.1, Tauri 2.12.5 / CLI 2.12.4, sing-box 1.14.4.
 - Установлены цели `x86_64-pc-windows-msvc` и `x86_64-unknown-linux-gnu`.
 - **Кросс-`cargo check -p splitroute` невозможен:** Windows — `ring`
-  (`assert.h not found`), Linux — `gio-sys`/`glib-sys`. Проверяйте
-  `splitroute-helper` и платформенные модули изолированно.
+  (`assert.h not found`), Linux — `gio-sys`/`glib-sys`. Для Windows-веток
+  каталога проверяйте функции в изолированном крейте с `windows-sys 0.61`.
 - `sudo -n true` **не проходит**; системные службы не ставить без явного
   действия пользователя.
 - **Debug-сборка** ищет сокет в `$TMPDIR/splitroute-helper.sock`. Для
@@ -101,6 +112,9 @@
 - Секреты (URL подписки, HWID, UUID) не логировать и не коммитить.
 - **`THIRD_PARTY_NOTICES` обновляется вручную** (раздел 11 файла):
   `cargo metadata --all-features`, `pnpm licenses list --prod`.
+- **Каталог приложений:** пути читаются из системных списков; привилегий нет.
+  Не добавляйте рекурсию в macOS-скан молча — контейнеры (`Utilities`) дадут
+  неверные имена. Иконки — отдельная задача S4-T2.
 - После проверок: `pgrep -fl 'splitroute-helper|sing-box run'`,
   `ls -d /tmp/sr-*`, `launchctl print system/com.splitroute.helper`.
 
@@ -150,8 +164,10 @@ pgrep -a -f 'splitroute-helper|sing-box run'
 
 Ожидается: `/usr/share/doc/splitroute/{LICENSE,THIRD_PARTY_NOTICES}`;
 сервис `active (running)`; каталог `711 root:root`; сокет `600` пользователя;
-`--allow-uid` = uid установившего. Для CachyOS дополнительно проверить
-`systemd-resolved` и allowlist (S2-T9).
+`--allow-uid` = uid установившего. Дополнительно для S4-T1: вкладка
+«Установленные» показывает приложения из `/usr/share/applications` и
+`~/.local/share/applications`, поиск фильтрует, битые `.desktop` попадают в
+логи (`Debug`) и не ломают список.
 
 ### Windows (S3-T4)
 
@@ -170,10 +186,12 @@ rustup target add x86_64-pc-windows-msvc
 `wintun.dll` рядом с `sing-box.exe`; pipe доступен только SID пользователя;
 NSIS показывает страницу лицензии; `LICENSE` и `THIRD_PARTY_NOTICES` в
 каталоге приложения; TUN поднимается, выбранное приложение идёт через прокси.
+Для S4-T1: каталог находит ярлыки «Пуск» и записи `Uninstall`, правило
+создаётся с `process_path` к `.exe`.
 
 ---
 
-## Промпт следующей подцели: G4.1 (S4-T1)
+## Промпт следующей подцели: G4.2 (S4-T2)
 
 Скопируйте текст ниже целиком в новую сессию. Запускайте из каталога `app/`.
 
@@ -182,82 +200,70 @@ NSIS показывает страницу лицензии; `LICENSE` и `THIRD
 Рабочий каталог: /Users/tsybin_d/Documents/Dev/Backend/vpn_client/app
 Перед командами: export PATH="$HOME/.cargo/bin:$PATH"
 
-ЦЕЛЬ: подцель G4.1 этапа 4 — S4-T1 «Каталог установленных приложений (без иконок)».
+ЦЕЛЬ: подцель G4.2 этапа 4 — S4-T2 «Иконки приложений в каталоге».
 После подцели остановись: коммит кода/тестов, отдельный коммит документации,
 обновление NEXT_SESSION.md. Следующие задачи этапа 4 не начинай.
 
 ПРОЧИТАЙ СНАЧАЛА
 - AGENTS.md §2, §6, §8, §10–§14, §17–§18.
-- PRD.md §6.3 (каталог установленных приложений), §6.6, §7.
-- TASKS.md: S4-T1 и этап 4.
-- NEXT_SESSION.md (этот файл), docs/stage-3-report.md §9,
-  docs/research.md §13.
-- src-tauri/src/commands/mod.rs, src/shared/api/{client,types}.ts,
+- PRD.md §6.3, §7 (экран «Приложения»).
+- TASKS.md: S4-T2 и этап 4.
+- NEXT_SESSION.md (этот файл), docs/research.md §14,
+  docs/stage-3-report.md §9.
+- src-tauri/src/catalog/{mod,macos,linux,windows}.rs,
+  src-tauri/src/commands/mod.rs, src/shared/api/{client,types}.ts,
   src/features/apps/, crates/protocol/src/model.rs.
 
 ТЕКУЩЕЕ СОСТОЯНИЕ
-- Этап 3 закрыт по коду: helper, установщики macOS/Linux/Windows, UI установки,
-  лицензии, упаковка. S3-T2 blocked подписью Apple, S3-T7 blocked отсутствием
-  Linux/Windows — их не «закрывать» и не выдавать за проверенные.
-- Проверено 2026-11-14: 183 Rust + 35 frontend тестов, clippy -D warnings,
-  сборка .app/.dmg/portable, smoke упакованных helper + sing-box без root.
-- Каталога установленных приложений нет: экран «Приложения» умеет только
-  правила (rules_list/rules_upsert/rules_delete) и не перечисляет установленные
-  приложения.
+- S4-T1 done (коммит f4e4eab): тип InstalledApp {name, path, platform},
+  команда apps_installed (macOS — .app, Linux — .desktop, Windows — ярлыки
+  и реестр), app_rule_from_installed, вкладка «Установленные» с поиском.
+- Проверено 2026-11-14: 208 Rust + 41 frontend тестов, clippy -D warnings,
+  реальный скан macOS (110 приложений). Linux/Windows-скан не проверен.
+- Иконок нет: записи каталога отдаются без изображений.
 
 КОНТРАКТ, КОТОРЫЙ НЕЛЬЗЯ ЛОМАТЬ
 - crates/protocol — единственный источник общих типов; формат IPC helper'а
   (status/start/stop) не меняется.
-- InstallerError::{RequiresPrivileges,Unsupported,MissingBinary,Failed} и коды
-  CommandError INSTALLER_* — контракт UI.
+- AppRule и InstalledApp не получают необязательных полей «на будущее» без
+  согласования: сначала правка PRD/типа, затем код.
 - UI не получает root, не вызывает shell и не сканирует систему в обход
-  Tauri-команд. Никаких привилегированных действий в этой задаче.
-- AppRule (id, name, platform, process_name, process_path, path_regex, enabled)
-  не меняется: каталог только создаёт правила из него.
-- Секреты (URL подписки, HWID, UUID) не логировать и не коммитить.
-- externalBin — только в платформенных конфигах; LICENSE и
-  THIRD_PARTY_NOTICES остаются в бандле.
-- Комментарии — на русском, идентификаторы — английские; новых зависимостей
-  не добавлять без обоснования.
+  Tauri-команд. Никаких привилегированных действий.
+- Иконки не должны блокировать UI и не должны читаться на каждый рендер.
+- Секреты не логировать и не коммитить. Новых тяжёлых зависимостей не
+  добавлять без обоснования (AGENTS.md §3).
+- Комментарии — на русском, идентификаторы — английские.
 
 ЗАДАЧИ
 1. Модель и команда.
-   - Добавить в crates/protocol тип InstalledApp { name: String, path: String,
-     platform: Platform } (serde, PartialEq, Eq) и тест round-trip.
-   - Добавить Tauri-команду `apps_installed() -> Vec<InstalledApp>`.
-     Источники:
-     macOS — каталоги *.app в /Applications, /System/Applications,
-     ~/Applications (один уровень, без рекурсии); имя — stem бандла, path —
-     путь к .app;
-     Windows — ярлыки Start Menu (ProgramData и пользователя) и/или записи
-     реестра Uninstall с DisplayIcon; Linux — *.desktop в
-     /usr/share/applications и ~/.local/share/applications, путь — из Exec
-     (без аргументов), имя — из Name.
-   - Разбор каждого источника — чистая функция, тестируемая на macOS
-     (фикстуры строк/временные каталоги), без обращения к реальной системе
-     в тестах.
-   - Не падать на битых ярлыках/desktop-файлах: пропускать с причиной в логе.
-   - Дедупликация по path, сортировка по имени.
+   - Расширить InstalledApp полем иконки (например `icon_png_base64:
+     Option<String>`) ИЛИ отдельной командой `app_icon(path) -> Option<String>`
+     — выбери вариант с меньшим объёмом данных при старте и обоснуй в
+     комментарии. Обнови round-trip тест.
+   - Источники: macOS — `.icns` из `Contents/Resources` (конвертация без
+     тяжёлых зависимостей; допустимо вернуть исходный формат, если UI умеет),
+     Linux — `Icon=` из `.desktop` с поиском в hicolor-темах,
+     Windows — иконка `.exe`/ярлыка (Shell API или встроенный ресурс).
+     Если для ОС библиотека недоступна — честный fallback, не паника.
+   - Ограничить размер: иконка ужимается до разумного (например 64×64),
+     кэш в памяти по пути, повторный запрос не читает диск.
 2. UI.
-   - Экран «Приложения»: вкладка «Установленные» (по PRD §7: Запущенные /
-     Установленные / Все правила), поиск по имени.
-   - Действие «Добавить правило» создаёт выключенное правило через
-     rules_upsert: macOS — path_regex `^<экранированный путь .app>/`
-     (экранировать символы regex), Windows/Linux — process_path с полным
-     путём; имя правила = имя приложения; platform = текущая ОС.
-   - Ошибки и пустое состояние — по-русски, через существующий i18n.
-   - Ничего не подключать и не менять на других экранах.
+   - Вкладка «Установленные» показывает иконку слева от имени; при
+     отсутствии — заглушка с первой буквой/иконкой приложения.
+   - Каталог из 100+ записей не должен заметно тормозить: проверь на реальном
+     macOS-скане, при необходимости — ленивая загрузка иконок.
 3. Тесты.
-   - Rust: round-trip InstalledApp, парсинг macOS/Windows/Linux источников на
-     фикстурах, дедупликация, экранирование regex, пропуск битых записей.
-   - Frontend: вкладка «Установленные», поиск, создание правила из записи,
-     пустое состояние и ошибка команды.
+   - Rust: разбор/выбор иконки на фикстурах, fallback, кэш (повторный вызов
+     не читает диск), лимит размера.
+   - Frontend: иконка отображается, fallback при её отсутствии, каталог
+     рендерится без ошибок при пустых иконках.
 
 ПРОВЕРКИ
 - cargo fmt --all --check
 - cargo clippy --workspace --all-targets -- -D warnings
 - cargo test --workspace
 - pnpm typecheck && pnpm lint && pnpm test && pnpm build
+- Реальный скан macOS: время открытия вкладки и визуально корректные иконки.
 
 ОГРАНИЧЕНИЯ
 - Не менять протокол helper'а, установщики и экраны сверх описанного.
@@ -265,9 +271,9 @@ NSIS показывает страницу лицензии; `LICENSE` и `THIRD
 - Не выдавать непроверенное на других ОС за проверенное.
 
 ОТЧЁТ
-- TASKS.md: S4-T1 → done со ссылкой на коммит и кратким описанием.
-- NEXT_SESSION.md: состояние, что проверено, и самодостаточный промпт G4.2
-  (S4-T2, иконки приложений).
+- TASKS.md: S4-T2 → done со ссылкой на коммит и кратким описанием.
+- NEXT_SESSION.md: состояние, что проверено, и самодостаточный промпт G4.3
+  (S4-T3, EN-локализация).
 - Коммиты: feat:/test: для кода и тестов, отдельный docs: для документации.
 ```
 
@@ -290,11 +296,10 @@ NSIS показывает страницу лицензии; `LICENSE` и `THIRD
   `build-helper-sidecar.sh`.
 - **Smoke helper'а:** одно сообщение на соединение; клиент приложения
   переподключается на каждую команду.
-- В `/tmp` остался `sr-meta.json` (вывод `cargo metadata` прошлой сессии,
-  ~2.6 МБ) — к репозиторию не относится, можно удалить.
-- Известные ограничения G3.1: osascript-скрипт во временном каталоге (TOCTOU —
-  для релиза SMJobBless/Authorization Services или подписанный установщик);
-  `--allow-uid`/`--allow-sid` фиксируют одного пользователя.
+- **Каталог приложений:** macOS-скан намеренно не рекурсивный (контейнеры
+  `Utilities` дали бы неверные имена). `Exec`/`DisplayIcon` нормализуются
+  чистыми функциями — их и расширяйте тестами, а не системными вызовами.
+- **`--allow-uid`/`--allow-sid`** фиксируют одного пользователя (G3.1).
 - Подпись нужна для распространения: Developer ID + notarization (macOS),
   Authenticode/SmartScreen (Windows), подпись пакетов (Linux); `wintun.dll` —
   только официальная подписанная.
