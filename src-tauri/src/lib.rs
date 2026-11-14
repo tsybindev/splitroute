@@ -126,6 +126,7 @@ pub fn run() {
             commands::rules_delete,
             commands::apps_installed,
             commands::app_rule_from_installed,
+            commands::app_icon,
             commands::settings_get,
             commands::settings_update,
             commands::hwid_generate,

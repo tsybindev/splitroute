@@ -53,6 +53,8 @@ export const api = {
   appsInstalled: () => invoke<InstalledApp[]>("apps_installed"),
   appRuleFromInstalled: (app: InstalledApp) =>
     invoke<AppRule>("app_rule_from_installed", { app }),
+  // Иконка приходит готовым data URL или null: UI не разбирает форматы файлов.
+  appIcon: (app: InstalledApp) => invoke<string | null>("app_icon", { app }),
   settingsGet: () => invoke<AppSettings>("settings_get"),
   settingsUpdate: (settings: AppSettings) =>
     invoke<AppSettings>("settings_update", { settings }),

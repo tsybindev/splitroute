@@ -16,6 +16,8 @@ use super::ScanReport;
 pub struct DesktopEntry {
     pub name: String,
     pub exec: String,
+    /// Значение `Icon=`: имя темы или абсолютный путь (S4-T2).
+    pub icon: Option<String>,
 }
 
 pub fn system_dir() -> PathBuf {
@@ -36,6 +38,7 @@ pub fn parse_desktop_entry(text: &str) -> Option<DesktopEntry> {
     let mut in_group = false;
     let mut name: Option<String> = None;
     let mut exec: Option<String> = None;
+    let mut icon: Option<String> = None;
     let mut hidden = false;
     let mut no_display = false;
     let mut entry_type: Option<String> = None;
@@ -60,6 +63,7 @@ pub fn parse_desktop_entry(text: &str) -> Option<DesktopEntry> {
             // Локализованные ключи (Name[ru]) не заменяют базовый Name.
             "Name" => name = Some(value.to_string()),
             "Exec" => exec = Some(value.to_string()),
+            "Icon" => icon = Some(value.to_string()),
             "Hidden" => hidden = value.eq_ignore_ascii_case("true"),
             "NoDisplay" => no_display = value.eq_ignore_ascii_case("true"),
             "Type" => entry_type = Some(value.to_string()),
@@ -81,7 +85,10 @@ pub fn parse_desktop_entry(text: &str) -> Option<DesktopEntry> {
         return None;
     }
     let exec = executable_from_exec(&exec?)?;
-    Some(DesktopEntry { name, exec })
+    let icon = icon
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    Some(DesktopEntry { name, exec, icon })
 }
 
 /// Первый токен `Exec` без field-кодов `%f`/`%U`, кавычек и обёртки `env`.
@@ -279,6 +286,37 @@ mod tests {
             executable_from_exec("/usr/bin/app %U %F --flag").as_deref(),
             Some("/usr/bin/app")
         );
+    }
+
+    #[test]
+    fn icon_key_is_parsed() {
+        let text = "[Desktop Entry]\nType=Application\nName=Firefox\nExec=/usr/bin/firefox\nIcon=firefox\n";
+        assert_eq!(
+            parse_desktop_entry(text).unwrap().icon.as_deref(),
+            Some("firefox")
+        );
+    }
+
+    #[test]
+    fn absolute_icon_path_is_kept_as_is() {
+        let text = "[Desktop Entry]\nType=Application\nName=App\nExec=/opt/app/app\nIcon=/opt/app/app.png\n";
+        assert_eq!(
+            parse_desktop_entry(text).unwrap().icon.as_deref(),
+            Some("/opt/app/app.png")
+        );
+    }
+
+    #[test]
+    fn missing_or_empty_icon_is_none() {
+        assert!(parse_desktop_entry(&entry("app")).unwrap().icon.is_none());
+
+        let empty = "[Desktop Entry]\nType=Application\nName=App\nExec=/usr/bin/app\nIcon=   \n";
+        assert!(parse_desktop_entry(empty).unwrap().icon.is_none());
+
+        // Icon из другой группы не подхватывается.
+        let other = "[Desktop Entry]\nType=Application\nName=App\nExec=/usr/bin/app\n\
+                     [Desktop Action new]\nIcon=other\n";
+        assert!(parse_desktop_entry(other).unwrap().icon.is_none());
     }
 
     #[test]

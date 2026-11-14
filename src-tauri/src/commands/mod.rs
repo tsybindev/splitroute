@@ -385,6 +385,14 @@ pub fn app_rule_from_installed(app: InstalledApp) -> AppRule {
     catalog::rule_from_app(&app)
 }
 
+/// Иконка приложения как data URL (S4-T2). `async`, чтобы чтение `.icns`/`.exe`
+/// и декодирование PNG не выполнялись на главном потоке: в Tauri 2 синхронные
+/// команды идут на main thread. `None` — штатный fallback без иконки.
+#[tauri::command(async)]
+pub fn app_icon(app: InstalledApp) -> Option<String> {
+    catalog::icons::icon_for(&app)
+}
+
 #[tauri::command]
 pub fn rules_upsert(
     state: tauri::State<'_, AppState>,
@@ -678,6 +686,24 @@ mod tests {
         assert_eq!(rules.len(), 1);
         assert_eq!(state.store.rules().len(), 1);
         assert_eq!(state.store.delete_rule("r1").unwrap().len(), 0);
+    }
+
+    #[test]
+    fn app_icon_with_missing_path_is_fallback() {
+        // Контракт команды: отсутствующий бандл/файл — `None`, а не паника.
+        let app = InstalledApp {
+            name: "Ghost".to_string(),
+            path: "/nonexistent/App.app".to_string(),
+            platform: Platform::Macos,
+        };
+        assert!(app_icon(app).is_none());
+
+        let unknown = InstalledApp {
+            name: "Ghost".to_string(),
+            path: "/nonexistent/ghost.exe".to_string(),
+            platform: Platform::Windows,
+        };
+        assert!(app_icon(unknown).is_none());
     }
 
     #[test]

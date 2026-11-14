@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AppsScreen } from "./AppsScreen";
+import { clearIconCache } from "./AppIcon";
 import { resetAppStore, useAppStore } from "../../shared/state/appStore";
 import { makeInstalledApp, makeRule } from "../../test/fixtures";
 
@@ -10,6 +11,7 @@ const apiMock = vi.hoisted(() => ({
   rulesDelete: vi.fn(),
   appsInstalled: vi.fn(),
   appRuleFromInstalled: vi.fn(),
+  appIcon: vi.fn(),
 }));
 
 vi.mock("../../shared/api/client", () => ({
@@ -28,8 +30,11 @@ async function openRulesTab() {
 describe("AppsScreen", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    clearIconCache();
     resetAppStore();
     apiMock.appsInstalled.mockResolvedValue([]);
+    // По умолчанию иконок нет: у большинства тестов каталог не про них.
+    apiMock.appIcon.mockResolvedValue(null);
   });
 
   it("открывается на вкладке «Установленные»", () => {
@@ -202,6 +207,99 @@ describe("AppsScreen", () => {
     expect(apiMock.rulesUpsert).not.toHaveBeenCalled();
     expect(
       screen.getByText("Заполните название и значение правила."),
+    ).toBeInTheDocument();
+  });
+
+  it("показывает иконку приложения из ядра", async () => {
+    const app = makeInstalledApp({
+      name: "Firefox",
+      path: "/Applications/Firefox.app",
+    });
+    apiMock.appsInstalled.mockResolvedValue([app]);
+    apiMock.appIcon.mockResolvedValue("data:image/png;base64,iVBORw0KGgo=");
+    const { container } = render(<AppsScreen />);
+
+    await screen.findByText("Firefox");
+    await waitFor(() => {
+      const img = container.querySelector("img");
+      expect(img).toHaveAttribute("src", "data:image/png;base64,iVBORw0KGgo=");
+      expect(img).toHaveAttribute("alt", "");
+    });
+    expect(apiMock.appIcon).toHaveBeenCalledWith(app);
+  });
+
+  it("показывает заглушку с первой буквой, если иконки нет", async () => {
+    const app = makeInstalledApp({
+      name: "telegram",
+      path: "/Applications/Telegram.app",
+    });
+    apiMock.appsInstalled.mockResolvedValue([app]);
+    const { container } = render(<AppsScreen />);
+
+    await screen.findByText("telegram");
+    await waitFor(() => expect(apiMock.appIcon).toHaveBeenCalledWith(app));
+    expect(container.querySelector("img")).toBeNull();
+    expect(screen.getByText("T")).toBeInTheDocument();
+  });
+
+  it("рендерит каталог из 40 записей без иконок", async () => {
+    const apps = Array.from({ length: 40 }, (_, index) =>
+      makeInstalledApp({
+        name: `Приложение ${index + 1}`,
+        path: `/Applications/App${index + 1}.app`,
+      }),
+    );
+    apiMock.appsInstalled.mockResolvedValue(apps);
+    const { container } = render(<AppsScreen />);
+
+    await screen.findByText("Приложение 1");
+    await waitFor(() => expect(apiMock.appIcon).toHaveBeenCalledTimes(40));
+    for (const app of apps) {
+      expect(screen.getByText(app.name)).toBeInTheDocument();
+    }
+    expect(container.querySelector("img")).toBeNull();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByText("Найдено приложений: 40")).toBeInTheDocument();
+  });
+
+  it("не запрашивает иконку повторно при поиске и возврате строки", async () => {
+    const user = userEvent.setup();
+    apiMock.appsInstalled.mockResolvedValue([
+      makeInstalledApp({ name: "Chrome", path: "/Applications/Chrome.app" }),
+      makeInstalledApp({ name: "Telegram", path: "/Applications/Telegram.app" }),
+    ]);
+    render(<AppsScreen />);
+
+    await screen.findByText("Chrome");
+    await waitFor(() => expect(apiMock.appIcon).toHaveBeenCalledTimes(2));
+
+    const search = screen.getByLabelText("Поиск по установленным приложениям");
+    await user.type(search, "tele");
+    expect(screen.queryByText("Chrome")).not.toBeInTheDocument();
+    await user.clear(search);
+    await user.type(search, "chro");
+    expect(screen.getByText("Chrome")).toBeInTheDocument();
+
+    // Иконка берётся из кэша: ядро повторно не дёргаем.
+    expect(apiMock.appIcon).toHaveBeenCalledTimes(2);
+  });
+
+  it("не показывает ошибку, если иконка недоступна", async () => {
+    const app = makeInstalledApp({ name: "Slack", path: "/Applications/Slack.app" });
+    apiMock.appsInstalled.mockResolvedValue([app]);
+    apiMock.appIcon.mockRejectedValue({
+      code: "UNKNOWN",
+      message: "Нет доступа к иконке",
+    });
+    const { container } = render(<AppsScreen />);
+
+    await screen.findByText("Slack");
+    await waitFor(() => expect(apiMock.appIcon).toHaveBeenCalledWith(app));
+    await waitFor(() => expect(screen.getByText("S")).toBeInTheDocument());
+    expect(container.querySelector("img")).toBeNull();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: `Добавить правило: ${app.name}` }),
     ).toBeInTheDocument();
   });
 });

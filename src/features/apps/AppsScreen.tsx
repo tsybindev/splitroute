@@ -9,6 +9,7 @@ import { Card } from "../../shared/ui/Card";
 import { EmptyState } from "../../shared/ui/EmptyState";
 import { ErrorBox } from "../../shared/ui/ErrorBox";
 import { Field, inputClass } from "../../shared/ui/Field";
+import { AppIcon } from "./AppIcon";
 
 type AppsTab = "installed" | "running" | "rules";
 
@@ -154,13 +155,16 @@ function InstalledApps() {
                     key={app.path}
                     className="flex items-center justify-between gap-3 rounded-lg border border-neutral-800 bg-neutral-900/60 px-4 py-3"
                   >
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium text-neutral-100">
-                        {app.name}
-                      </p>
-                      <p className="truncate font-mono text-xs text-neutral-500">
-                        {app.path}
-                      </p>
+                    <div className="flex min-w-0 items-center gap-3">
+                      <AppIcon app={app} />
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-neutral-100">
+                          {app.name}
+                        </p>
+                        <p className="truncate font-mono text-xs text-neutral-500">
+                          {app.path}
+                        </p>
+                      </div>
                     </div>
                     <Button
                       variant={added ? "ghost" : "secondary"}
