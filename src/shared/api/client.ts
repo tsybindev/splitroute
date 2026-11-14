@@ -14,6 +14,7 @@ import type {
   LogLevel,
   ProfilesResponse,
   SubscriptionFetchResponse,
+  TrafficStats,
 } from "./types";
 
 export function toCommandError(error: unknown): CommandError {
@@ -63,6 +64,8 @@ export const api = {
   logsList: (level: LogLevel | null, limit = 200) =>
     invoke<LogEntry[]>("logs_list", { level, limit }),
   diagnosticsGet: () => invoke<string>("diagnostics_get"),
+  // Счётчики читает Rust у локального Clash API; секрет и адрес ядра в UI не попадают.
+  trafficStats: () => invoke<TrafficStats>("traffic_stats"),
 };
 
 export function onConnectionChanged(

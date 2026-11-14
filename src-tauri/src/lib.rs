@@ -7,6 +7,7 @@ pub mod logging;
 pub mod privileged;
 pub mod store;
 pub mod subscription;
+pub mod traffic;
 pub mod tray;
 
 use std::sync::Arc;
@@ -63,7 +64,7 @@ fn default_installer() -> Arc<dyn HelperInstaller> {
 }
 
 /// rustls без `aws-lc`: провайдер ring регистрируется один раз до первого запроса.
-fn init_tls() {
+pub(crate) fn init_tls() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
@@ -132,6 +133,7 @@ pub fn run() {
             commands::hwid_generate,
             commands::logs_list,
             commands::diagnostics_get,
+            commands::traffic_stats,
         ])
         .run(tauri::generate_context!())
         .expect("ошибка запуска SplitRoute");

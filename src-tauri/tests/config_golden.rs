@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde_json::Value;
-use splitroute_lib::config::build_config;
+use splitroute_lib::config::{build_config, ClashApi};
 use splitroute_protocol::{
     AppRule, DnsMode, LogLevel, Platform, Profile, Protocol, Settings, TlsConfig, TlsKind,
     Transport,
@@ -61,6 +61,14 @@ fn curl_rule() -> AppRule {
     }
 }
 
+/// Фиксированные параметры для golden: порт и secret не случайны.
+fn clash_api() -> ClashApi {
+    ClashApi {
+        port: 19090,
+        secret: "0123456789abcdef0123456789abcdef".to_string(),
+    }
+}
+
 fn golden_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/config")
 }
@@ -84,10 +92,12 @@ fn check_golden(name: &str, config: &Value) {
 
 #[test]
 fn golden_default_allowlist_proxy_dns() {
+    let api = clash_api();
     let config = build_config(
         &Settings::default(),
         &profile(),
         &[chrome_rule(), curl_rule()],
+        Some(&api),
     )
     .unwrap();
     check_golden("default-allowlist", &config);
@@ -95,19 +105,21 @@ fn golden_default_allowlist_proxy_dns() {
 
 #[test]
 fn golden_ipv6_on_system_dns() {
+    let api = clash_api();
     let settings = Settings {
         ipv6_enabled: true,
         dns_mode: DnsMode::System,
         log_level: LogLevel::Debug,
         ..Settings::default()
     };
-    let config = build_config(&settings, &profile(), &[chrome_rule()]).unwrap();
+    let config = build_config(&settings, &profile(), &[chrome_rule()], Some(&api)).unwrap();
     check_golden("ipv6-on-system-dns", &config);
 }
 
 #[test]
 fn golden_empty_allowlist() {
-    let config = build_config(&Settings::default(), &profile(), &[]).unwrap();
+    let api = clash_api();
+    let config = build_config(&Settings::default(), &profile(), &[], Some(&api)).unwrap();
     check_golden("empty-allowlist", &config);
 }
 
@@ -118,6 +130,7 @@ fn generated_configs_pass_sing_box_check() {
         return;
     };
 
+    let api = clash_api();
     for (name, config) in [
         (
             "default",
@@ -125,6 +138,7 @@ fn generated_configs_pass_sing_box_check() {
                 &Settings::default(),
                 &profile(),
                 &[chrome_rule(), curl_rule()],
+                Some(&api),
             )
             .unwrap(),
         ),
@@ -137,6 +151,7 @@ fn generated_configs_pass_sing_box_check() {
                 },
                 &profile(),
                 &[chrome_rule()],
+                Some(&api),
             )
             .unwrap(),
         ),
@@ -149,6 +164,7 @@ fn generated_configs_pass_sing_box_check() {
                 },
                 &profile(),
                 &[chrome_rule()],
+                Some(&api),
             )
             .unwrap(),
         ),

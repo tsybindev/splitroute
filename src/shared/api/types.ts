@@ -116,6 +116,13 @@ export interface LogEntry {
   message: string;
 }
 
+/** Счётчики трафика сессии в байтах (S4-T4). */
+export interface TrafficStats {
+  available: boolean;
+  upload_total: number;
+  download_total: number;
+}
+
 export interface CommandError {
   code: string;
   message: string;

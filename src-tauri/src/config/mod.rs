@@ -12,6 +12,15 @@ pub const REMOTE_DNS: &str = "1.1.1.1";
 pub const TUN_ADDRESS_V4: &str = "172.19.0.1/30";
 /// Адрес TUN для IPv6 (только если IPv6 включён).
 pub const TUN_ADDRESS_V6: &str = "fdfe:dcba:9876::1/126";
+/// Локальный адрес Clash API: только loopback, наружу не слушает.
+pub const CLASH_API_HOST: &str = "127.0.0.1";
+
+/// Параметры локального Clash API ядра для статистики трафика (PRD §6.2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClashApi {
+    pub port: u16,
+    pub secret: String,
+}
 
 /// Ошибка генерации конфига.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -27,23 +36,33 @@ pub enum ConfigError {
 }
 
 /// Собирает конфиг sing-box. `rules` — полный список правил allowlist; выключенные
-/// игнорируются.
+/// игнорируются. `clash_api` включает локальный API статистики, если задан.
 pub fn build_config(
     settings: &Settings,
     profile: &Profile,
     rules: &[AppRule],
+    clash_api: Option<&ClashApi>,
 ) -> Result<Value, ConfigError> {
     validate(settings, profile)?;
 
     let active: Vec<&AppRule> = rules.iter().filter(|rule| rule.enabled).collect();
 
-    Ok(json!({
+    let mut config = json!({
         "log": { "level": json!(settings.log_level), "timestamp": true },
         "dns": build_dns(settings),
         "inbounds": build_inbounds(settings),
         "outbounds": build_outbounds(settings, profile)?,
         "route": build_route(settings, &active),
-    }))
+    });
+    if let Some(clash_api) = clash_api {
+        config["experimental"] = json!({
+            "clash_api": {
+                "external_controller": format!("{CLASH_API_HOST}:{}", clash_api.port),
+                "secret": clash_api.secret,
+            }
+        });
+    }
+    Ok(config)
 }
 
 fn validate(settings: &Settings, profile: &Profile) -> Result<(), ConfigError> {
@@ -291,7 +310,7 @@ mod tests {
 
     #[test]
     fn default_config_has_tun_and_process_rule() {
-        let config = build_config(&Settings::default(), &profile(), &[rule()]).unwrap();
+        let config = build_config(&Settings::default(), &profile(), &[rule()], None).unwrap();
         assert_eq!(config["inbounds"][0]["type"], "tun");
         assert_eq!(config["inbounds"][0]["mtu"], 1500);
         assert_eq!(config["outbounds"][0]["type"], "vless");
@@ -317,7 +336,7 @@ mod tests {
     fn disabled_rules_are_ignored() {
         let mut disabled = rule();
         disabled.enabled = false;
-        let config = build_config(&Settings::default(), &profile(), &[disabled]).unwrap();
+        let config = build_config(&Settings::default(), &profile(), &[disabled], None).unwrap();
         let rules = config["route"]["rules"].as_array().unwrap();
         assert_eq!(
             rules.len(),
@@ -328,7 +347,7 @@ mod tests {
 
     #[test]
     fn proxy_dns_goes_through_proxy_without_process_rules() {
-        let config = build_config(&Settings::default(), &profile(), &[rule()]).unwrap();
+        let config = build_config(&Settings::default(), &profile(), &[rule()], None).unwrap();
         let dns = &config["dns"];
         assert_eq!(dns["final"], "remote");
         let servers = dns["servers"].as_array().unwrap();
@@ -354,7 +373,7 @@ mod tests {
 
     #[test]
     fn ipv6_disabled_blocks_selected_process() {
-        let config = build_config(&Settings::default(), &profile(), &[rule()]).unwrap();
+        let config = build_config(&Settings::default(), &profile(), &[rule()], None).unwrap();
         let rules = config["route"]["rules"].as_array().unwrap();
         assert!(rules
             .iter()
@@ -372,7 +391,7 @@ mod tests {
             ipv6_enabled: true,
             ..Settings::default()
         };
-        let config = build_config(&settings, &profile(), &[rule()]).unwrap();
+        let config = build_config(&settings, &profile(), &[rule()], None).unwrap();
         let address = config["inbounds"][0]["address"].as_array().unwrap();
         assert_eq!(address.len(), 2);
         assert!(config["outbounds"]
@@ -388,7 +407,7 @@ mod tests {
             dns_mode: DnsMode::System,
             ..Settings::default()
         };
-        let config = build_config(&settings, &profile(), &[rule()]).unwrap();
+        let config = build_config(&settings, &profile(), &[rule()], None).unwrap();
         let servers = config["dns"]["servers"].as_array().unwrap();
         assert_eq!(servers.len(), 1);
         assert_eq!(servers[0]["tag"], "local");
@@ -409,7 +428,7 @@ mod tests {
         let mut broken = profile();
         broken.tls.public_key = None;
         assert_eq!(
-            build_config(&Settings::default(), &broken, &[]),
+            build_config(&Settings::default(), &broken, &[], None),
             Err(ConfigError::MissingRealityKey)
         );
     }
@@ -421,7 +440,7 @@ mod tests {
             ..Settings::default()
         };
         assert!(matches!(
-            build_config(&settings, &profile(), &[]),
+            build_config(&settings, &profile(), &[], None),
             Err(ConfigError::InvalidSettings(_))
         ));
     }
@@ -432,7 +451,30 @@ mod tests {
             mixed_inbound_enabled: false,
             ..Settings::default()
         };
-        let config = build_config(&settings, &profile(), &[]).unwrap();
+        let config = build_config(&settings, &profile(), &[], None).unwrap();
         assert_eq!(config["inbounds"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn clash_api_listens_only_on_loopback_with_secret() {
+        let api = ClashApi {
+            port: 19090,
+            secret: "0123456789abcdef0123456789abcdef".to_string(),
+        };
+        let config = build_config(&Settings::default(), &profile(), &[], Some(&api)).unwrap();
+        assert_eq!(
+            config["experimental"]["clash_api"]["external_controller"],
+            "127.0.0.1:19090"
+        );
+        assert_eq!(
+            config["experimental"]["clash_api"]["secret"],
+            "0123456789abcdef0123456789abcdef"
+        );
+    }
+
+    #[test]
+    fn no_clash_api_block_without_endpoint() {
+        let config = build_config(&Settings::default(), &profile(), &[], None).unwrap();
+        assert!(config.get("experimental").is_none());
     }
 }

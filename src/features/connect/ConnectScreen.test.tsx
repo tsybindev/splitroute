@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ConnectScreen } from "./ConnectScreen";
 import { resetAppStore, useAppStore } from "../../shared/state/appStore";
@@ -8,7 +8,10 @@ import { makeProfile, makeSettings, runningStatus, stoppedStatus } from "../../t
 const apiMock = vi.hoisted(() => ({
   connect: vi.fn(),
   disconnect: vi.fn(),
+  trafficStats: vi.fn(),
 }));
+
+const noTraffic = { available: false, upload_total: 0, download_total: 0 };
 
 vi.mock("../../shared/api/client", () => ({
   api: apiMock,
@@ -19,6 +22,8 @@ vi.mock("../../shared/api/client", () => ({
 describe("ConnectScreen", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    apiMock.trafficStats.mockReset();
+    apiMock.trafficStats.mockResolvedValue(noTraffic);
     resetAppStore();
   });
 
@@ -73,7 +78,7 @@ describe("ConnectScreen", () => {
     );
   });
 
-  it("показывает время сессии из статуса helper'а", () => {
+  it("показывает время сессии из статуса helper'а", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-11-12T12:00:00Z"));
     const now = Math.floor(Date.now() / 1000);
@@ -86,7 +91,83 @@ describe("ConnectScreen", () => {
     });
 
     render(<ConnectScreen />);
+    await act(async () => {});
     expect(screen.getByText("00:01:05")).toBeInTheDocument();
+  });
+
+  it("показывает ↑/↓ за сессию в читаемом виде", async () => {
+    apiMock.trafficStats.mockResolvedValue({
+      available: true,
+      upload_total: 1536,
+      download_total: 5 * 1024 * 1024,
+    });
+    useAppStore.setState({
+      settings: makeSettings(),
+      profiles: [makeProfile()],
+      selectedProfileId: "profile-1",
+      helperStatus: runningStatus,
+      connection: "connected",
+    });
+
+    render(<ConnectScreen />);
+
+    expect(await screen.findByText("1,5 КиБ")).toBeInTheDocument();
+    expect(screen.getByText("5 МиБ")).toBeInTheDocument();
+    expect(screen.getByLabelText("Отправлено")).toBeInTheDocument();
+    expect(screen.getByLabelText("Получено")).toBeInTheDocument();
+  });
+
+  it("при недоступном источнике показывает «—» без общей ошибки", async () => {
+    apiMock.trafficStats.mockResolvedValue({
+      available: false,
+      upload_total: 0,
+      download_total: 0,
+    });
+    useAppStore.setState({
+      settings: makeSettings(),
+      profiles: [makeProfile()],
+      selectedProfileId: "profile-1",
+      helperStatus: runningStatus,
+      connection: "connected",
+    });
+
+    render(<ConnectScreen />);
+
+    await waitFor(() => expect(apiMock.trafficStats).toHaveBeenCalled());
+    expect(screen.getByText("Трафик за сессию:")).toBeInTheDocument();
+    expect(screen.getByText("—")).toBeInTheDocument();
+    expect(screen.queryByText("Ошибка")).not.toBeInTheDocument();
+  });
+
+  it("обновляет счётчики раз в секунду без перезагрузки", async () => {
+    vi.useFakeTimers();
+    apiMock.trafficStats
+      .mockResolvedValueOnce({
+        available: true,
+        upload_total: 1024,
+        download_total: 0,
+      })
+      .mockResolvedValueOnce({
+        available: true,
+        upload_total: 2048,
+        download_total: 0,
+      });
+    useAppStore.setState({
+      settings: makeSettings(),
+      profiles: [makeProfile()],
+      selectedProfileId: "profile-1",
+      helperStatus: runningStatus,
+      connection: "connected",
+    });
+
+    render(<ConnectScreen />);
+    await act(async () => {});
+    expect(screen.getByText("1 КиБ")).toBeInTheDocument();
+
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(screen.getByText("2 КиБ")).toBeInTheDocument();
   });
 
   it("различает состояния helper'а: нет, устарел, не отвечает", () => {

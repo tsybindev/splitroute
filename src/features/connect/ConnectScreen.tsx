@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { Power } from "lucide-react";
+import { api } from "../../shared/api/client";
+import type { TrafficStats } from "../../shared/api/types";
 import { t } from "../../shared/i18n";
+import { formatBytes } from "../../shared/lib/format";
 import { helperBadge } from "../../shared/lib/helperState";
 import { useAppStore } from "../../shared/state/appStore";
 import { Badge } from "../../shared/ui/Badge";
@@ -32,6 +35,64 @@ function useSessionTime(startedAt: number | undefined): string {
 
   if (!startedAt) return "00:00:00";
   return formatDuration(Math.max(0, now - startedAt));
+}
+
+/**
+ * Счётчики сессии опрашиваются раз в секунду, только пока идёт подключение.
+ * Компонент монтируется при подключении и размонтируется при остановке, поэтому
+ * новая сессия всегда начинается с «—», а старые значения не мелькают.
+ * Ошибка источника не подмешивается в общую ошибку подключения.
+ */
+function SessionTraffic() {
+  const [stats, setStats] = useState<TrafficStats | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => {
+      api
+        .trafficStats()
+        .then((next) => {
+          if (!cancelled) setStats(next);
+        })
+        .catch(() => {
+          if (!cancelled) setStats(null);
+        });
+    };
+
+    load();
+    const timer = setInterval(load, 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, []);
+
+  if (!stats?.available) {
+    return <span className="text-neutral-500">{t("common.none")}</span>;
+  }
+
+  return (
+    <>
+      <span
+        title={t("connect.traffic.upload")}
+        aria-label={t("connect.traffic.upload")}
+      >
+        ↑{" "}
+        <span className="font-mono text-neutral-200">
+          {formatBytes(stats.upload_total)}
+        </span>
+      </span>
+      <span
+        title={t("connect.traffic.download")}
+        aria-label={t("connect.traffic.download")}
+      >
+        ↓{" "}
+        <span className="font-mono text-neutral-200">
+          {formatBytes(stats.download_total)}
+        </span>
+      </span>
+    </>
+  );
 }
 
 export function ConnectScreen() {
@@ -90,10 +151,20 @@ export function ConnectScreen() {
             ) : null}
           </div>
 
-          <div className="flex items-center gap-6 text-sm text-neutral-400">
+          <div className="flex flex-col items-center gap-1 text-sm text-neutral-400">
             <span>
               {t("connect.sessionTime")}:{" "}
               <span className="font-mono text-neutral-200">{session}</span>
+            </span>
+            <span className="flex items-center gap-3">
+              <span className="text-xs uppercase tracking-wide text-neutral-500">
+                {t("connect.traffic")}:
+              </span>
+              {connected ? (
+                <SessionTraffic />
+              ) : (
+                <span className="text-neutral-500">{t("common.none")}</span>
+              )}
             </span>
           </div>
 

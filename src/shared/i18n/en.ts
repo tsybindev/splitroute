@@ -29,6 +29,12 @@ export const en: Record<MessageKey, string> = {
   "common.yes": "Yes",
   "common.no": "No",
 
+  "units.bytes": "B",
+  "units.kib": "KiB",
+  "units.mib": "MiB",
+  "units.gib": "GiB",
+  "units.tib": "TiB",
+
   "connect.title": "Connection",
   "connect.location": "Current location",
   "connect.noLocation": "No location selected",
@@ -36,6 +42,9 @@ export const en: Record<MessageKey, string> = {
   "connect.connect": "Connect",
   "connect.disconnect": "Disconnect",
   "connect.sessionTime": "Session time",
+  "connect.traffic": "Session traffic",
+  "connect.traffic.upload": "Uploaded",
+  "connect.traffic.download": "Downloaded",
   "connect.helper": "Helper",
   "connect.helper.installed": "Installed",
   "connect.helper.missing": "Not installed",

@@ -27,6 +27,12 @@ export const ru = {
   "common.yes": "Да",
   "common.no": "Нет",
 
+  "units.bytes": "Б",
+  "units.kib": "КиБ",
+  "units.mib": "МиБ",
+  "units.gib": "ГиБ",
+  "units.tib": "ТиБ",
+
   "connect.title": "Подключение",
   "connect.location": "Текущая локация",
   "connect.noLocation": "Локация не выбрана",
@@ -34,6 +40,9 @@ export const ru = {
   "connect.connect": "Подключить",
   "connect.disconnect": "Отключить",
   "connect.sessionTime": "Время сессии",
+  "connect.traffic": "Трафик за сессию",
+  "connect.traffic.upload": "Отправлено",
+  "connect.traffic.download": "Получено",
   "connect.helper": "Helper",
   "connect.helper.installed": "Установлен",
   "connect.helper.missing": "Не установлен",

@@ -3,7 +3,7 @@
 //! UI не формирует конфиг sing-box: подключение собирается здесь из сохранённых
 //! настроек, выбранного профиля и правил allowlist (PRD §6.2).
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use splitroute_protocol::{AppRule, HelperStatus, InstalledApp, LogLevel, Profile};
@@ -17,6 +17,7 @@ use crate::store::{now_secs, AppSettings, Store, StoreError};
 use crate::subscription::{
     fetch_and_parse, FetchError, FetchRequest, SkippedProfile, SubscriptionFetcher,
 };
+use crate::traffic::TrafficEndpoint;
 
 /// Ошибка команды: стабильный код + русский текст для пользователя.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -79,6 +80,15 @@ impl From<InstallerError> for CommandError {
     }
 }
 
+/// Параметры и состояние статистики текущей сессии.
+#[derive(Default)]
+struct TrafficState {
+    /// Порт и secret действующего ядра; `None` — сессии нет.
+    endpoint: Option<TrafficEndpoint>,
+    /// Предупреждение об ошибке уже записано: не спамим лог каждый опрос.
+    error_logged: bool,
+}
+
 /// Состояние приложения, доступное командам.
 pub struct AppState {
     pub helper: Arc<dyn HelperClient>,
@@ -86,6 +96,7 @@ pub struct AppState {
     pub store: Store,
     pub fetcher: Arc<dyn SubscriptionFetcher>,
     pub logs: LogBuffer,
+    traffic: Mutex<TrafficState>,
 }
 
 impl AppState {
@@ -101,6 +112,56 @@ impl AppState {
             store,
             fetcher,
             logs: LogBuffer::default(),
+            traffic: Mutex::new(TrafficState::default()),
+        }
+    }
+
+    /// Новый `start` — новая сессия: старые счётчики недоступны.
+    fn set_traffic_endpoint(&self, endpoint: Option<TrafficEndpoint>) {
+        let mut traffic = self.lock_traffic();
+        traffic.endpoint = endpoint;
+        traffic.error_logged = false;
+    }
+
+    fn traffic_endpoint(&self) -> Option<TrafficEndpoint> {
+        self.lock_traffic().endpoint.clone()
+    }
+
+    /// `true` — это первый сбой подряд, предупреждение нужно записать.
+    fn note_traffic_error(&self) -> bool {
+        let mut traffic = self.lock_traffic();
+        if traffic.error_logged {
+            return false;
+        }
+        traffic.error_logged = true;
+        true
+    }
+
+    fn clear_traffic_error(&self) {
+        self.lock_traffic().error_logged = false;
+    }
+
+    fn lock_traffic(&self) -> std::sync::MutexGuard<'_, TrafficState> {
+        self.traffic
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+/// Счётчики трафика сессии в байтах. `available=false` — источник недоступен.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct TrafficStats {
+    pub available: bool,
+    pub upload_total: u64,
+    pub download_total: u64,
+}
+
+impl TrafficStats {
+    fn unavailable() -> Self {
+        Self {
+            available: false,
+            upload_total: 0,
+            download_total: 0,
         }
     }
 }
@@ -157,7 +218,24 @@ pub(crate) fn connect_inner(state: &AppState) -> Result<HelperStatus, CommandErr
             )
         })?;
 
-    let config = build_config(&data.settings.network, profile, &data.rules)?;
+    // Статистика не должна быть условием подключения: без свободного порта
+    // туннель всё равно поднимается, а UI показывает «—».
+    let traffic = match TrafficEndpoint::allocate() {
+        Ok(endpoint) => Some(endpoint),
+        Err(error) => {
+            state.logs.push(
+                LogLevel::Warn,
+                format!("Статистика трафика недоступна: {error}"),
+            );
+            None
+        }
+    };
+    let config = build_config(
+        &data.settings.network,
+        profile,
+        &data.rules,
+        traffic.as_ref().map(TrafficEndpoint::api),
+    )?;
     match data.settings.network.dns_mode {
         splitroute_protocol::DnsMode::Proxy => {
             state
@@ -177,6 +255,8 @@ pub(crate) fn connect_inner(state: &AppState) -> Result<HelperStatus, CommandErr
         }
     }
     let status = state.helper.start(config)?;
+    // Новая сессия начинается с нулевых счётчиков: порт и secret новые.
+    state.set_traffic_endpoint(traffic);
     state
         .logs
         .push(LogLevel::Info, format!("Подключено: {}", profile.name));
@@ -185,8 +265,44 @@ pub(crate) fn connect_inner(state: &AppState) -> Result<HelperStatus, CommandErr
 
 pub(crate) fn disconnect_inner(state: &AppState) -> Result<HelperStatus, CommandError> {
     let status = state.helper.stop()?;
+    // После `stop` статистика недоступна и UI показывает нули/«—».
+    state.set_traffic_endpoint(None);
     state.logs.push(LogLevel::Info, "Подключение остановлено");
     Ok(status)
+}
+
+/// Читает счётчики у текущей сессии. Ошибка не влияет на подключение: в лог
+/// попадает одно предупреждение, UI получает недоступное состояние.
+pub(crate) fn traffic_stats_inner(state: &AppState) -> TrafficStats {
+    let Some(endpoint) = state.traffic_endpoint() else {
+        return TrafficStats::unavailable();
+    };
+    match endpoint.totals() {
+        Ok(totals) => {
+            state.clear_traffic_error();
+            TrafficStats {
+                available: true,
+                upload_total: totals.upload,
+                download_total: totals.download,
+            }
+        }
+        Err(error) => {
+            if state.note_traffic_error() {
+                state.logs.push(
+                    LogLevel::Warn,
+                    format!("Статистика трафика недоступна: {error}"),
+                );
+            }
+            TrafficStats::unavailable()
+        }
+    }
+}
+
+/// `async` обязателен: опрос локального API — блокирующая операция с таймаутом,
+/// он не должен выполняться на главном потоке окна.
+#[tauri::command(async)]
+pub fn traffic_stats(state: tauri::State<'_, AppState>) -> TrafficStats {
+    traffic_stats_inner(&state)
 }
 
 fn subscription_fetch_inner(
@@ -477,8 +593,30 @@ mod tests {
     use crate::privileged::{MockHelperClient, UnsupportedInstaller};
     use crate::store::{AppSettings, Store};
     use splitroute_protocol::{Platform, Settings};
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
     use std::path::PathBuf;
+    use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    /// Одноразовый локальный HTTP-сервер вместо Clash API.
+    fn spawn_traffic_api(body: &'static str) -> (u16, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut reader = BufReader::new(&stream);
+                let mut line = String::new();
+                let _ = reader.read_line(&mut line);
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        (port, handle)
+    }
 
     struct MockFetcher {
         body: Result<String, FetchError>,
@@ -957,5 +1095,106 @@ mod tests {
             splitroute_protocol::CoreState::Stopped
         );
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// Connect включает loopback Clash API; stop сбрасывает сессию статистики.
+    #[test]
+    fn connect_exposes_loopback_stats_and_stop_resets_them() {
+        let helper = Arc::new(MockHelperClient::new());
+        let state = AppState::new(
+            helper.clone(),
+            Arc::new(UnsupportedInstaller),
+            Store::load(temp_path("traffic-lifecycle")),
+            Arc::new(MockFetcher {
+                body: Ok(fixture()),
+            }),
+        );
+        subscription_fetch_inner(
+            &state,
+            Some("https://example.invalid/sub".to_string()),
+            None,
+            None,
+        )
+        .unwrap();
+
+        connect_inner(&state).unwrap();
+        let first = state.traffic_endpoint().expect("сессия статистики создана");
+        let config = helper.last_config().expect("конфиг передан helper'у");
+        assert_eq!(
+            config["experimental"]["clash_api"]["external_controller"],
+            format!("127.0.0.1:{}", first.api().port)
+        );
+        assert_eq!(
+            config["experimental"]["clash_api"]["secret"],
+            first.api().secret
+        );
+
+        disconnect_inner(&state).unwrap();
+        assert!(
+            state.traffic_endpoint().is_none(),
+            "после stop источник статистики недоступен"
+        );
+        assert_eq!(traffic_stats_inner(&state), TrafficStats::unavailable());
+
+        // Новый start — новая сессия: другой secret, счётчики с нуля.
+        connect_inner(&state).unwrap();
+        let second = state.traffic_endpoint().expect("новая сессия");
+        assert_ne!(first.api().secret, second.api().secret);
+    }
+
+    #[test]
+    fn traffic_stats_are_unavailable_without_session() {
+        let state = state_with(Ok(fixture()));
+        assert_eq!(traffic_stats_inner(&state), TrafficStats::unavailable());
+        assert!(
+            state
+                .logs
+                .list(Some(LogLevel::Warn), 10)
+                .iter()
+                .all(|entry| !entry.message.contains("Статистика трафика")),
+            "без сессии предупреждений быть не должно"
+        );
+    }
+
+    #[test]
+    fn traffic_stats_return_totals_from_local_api() {
+        crate::init_tls();
+        let body = r#"{"connections":[],"downloadTotal":8192,"memory":1,"uploadTotal":2048}"#;
+        let (port, handle) = spawn_traffic_api(body);
+        let state = state_with(Ok(fixture()));
+        state.set_traffic_endpoint(Some(TrafficEndpoint::with_parts(port, "test-secret")));
+
+        assert_eq!(
+            traffic_stats_inner(&state),
+            TrafficStats {
+                available: true,
+                upload_total: 2048,
+                download_total: 8192,
+            }
+        );
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn traffic_stats_error_is_unavailable_and_warned_once() {
+        crate::init_tls();
+        // Порт закрыт: опрос не удаётся, но подключение не затрагивается.
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let state = state_with(Ok(fixture()));
+        state.set_traffic_endpoint(Some(TrafficEndpoint::with_parts(port, "test-secret")));
+
+        assert_eq!(traffic_stats_inner(&state), TrafficStats::unavailable());
+        assert_eq!(traffic_stats_inner(&state), TrafficStats::unavailable());
+
+        let warnings: Vec<_> = state
+            .logs
+            .list(Some(LogLevel::Warn), 20)
+            .into_iter()
+            .filter(|entry| entry.message.contains("Статистика трафика недоступна"))
+            .collect();
+        assert_eq!(warnings.len(), 1, "серия ошибок пишется в лог один раз");
     }
 }
