@@ -103,6 +103,14 @@ mod tests {
         missing_paths(rule, |path| existing.contains(&path))
     }
 
+    /// Несуществующий абсолютный путь, корректный на текущей платформе.
+    fn missing_absolute(tag: &str) -> String {
+        std::env::temp_dir()
+            .join(format!("splitroute-missing-{tag}-{}", std::process::id()))
+            .to_string_lossy()
+            .to_string()
+    }
+
     #[test]
     fn existing_absolute_path_is_active() {
         let rule = rule(&["/opt/app/bin/app"], &[], &[]);
@@ -111,11 +119,9 @@ mod tests {
 
     #[test]
     fn missing_absolute_path_is_reported() {
-        let rule = rule(&["/opt/gone/bin/app"], &[], &[]);
-        assert_eq!(
-            missing_with(&rule, &[]),
-            vec!["/opt/gone/bin/app".to_string()]
-        );
+        let path = missing_absolute("single");
+        let rule = rule(&[path.as_str()], &[], &[]);
+        assert_eq!(missing_with(&rule, &[]), vec![path]);
     }
 
     #[test]
@@ -131,6 +137,8 @@ mod tests {
         assert!(missing_with(&rule, &[]).is_empty());
     }
 
+    // Так правило выглядит на macOS и Linux; на Windows другие разделители.
+    #[cfg(unix)]
     #[test]
     fn literal_regex_from_catalog_is_checked() {
         // Так выглядит правило, которое создаёт каталог на macOS.
@@ -169,14 +177,10 @@ mod tests {
 
     #[test]
     fn multiple_missing_paths_are_all_reported() {
-        let rule = rule(&["/opt/gone/app", "/opt/also-gone/app"], &[], &[]);
-        assert_eq!(
-            missing_with(&rule, &[]),
-            vec![
-                "/opt/gone/app".to_string(),
-                "/opt/also-gone/app".to_string()
-            ]
-        );
+        let first = missing_absolute("first");
+        let second = missing_absolute("second");
+        let rule = rule(&[first.as_str(), second.as_str()], &[], &[]);
+        assert_eq!(missing_with(&rule, &[]), vec![first, second]);
     }
 
     #[test]

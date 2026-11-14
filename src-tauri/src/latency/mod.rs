@@ -353,10 +353,15 @@ mod tests {
         drop(listener);
         let mut closed = profile("closed", "127.0.0.1");
         closed.port = port;
-        assert_eq!(
-            TcpProbe.probe(&closed, Duration::from_millis(200)),
-            Err(PingErrorCode::Unreachable)
-        );
+        let closed_error = TcpProbe.probe(&closed, Duration::from_millis(200));
+        // Windows на закрытый loopback-порт нередко отвечает не RST, а тишиной.
+        #[cfg(unix)]
+        assert_eq!(closed_error, Err(PingErrorCode::Unreachable));
+        #[cfg(not(unix))]
+        assert!(matches!(
+            closed_error,
+            Err(PingErrorCode::Unreachable) | Err(PingErrorCode::Timeout)
+        ));
 
         let invalid = profile("dns", "invalid.invalid.invalid");
         assert_eq!(

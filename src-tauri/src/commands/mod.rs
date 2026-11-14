@@ -1247,7 +1247,7 @@ mod tests {
         let live_path = temp_path("rule-live");
         std::fs::write(&live_path, b"").unwrap();
         let live = live_path.to_string_lossy().to_string();
-        let gone = "/nonexistent/splitroute/Old App.app".to_string();
+        let gone = temp_path("rule-gone-missing").to_string_lossy().to_string();
         for (id, path) in [("rule-gone", gone.clone()), ("rule-live", live.clone())] {
             state
                 .store

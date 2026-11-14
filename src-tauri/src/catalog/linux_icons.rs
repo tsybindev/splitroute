@@ -219,6 +219,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&theme);
     }
 
+    // Абсолютный Icon в .desktop — Unix-путь с '/' в начале.
+    #[cfg(unix)]
     #[test]
     fn absolute_icon_path_is_used_directly() {
         let dir = temp_dir("absolute");

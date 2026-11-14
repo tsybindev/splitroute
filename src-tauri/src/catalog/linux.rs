@@ -319,6 +319,8 @@ mod tests {
         assert!(parse_desktop_entry(other).unwrap().icon.is_none());
     }
 
+    // Exec в .desktop — Unix-путь; на Windows такие записи не встречаются.
+    #[cfg(unix)]
     #[test]
     fn collect_skips_broken_files_and_keeps_valid_ones() {
         let dir = temp_dir("collect");

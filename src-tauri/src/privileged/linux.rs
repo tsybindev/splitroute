@@ -545,6 +545,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn generated_shell_scripts_parse() {
         for (name, script) in [
             ("install", install_script(&paths(), &staged())),
