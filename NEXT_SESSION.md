@@ -5,121 +5,85 @@
 
 ## Состояние
 
-- Этапы 0–4 закрыты (в этапе 2 S2-T9 и в этапе 4 S4-T5c blocked: нет
-  CachyOS GUI/root и Windows VM; S3-T2 blocked — нет сертификата Apple).
+- Этапы 0–4: закрыты в своих частях; **S4-T5c (macOS) — done (2026-11-20)**,
+  Windows-часть — функционал проверен пользователем на реальной машине,
+  детальный WFP-отчёт ожидается. S3-T2/S3-T7 без изменений.
 - Этап 6 (несколько подписок) — done (2026-11-19, `f824f82`).
-- **Этап 7 (Clash YAML) — done (2026-11-20, коммит `ceca190`,
-  документация — отдельный коммит).** Helper и его протокол не менялись.
-- Ветка `main`. CI `.github/workflows/build.yml` не менялся; после пуша можно
-  проверить `gh run list` — код CI-пути не затрагивался.
-- Факты: [docs/research.md](./docs/research.md) §30 (Clash YAML — детект,
-  маппинг узлов, serde_yaml, live-проверка), §29 (несколько подписок).
+- Этап 7 (Clash YAML) — done (2026-11-20, `ceca190`, docs `b50cf60`).
+- **Рантайм-проверка kill switch macOS (S4-T5c) — done (2026-11-20).**
+  Попутно найдены и исправлены 2 бага: `c3aa3ca` (порядок правила pf) и
+  `a27161b` (blocking-команды в `spawn_blocking`). Детали — research §31.
+- Ветка `main`. CI не менялся.
+- Факты: [docs/research.md](./docs/research.md) §31 (kill switch под root,
+  грабли pkill и spawn_blocking), §30 (Clash YAML), §29 (несколько подписок).
 
-### Что работает
+### Что работает / проверено
 
-- **Clash YAML (S7-T1…S7-T3).**
-  - Четвёртый формат подписки: тело — YAML-отображение с ключом `proxies`.
-    Детект в цепочке `parse_subscription_report`:
-    JSON (Happ) → vless-текст → **Clash** → base64 → `INVALID_FORMAT`.
-    JSON-объект с `proxies` — Clash в JSON-нотации; `{port: 7890, …}` без
-    кавычек ключей — Clash в flow-стиле (фолбэк после ошибки serde_json).
-  - Конвертируются только узлы `type: vless` + `network: tcp` + Reality
-    (`reality-opts.public-key`/`short-id`) или TLS (`servername`,
-    `client-fingerprint`, `alpn`-последовательность). Скип с причиной:
-    другие `type`, не-TCP `network`, `tls: false`,
-    `skip-cert-verify: true`, битый uuid; неизвестные поля игнорируются.
-    Модель `Profile` (crates/protocol) не менялась.
-  - `serde_yaml = "0.9"` — обоснование в `src-tauri/Cargo.toml` и PRD §13 п. 9.
-  - `errors.INVALID_FORMAT` в `ru.ts`/`en.ts` перечисляет все форматы.
-  - Порт строго числом, SNI только из `servername`, `raw` узла —
-    YAML→JSON в кэш (в UI вырезается). `proxy-providers` не поддерживаются.
-- **Всё из этапов 4 и 6** — без изменений: несколько подписок
-  (`SubscriptionState`, расписание per-subscription, guard на подписку,
-  UI-группы), автообновление, автоподключение, kill switch (протокол 2),
-  статистика (Clash API), каталог и иконки, задержки/автовыбор, обновления
+- **Kill switch macOS (S4-T5c):** подключение с pf-анкером
+  `com.apple/splitroute.killswitch` (правила применяются, pf.conf не тронут);
+  прямой egress заблокирован при живом ядре, LAN/loopback живы; реальное
+  убийство ядра → `state: stopped`, правила остаются, egress продолжает
+  блокироваться (fail-closed), UI показывает `CORE_STOPPED` через ~2 с; после
+  отключения — anchor not found, трафик восстановлен, pf Disabled. Откат
+  `KILL_SWITCH_FAILED` не оставляет включённый pf.
+- **Clash YAML (этап 7):** четвёртый формат подписки — детект в цепочке
+  `subscription/mod.rs`, парсер `subscription/clash.rs` (только
+  `type: vless` + TCP + Reality/TLS), JSON-нотация и flow-стиль принимаются.
+- **Всё из этапов 4 и 6** — без изменений: несколько подписок, автообновление,
+  автоподключение, статистика, каталог/иконки, задержки/автовыбор, обновления
   приложения, локализация, helper'ы и установщики.
-
-### Проверено (2026-11-20)
-
-- `cargo fmt --all --check`, `cargo clippy --workspace --all-targets
-  -D warnings` — чисто. `cargo test --workspace` — **413 тестов** ok
-  (1 `#[ignore]`): +16 (11 clash.rs, 4 mod.rs — полный документ,
-  JSON-нотация, flow-стиль, NoProfiles; 1 fetch end-to-end с Clash YAML).
+- 413 Rust- и 103 frontend-теста зелёные; fmt/clippy/typecheck/lint/build,
   `cargo check -p splitroute-helper --target x86_64-pc-windows-msvc` — чисто.
-- `pnpm typecheck`, `pnpm lint`, `pnpm test` — чисто, **103 теста** ok;
-  `pnpm build` ok.
-- **Live (MockHelper + изолированный `HOME` + локальный HTTP с
-  Clash-фикстурой, python-оркестратор по шаблону research §29):**
-  seeded `state.json` с подпиской (UA `ClashVergeTest/1.0`, интервал 1 ч,
-  пустой кэш) → планировщик сделал ровно 1 запрос с ожидаемыми
-  `User-Agent`/`X-HWID`, vless-узел разобран в кэш записи со всеми
-  Reality-полями и `fetched_at`, vmess-узел скипнут; через 70 с — 0 новых
-  запросов. После проверки процессы остановлены, порты 1420/18081 свободны,
-  временный каталог удалён.
 
-### Не проверено (причина)
+### Не проверено / осталось
 
-- **Клик-проверки UI** с реальным Clash-URL — не автоматизировались
-  (форма «Подписки» не менялась, формат — серверная часть); покрыты
-  Vitest-тестами и тестами команд.
-- **Реальный Clash-провайдер** — сетевой путь проверен локальным HTTP;
-  у реальных тел бывает `proxy-providers` вместо inline `proxies` (не
-  поддерживается — см. research §30 «Ограничения»).
-- Всё, что оставалось blocked из этапов 2–4 (см. ниже) — без изменений.
-
-### Ручные проверки, которые остаются blocked
-
-Выполнять только при появлении root/сертификата/целевых ОС и с явным
-подтверждением пользователя. Привилегированные действия автоматически не
-запускать.
-
-- **Kill switch под root** (S4-T5c): macOS pf / Linux nftables / Windows WFP —
-  шаги в `docs/stage-3-report.md` §9 и research §20.
-- **S3-T2** — LaunchDaemon: нужен Apple Development/Developer ID
-  (`security find-identity` — по-прежнему 0).
-- **Linux/CachyOS** (S2-T9, S3-T7) — установка/`systemctl`/`pkexec`/TUN: нет
-  GUI и пароля sudo.
-- **Windows** (S3-T4, S4-T5b) — служба/UAC/pipe ACL/WFP/TUN: нет VM.
-- **Обновления приложения** (S4-T8) — после выбора домена манифеста (PRD §13.2).
+- **S4-T15 (todo, задача в TASKS.md): автореконнект ядра** — детект работает,
+  автоматического переподключения (до 3 попыток, PRD §13 п. 4) нет.
+- **Windows-часть S4-T5c:** пользователь проверил функционал на реальной
+  машине; детальный WFP-отчёт (фильтры `netsh wfp show filters`, блокировка
+  `curl.exe` при мёртвом `sing-box.exe`, снятие после `stop`, идемпотентность)
+  — записать в TASKS/research, когда будет предоставлен.
+- Клик-проверки UI Clash-подписки — покрыты Vitest, не автоматизировались.
+- Реальный Clash-провайдер с `proxy-providers` (не поддерживается — research §30).
+- Blocked (внешние ресурсы): S3-T2 (сертификат Apple), S2-T9/S3-T7 (CachyOS
+  GUI/root), S4-T8 (домен манифеста обновлений).
 
 ### Важные факты окружения
 
-- `export PATH="$HOME/.cargo/bin:$PATH"` в каждом shell; для live-проверок —
-  `export RUSTUP_HOME="$HOME/.rustup" CARGO_HOME="$HOME/.cargo"` **до**
-  переопределения `HOME`, иначе rustup теряет toolchain.
-- **Фоновые процессы, запущенные `&` из shell-команды, не обслуживают TCP в
-  этой среде** (bind есть, accept зависает): HTTP-сервер для live-проверок
-  держите в foreground-процессе вместе с управлением приложением
-  (python-оркестратор: сервер-поток + `subprocess.Popen(start_new_session=True)`,
-  порт фикстуры — свой, например 18081, не 1420). Оркестратор хранится
-  только в `/tmp` и удаляется после проверки — каждый раз писать заново
-  по шаблону research §29/§30.
-- macOS 15.8.2 arm64, Rust 1.99.1, Tauri 2.12.5 / CLI 2.12.4, sing-box 1.14.4.
-  Цели `x86_64-pc-windows-msvc` и `x86_64-unknown-linux-gnu` установлены.
-- Кросс-`cargo check -p splitroute` невозможен: Windows — `ring`, Linux —
-  `gio-sys`/`glib-sys`; платформенные ветки проверять изолированными крейтами.
-- `sudo -n true` не проходит; привилегированные действия — только с явным
-  подтверждением пользователя.
-- Debug-сборка ищет сокет в `$TMPDIR/splitroute-helper.sock`; установленный
-  helper v1 несовместим с протоколом 2 — переустановить. Dev-режим:
-  `SPLITROUTE_MOCK_HELPER=1`.
-- **Состояние:** `<config>/splitroute/state.json` (macOS —
-  `~/Library/Application Support/splitroute/state.json`). Секреты не
-  логировать; HWID — не секрет, URL подписки — секрет и в логи/диагностику
-  не попадает. Ручную правку `state.json` делать по формату текущей версии
-  (см. `StoredData`): приложение откатывается к значениям по умолчанию при
-  неполном файле.
-- Провайдер подписки: формат зависит от UA; `SplitRoute/0.1.0` → base64
-  `vless://` (~1 с), `Happ/4.1.0` → JSON (иногда ~17 с). Таймаут 45 с не
-  уменьшать. Для Clash-формата — провайдерский UA (например clash-verge);
-  заголовок `Accept` не менять (изменение меняло бы поведение существующих
-  форматов).
-- Скриншоты и фикстуры с реальными URL/HWID/адресами в репозиторий не
-  коммитить; фикстуры Clash — example.com/TEST-NET/dummy-uuid.
-- После проверок: `pgrep -x sing-box`, `pgrep -fl 'target/debug/splitroute'`,
-  `lsof -nP -iTCP:1420 -sTCP:LISTEN`, `ls -d /tmp/sr-*`. Если
-  `pnpm tauri dev` упал с «Port 1420 is already in use» — убить `node` на
-  порту и `target/debug/splitroute`.
+- `export PATH="$HOME/.cargo/bin:$PATH"`; для live —
+  `RUSTUP_HOME`/`CARGO_HOME` **до** переопределения `HOME`.
+- **Проверка kill switch без подписи Apple (research §31):** dev-helper под
+  `sudo target/debug/splitroute-helper --socket /tmp/splitroute-dev.sock
+  --runtime-dir /tmp/splitroute-dev-runtime --sing-box <abs путь к бинарю>`;
+  приложение — `SPLITROUTE_HELPER_SOCKET=/tmp/splitroute-dev.sock
+  pnpm tauri dev`. Под sudo `SUDO_UID` подхватывается, сокет chown'ится на
+  пользователя. Прямой пробой протокола: newline-JSON
+  `{"protocol":2,"id":"…","command":"status"}` в unix-сокет.
+- **`pkill -x sing-box` НЕ убивает ядро** (comm обрезается до 16 символов,
+  `sing-box-aarch64`); правильные варианты: `pkill -x
+  sing-box-aarch64-apple-darwin` или `kill -9 <pid из статуса helper'а>`.
+  Из-за этого первые попытки сценария краша были ложными.
+- **Blocking-код в командах — только через `spawn_blocking`**:
+  `#[tauri::command(async)]` на синхронном теле исполняет его на воркере
+  tokio, где blocking-reqwest паникует в debug (дроп внутреннего runtime,
+  reqwest 0.13 `blocking/wait.rs::enter`). Симптом: промис не разрешается,
+  спиннер вечно. Планировщики уже на `spawn_blocking`.
+- Порядок опций pf строгий: `hosts` (`all`, `from…to…`) — до `user`/
+  `keep state`; существующий тест правил закодировал неверный порядок —
+  текст правил синтаксисом не проверялся (research §31).
+- На этой машине в `state.json` появилась **реальная подписка** пользователя
+  (1 запись, 2 профиля) — секреты не читать, не логировать, не коммитить.
+- Фоновые `&`-процессы не обслуживают TCP; live-сервер — python-оркестратор
+  (поток + `subprocess.Popen(start_new_session=True)`), пишется заново в
+  `/tmp/sr-*` и удаляется после проверки. Порт фикстуры — свой (18081).
+- macOS 15.8.2 arm64, Rust 1.99.1, Tauri 2.12.5 / CLI 2.12.4, sing-box 1.14.4,
+  reqwest 0.13.5, tokio 1.54.1 (имя воркеров `tokio-rt-worker`).
+- Таймаут подписки 45 с не уменьшать; `Accept` подписки не менять.
+- После проверок: `pgrep -x sing-box`, `pgrep -fl splitroute-helper`,
+  `lsof -nP -iTCP:1420 -sTCP:LISTEN`, `ls -d /tmp/sr-*`; dev-сокет и
+  runtime-каталог — `/tmp/splitroute-dev.sock`, `/tmp/splitroute-dev-runtime`.
+- Секреты (URL подписки, HWID, UUID, адреса) в задачи, фикстуры, логи и
+  коммиты не попадают.
 
 ### Проверка перед стартом
 
@@ -137,155 +101,94 @@ pgrep -x sing-box || echo "ядра нет"
 
 ## Промпт следующей подцели
 
-Из backlog'а остались: **импорт по QR** (компактная задача, вариант по
-умолчанию), **IPv6-маршрутизация** (нужно решение PRD). Блокеры S3-T2/S3-T7/
-S4-T5c снимаются только внешними ресурсами (сертификат Apple, root, Windows VM).
+По умолчанию — **S4-T15: автореконнект ядра** (прямое продолжение находки
+S4-T5c). Альтернативы: QR-импорт (backlog), Windows-WFP-отчёт в документацию.
 
 ```text
 Ты — оркестратор разработки SplitRoute (per-app VPN на Tauri 2 + React 19 + TS + Rust + sing-box).
 Рабочий каталог: /Users/tsybin_d/Documents/Dev/Backend/vpn_client/app
 Перед командами: export PATH="$HOME/.cargo/bin:$PATH"
 
-ЦЕЛЬ: реализовать импорт подписки по QR-коду (backlog TASKS.md, задача S8-T1…T3
-или следующий этап по согласованию) — ЕСЛИ пользователь в этой сессии назвал
-другую задачу, выполняй её. После одной подцели остановись: коммит
-кода/тестов, отдельный коммит документации, обновление NEXT_SESSION.md.
-Следующие задачи не начинай.
-
-СКОП (уточни у пользователя, если неясно):
-- MVP: декодирование QR из ИЗОБРАЖЕНИЯ (файл на диске, вставка из буфера
-  обмена, drag&drop в окно) → если внутри URL подписки — предзаполнить форму
-  добавления подписки; если vless://-ссылка — отдельное решение в PRD
-  (одиночный профиль без подписки сейчас невозможен: подписки — URL-записи).
-- Работа с КАМЕРОЙ (AVFoundation, разрешения macOS) — только по явной
-  просьбе пользователя в сессии; сама по себе она блокер-не-снимаемая для
-  CI/автотестов, предпочтительно отдельной подцелью.
-- QR, кодирующий base64-тело или конфиг целиком, не поддерживать: в QR
-  провайдеры кодируют URL или vless-ссылку.
+ЦЕЛЬ: реализовать S4-T15 — автореконнект ядра после падения (до 3 попыток),
+PRD §13 п. 4 / R13 — ЕСЛИ пользователь в этой сессии назвал другую задачу,
+выполняй её. После одной подцели остановись: коммит кода/тестов, отдельный
+коммит документации, обновление NEXT_SESSION.md. Следующие задачи не начинай.
 
 ПРОЧИТАЙ СНАЧАЛА
-- AGENTS.md §3 (зависимости), §10, §12–§14, §17–§18.
-- PRD.md §6.1 (подписки), §6.2 (профили), §13 (принятые решения).
-- TASKS.md: этапы 6–7 и backlog.
-- docs/research.md §30 (Clash YAML — образец оформления новой задачи),
-  §29 (несколько подписок, шаблон live-проверки).
-- NEXT_SESSION.md — состояние, что проверено, что blocked.
+- TASKS.md: строка S4-T15, S4-T5c, S4-T13 (автоподключение), S4-T6 (переключение).
+- PRD.md §13 п. 4 (R13), §6.1–6.2.
+- docs/research.md §31 (что подтверждено в рантайме, как детектится падение).
+- src/shared/state/appStore.ts (`pollConnection`/`protectedCrash`),
+  src/features/connect/ConnectScreen.tsx (опрос раз в 2 с),
+  src-tauri/src/commands/mod.rs (`connect_inner`, `disconnect_inner`),
+  crates/helper/src/core.rs (status/reap, протокол).
 
-ТЕКУЩЕЕ СОСТОЯНИЕ
-- Этап 7 (Clash YAML) done, коммит `ceca190`: четвёртый формат подписки,
-  детект в цепочке `src-tauri/src/subscription/mod.rs`, парсер
-  `subscription/clash.rs`. 413 Rust- и 103 frontend-теста, live-проверка
-  зелёные.
-- Этап 6 (несколько подписок) done, `f824f82`: записи SubscriptionState,
-  HWID общий, расписание per-subscription, guard загрузки на подписку,
-  UI-группы, карта «Подписки» в настройках.
-- UI: форма добавления подписки — `SubscriptionsCard` (черновики полей не
-  привязаны к стору); команды `subscription_add/update/delete` в
-  `src-tauri/src/commands/mod.rs`.
+ТЕКУЩЕЕ ПОВЕДЕНИЕ
+- Детект: фронт опрашивает `helper_status` раз в 2 с при активном kill switch;
+  при `state: stopped` на подключении — `CORE_STOPPED` и состояние «error».
+  Правила kill switch остаются до отключения (fail-closed, проверено §31).
+- Автопереподключения нет: пользователь должен нажать кнопку сам.
 
 КОНТРАКТ, КОТОРЫЙ НЕЛЬЗЯ ЛОМАТЬ
-- Новых привилегий и shell-команд; helper и его протокол не меняются.
-- `crates/protocol` — единственный источник общих моделей; URL подписки,
-  UUID и адреса серверов не попадают в логи, фикстуры и ответы UI.
-- Декодирование QR — новая Rust-зависимость (например `rqrr`/`quircs`):
-  обоснование в коммите и PRD §13, минимальный крейт без тяжёлых
-  транзитивных зависимостей; буфер обмена — существующие плагины Tauri
-  (проверить, что подключено) или tauri-plugin-clipboard-manager с
-  обоснованием.
-- Ошибка декодирования/отсутствие QR — типизированный код ошибки
-  (`errors.<CODE>` в `ru.ts`/`en.ts`, тест парности ключей), не паника.
-- Форма добавления подписки не должна затирать черновики полей фоновым
-  обновлением (см. заметки о `drafts` в SubscriptionsCard).
+- Helper и протокол не меняются; новые привилегии запрещены.
+- Fail-closed: между попытками правила kill switch остаются (если были);
+  при исчерпании серии — явно сообщить пользователю, правила остаются до
+  ручного отключения (не снимать молча).
+- Общий путь `connect_inner` (без дублирования логики кнопки), счётчик попыток
+  сбрасывается успешным стартом и ручным отключением.
+- Не блокировать окно: серии попыток — фоном (`spawn_blocking`), состояние —
+  событие/статус для UI; строки `ru`/`en` (тест парности ключей).
+- Blocking-код в командах — только `spawn_blocking` (research §31, `a27161b`).
+- Секреты в логи не попадают; без новых зависимостей.
 
 ПРОВЕРКИ
-- cargo fmt --all --check
-- cargo clippy --workspace --all-targets -- -D warnings
-- cargo test --workspace
-- pnpm typecheck && pnpm lint && pnpm test && pnpm build
-- cargo check -p splitroute-helper --target x86_64-pc-windows-msvc
-- Live-проверка по шаблону research §29/§30 (python-оркестратор:
-  сервер-поток + subprocess pnpm tauri dev; фоновые `&`-процессы в этой
-  среде не обслуживают TCP; оркестратор писать заново в /tmp/sr-*).
-  После проверки остановить всё: `sing-box`, `target/debug/splitroute`,
-  порты 1420 и порт фикстуры свободны.
+- cargo fmt/clippy/test --workspace; pnpm typecheck/lint/test/build;
+  cargo check -p splitroute-helper --target x86_64-pc-windows-msvc.
+- Live-проверка по шаблону research §31: dev-helper под sudo +
+  `SPLITROUTE_HELPER_SOCKET`, реальный профиль; убить ядро (pkill -x
+  sing-box-aarch64-apple-darwin или kill по pid из статуса helper'а) —
+  убедиться: 3 попытки, паузы, успех → подключение восстановлено и счётчик
+  сброшен; при недоступном сервере — серия исчерпана, предупреждение,
+  правила kill switch остаются; ручное отключение сбрасывает серию.
+  После проверки всё остановить, порты/процессы чисты.
 
 ДОКУМЕНТАЦИЯ
-- TASKS.md: статусы задач и ссылка на коммит.
-- PRD.md: §6.1 (импорт), при изменении поведения продукта — отдельный
-  пункт §13.
-- docs/research.md: новый раздел с датой и ограничениями.
-- NEXT_SESSION.md: состояние и самодостаточный промпт следующей подцели.
-
-ОГРАНИЧЕНИЯ
-- Не менять helper-протокол, kill switch, обновления приложения,
-  установщики, иконки и статистику сверх задачи.
-- Не выполнять привилегированные действия без явного подтверждения.
-- Не оставлять dev-серверы и процессы после проверок.
+- TASKS.md (S4-T15 → done со ссылкой на коммит), PRD §13 п. 4/R13 (статус
+  автореконнекта), research.md §32 (решение и ограничения), NEXT_SESSION.md.
 
 ОТЧЁТ
-- TASKS.md: статус со ссылкой на коммит и кратким описанием.
-- NEXT_SESSION.md: состояние, что проверено, промпт следующей подцели.
-- Коммиты: feat:/test: для кода и тестов, отдельный docs: для документации.
+- Коммиты: feat/test для кода, отдельный docs:. Статусы задач в TASKS.md.
 ```
 
 ---
 
 ## Заметки
 
-- **Этап 7 (Clash YAML):**
-  - Порядок веток детекта важен: YAML — надмножество JSON, поэтому
-    Happ-JSON проверяется раньше; объект с `proxies` — Clash даже если это
-    валидный JSON. Не меняйте порядок JSON → vless → Clash → base64 без
-    пересмотра тестов (`unknown_body_is_invalid_format`, `not_an_array_is_error`).
-  - `clash::try_parse` возвращает `Ok(None)` для «не Clash»-тел — это часть
-    контракта цепочки; ошибки формата (не-список `proxies`) — только когда
-    ключ `proxies` действительно есть.
-  - Reality определяется по наличию `reality-opts.public-key` независимо от
-    флага `tls`; `tls: false` без reality-opts — скип узла.
-  - `skip-cert-verify: true` — намеренный скип: insecure-TLS в модели и
-    генерации конфига нет, импортированный узел бы не подключился.
-  - Порт строго `as_u64`, SNI только `servername` — при появлении реальных
-    тел с строковым портом/`server-name` расширить маппинг (research §30).
-- **Этап 6 (несколько подписок):**
-  - Логика записей — `src-tauri/src/store/mod.rs` (`SubscriptionState`,
-    `add/update/delete_subscription`, `set_subscription_profiles`,
-    `migrate_legacy`). Миграция требует, чтобы legacy-файл содержал
-    непустой `settings.subscription.url`; профили и `fetched_at` берутся
-    из плоских полей старого формата.
-  - Не убирайте немедленную запись миграции на диск: `id` записи
-    (`new_subscription_id`) случайный, без записи он меняется при каждом
-    запуске.
-  - `set_subscription_profiles` проверяет существование выбранного профиля
-    **по новому состоянию** (после замены профилей записи): проверка до
-    замены давала «залипший» выбор на пропавший профиль.
-  - Попытка обновления запоминается в `subscription_fetch_inner`, а не в
-    планировщике: иначе ручная неудачная попытка не переносит расписание
-    (PRD §6.1). Планировщик только логирует исход.
-  - UI-черновики карты «Подписки» живут отдельно от стора
-    (`drafts` в `SubscriptionsCard`): не привязывайте поля формы напрямую
-    к `SubscriptionView` — фоновое обновление затирало бы правку.
-  - Событие `subscription-updated` теперь payload одной подписки;
-    `applyFetchResponse` в `appStore` мержит его в группу и пересобирает
-    плоский список. Не храните `fetchedAt`/`nextUpdateAt` на верхнем уровне:
-    расписание per-subscription.
-- **S4-T14 (автообновление):** интервал `0` выключает автообновление
-  записи; пустой URL записи не опрашивается (NoUrl) — пустой URL нельзя
-  создать через add/update, только правкой state.json.
-- **S4-T13 (автоподключение):** не убирайте подписку на `autoconnect-failed`
-  и порядок «сначала слушатели, потом `initialize()`» в `App.tsx`.
+- **S4-T5c (research §31):** dev-helper под sudo + `SPLITROUTE_HELPER_SOCKET`;
+  `pkill -x sing-box` не матчится (comm 16 символов) — только полное имя
+  бинаря или PID; blocking-код в командах — только `spawn_blocking`; порядок
+  pf-опций: `hosts` до `user`; статистика первые ~2 с после подключения
+  недоступна (один WARN — норма).
+- **Этап 7 (Clash YAML):** порядок веток детекта важен (JSON → vless → Clash →
+  base64; YAML — надмножество JSON); `clash::try_parse` возвращает `Ok(None)`
+  для «не Clash»-тел; Reality — по наличию `reality-opts.public-key`;
+  `skip-cert-verify: true` — скип; порт строго `as_u64`, SNI только
+  `servername`; `proxy-providers` не поддерживаются.
+- **Этап 6 (несколько подписок):** миграция legacy пишет файл сразу (id
+  случайный); попытка обновления запоминается в `subscription_fetch_inner`;
+  guard загрузки — `Mutex<HashSet>` по id; UI-черновики `drafts` живут вне
+  стора; событие `subscription-updated` — payload одной подписки.
+- **S4-T13:** подписка на `autoconnect-failed` и порядок «сначала слушатели,
+  потом `initialize()`» в App.tsx.
 - **S4-T5b (Windows):** адреса TUN задублированы в
-  `src-tauri/src/config/mod.rs` — меняйте вместе.
-- **Kill switch:** протокол 2; после обновления переустановите helper.
-- **S4-T4 (статистика):** источник — локальный Clash API (JSON); после
-  перезапуска окна — «—» до переподключения.
+  `src-tauri/src/config/mod.rs` и `crates/helper/src/killswitch/rules.rs` —
+  менять вместе.
+- **Kill switch:** протокол 2; после обновления переустановить helper.
+- **S4-T4 (статистика):** локальный Clash API; после перезапуска окна — «—»
+  до переподключения; первые ~2 с после старта ядра недоступна (норма).
 - **S4-T3 (локализация):** новые строки — в `ru.ts` и `en.ts`; тест запрещает
   кириллицу в `en` и проверяет парность ключей.
-- **S4-T2 (иконки):** не переносите чтение иконок в `apps_installed` и в
-  `apps_running`.
 - **Лицензии:** при смене sing-box/wintun/updater/serde_yaml править
   `THIRD_PARTY_NOTICES`; тест `packaging_config` это проверяет.
 - **Упаковка:** `externalBin` только в платформенных конфигах; перед
   `tauri build` — `fetch-core.sh` и `build-helper-sidecar.sh`.
-- **Секреты** (URL подписки, HWID, UUID, реальные адреса, `secret` Clash API,
-  содержимое pf/nft-правил с адресами) в задачи, фикстуры, логи и коммиты
-  не попадают.

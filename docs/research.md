@@ -1077,3 +1077,90 @@ URL подписки и HWID в логах и отчёте не выводятс
 - Порядок веток детекта означает: тело, начинающееся с `[`/`{` и не
   являющееся ни Happ-JSON, ни Clash-объектом, отдаёт `InvalidJson`, а не
   `InvalidFormat` (как и раньше).
+
+## 31. Kill switch под root на macOS — S4-T5c (проверено 2026-11-20)
+
+Первая рантайм-проверка kill switch с реальным профилем и root. Коммиты
+фиксов: `c3aa3ca` (правила pf), `a27161b` (blocking-команды в
+`spawn_blocking`). Helper и протокол не менялись (правка — только текст
+правил внутри helper'а).
+
+### Как проверять без подписи Apple (обход S3-T2)
+
+- Dev-helper запускается вручную под `sudo` вместо LaunchDaemon:
+  `sudo target/debug/splitroute-helper --socket /tmp/splitroute-dev.sock
+  --runtime-dir /tmp/splitroute-dev-runtime --sing-box
+  <abs путь к src-tauri/binaries/sing-box-aarch64-apple-darwin>`.
+  Под sudo `SUDO_UID` подхватывается автоматически: сокет после bind
+  `0600` + `chown` на uid пользователя — непривилегированное приложение
+  подключается, peer-проверка пропускает.
+- Приложение: `SPLITROUTE_HELPER_SOCKET=/tmp/splitroute-dev.sock
+  pnpm tauri dev` (без `SPLITROUTE_MOCK_HELPER` — нужен настоящий helper).
+- Прямой пробой протокола удобно сверять состояние helper'а независимо от
+  UI: newline-JSON `{"protocol":2,"id":"…","command":"status"}` в сокет,
+  ответ — одна строка JSON (`state`, `pid`, `kill_switch.enabled`).
+
+### Найдено и исправлено
+
+1. **Правила pf не загружались — `KILL_SWITCH_FAILED` при каждом
+   подключении с kill switch.** Причина: правило
+   `pass out quick user root all keep state` нарушает порядок pf-грамматики
+   (man pf.conf: `hosts` — до `filteropt`; пример в man:
+   `pass out proto { tcp, udp } all user { … }`). pfctl целиком отбивал
+   файл: `killswitch.pf:5: syntax error` → helper корректно откатывал и
+   `pfctl -E`-токен (pf возвращался в Disabled — откат проверен живьём).
+   Фикс: `pass out quick all user root keep state` (`c3aa3ca`), тест правил
+   обновлён. Существующие тесты закодировали тот же неверный порядок —
+   их не ловили, потому что текст правил синтаксисом не проверялся.
+2. **Вечный спиннер «Обновить» и мёртвый UI.** Команды `subscription_fetch`
+   и `traffic_stats` были синхронными телами с `#[tauri::command(async)]`:
+   Tauri исполняет их в таске на воркере tokio, а blocking-reqwest в
+   debug-сборке при каждом вызове строит и тут же дропает свой
+   current-thread runtime (`reqwest 0.13 blocking/wait.rs::enter` — guard
+   «we aren't already in a runtime»); дроп runtime из async-контекста —
+   паника tokio (`Cannot drop a runtime in a context where blocking is not
+   allowed`). Таска команды умирала → промис в UI не разрешался никогда:
+   спиннер крутится, кнопка не нажимается, `FETCH_IN_PROGRESS` не при чём.
+   В release-сборках guard вырезан `debug_assertions` — поэтому баг жил
+   только в dev. Планировщики (`autoupdate`/`autoconnect`) не страдали —
+   они уже на `spawn_blocking` (у blocking-потока нет runtime-контекста).
+   Фикс: обе команды переведены в `async fn` + `spawn_blocking`
+   через `AppHandle` (`a27161b`), защитный код ошибки `FETCH_ABORTED`.
+   Правило на будущее: **новая blocking-работа в командах — только через
+   `spawn_blocking`; `#[tauri::command(async)]` на синхронном теле означает
+   «исполнять на воркере tokio», а не «на thread pool»**.
+
+### Подтверждено в рантайме (реальный профиль, helper под root)
+
+- Подключение через pf-анкер `com.apple/splitroute.killswitch`: правила
+  применяются (текст разворачивается в 11 правил), `/etc/pf.conf` не
+  меняется, токен в runtime-каталоге.
+- Прямой (не туннелированный) egress обычного пользователя блокируется
+  (`curl` — timeout), локальная сеть и loopback работают — защита шире
+  allowlist, как и задумано (§20).
+- Реальное убийство ядра: `pkill -x sing-box-aarch64-apple-darwin` →
+  helper репит процесс, `state: stopped`, **правила остаются**, прямой
+  egress продолжает блокироваться (fail-closed); UI показывает
+  `CORE_STOPPED` через ~2 с (опрос `helperStatus` в `ConnectScreen`,
+  ветка `protectedCrash`). После отключения: anchor not found, прямой
+  трафик восстановлен, pf Disabled.
+- Откат при неудачном старте не оставляет включённый pf: после
+  `KILL_SWITCH_FAILED` (до фикса правил) pf вернулся в Disabled сам.
+
+### Грабли и ограничения
+
+- **`pkill -x sing-box` не убивает ядро**: имя процесса обрезается ядром
+  до 16 символов (`sing-box-aarch64`, comm/MAXCOMLEN), `-x` требует точного
+  совпадения. Убивать по полному имени бинаря
+  (`pkill -x sing-box-aarch64-apple-darwin`) или по PID из статуса helper'а.
+  Из-за этого первые две попытки сценария «падение ядра» были ложными
+  (ядро продолжало жить, UI честно показывал «Подключено»).
+- Статистика (Clash API) первые ~2 с после подключения недоступна (ядро
+  ещё поднимается) — один `WARN`, дальше работает; после смерти ядра —
+  «—» с одним `WARN`, как и зафиксировано в §19.
+- Детект падения есть, **автопереподключения нет** (PRD §13 п. 4 обещает
+  до 3 попыток) — задача `S4-T15`.
+- Windows-часть S4-T5c: функционал проверен пользователем на реальной
+  машине; формальные WFP-пункты (перечисление фильтров, блокировка
+  `curl.exe` при мёртвом ядре, снятие после `stop`) — по детальному
+  отчёту. Linux — без root, не проверялся.
