@@ -1,13 +1,15 @@
-//! Автообновление подписки по интервалу (M1, PRD §6.1).
+//! Автообновление подписок по интервалу (M1, PRD §6.1).
 //!
-//! Расписание считается от последнего успешного ответа (`profiles_fetched_at`
-//! в `state.json`) и последней попытки (в памяти процесса). Ошибка сети не
-//! стирает кэш, но и не запускает новую попытку раньше интервала: иначе
-//! недоступный провайдер получал бы запрос на каждой проверке расписания.
+//! Расписание у каждой подписки своё: от последнего успешного ответа
+//! (`fetched_at` записи в `state.json`) и последней попытки (в памяти
+//! процесса). Ошибка сети не стирает кэш, но и не запускает новую попытку
+//! раньше интервала: иначе недоступный провайдер получал бы запрос на каждой
+//! проверке расписания.
 //!
 //! Загрузка идёт тем же путём, что и ручное обновление
 //! (`subscription_fetch_inner`), поэтому окно не ждёт сеть, а параллельные
-//! загрузки исключены общим флагом в `AppState`.
+//! загрузки одной подписки исключены guard'ом в `AppState`. Разные подписки
+//! друг другу не мешают.
 
 use std::thread;
 use std::time::Duration;
@@ -18,10 +20,10 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::commands::{
     subscription_fetch_inner, AppState, SubscriptionFetchResponse, FETCH_IN_PROGRESS,
 };
-use crate::store::now_secs;
+use crate::store::{now_secs, SubscriptionState};
 
-/// Событие UI: подписка обновлена в фоне. Payload — `SubscriptionFetchResponse`
-/// (профили без `raw`, без URL подписки и HWID).
+/// Событие UI: одна из подписок обновлена в фоне. Payload —
+/// `SubscriptionFetchResponse` (профили без `raw`, без URL подписки и HWID).
 pub(crate) const UPDATED: &str = "subscription-updated";
 
 /// Как часто планировщик проверяет расписание. Интервал задаётся в часах, так
@@ -68,7 +70,7 @@ pub(crate) fn is_due(
     next_update_at(fetched_at, last_attempt, hours).is_none_or(|next| now >= next)
 }
 
-/// Чем закончилась одна проверка расписания.
+/// Чем закончилась проверка расписания одной подписки.
 #[derive(Debug)]
 pub(crate) enum Outcome {
     /// Интервал `0`: автообновление выключено.
@@ -85,26 +87,36 @@ pub(crate) enum Outcome {
     Failed,
 }
 
-/// Одна проверка расписания. `now` передаётся явно: тесты не зависят от часов.
-pub(crate) fn run(state: &AppState, now: u64) -> Outcome {
-    let settings = state.store.settings();
-    let hours = settings.subscription.auto_update_hours;
+/// Результат проверки расписания одной подписки: `(идентификатор, итог)`.
+pub(crate) type SubOutcome = (String, Outcome);
+
+/// Одна проверка расписания подписки. `now` передаётся явно: тесты не зависят
+/// от часов.
+pub(crate) fn run_subscription(
+    state: &AppState,
+    subscription: &SubscriptionState,
+    now: u64,
+) -> Outcome {
+    let hours = subscription.auto_update_hours;
     if interval_secs(hours).is_none() {
         return Outcome::Disabled;
     }
-    if settings.subscription.url.trim().is_empty() {
+    if subscription.url.trim().is_empty() {
         return Outcome::NoUrl;
     }
 
-    let fetched_at = state.store.data().profiles_fetched_at;
-    if !is_due(fetched_at, state.last_fetch_attempt(), hours, now) {
+    if !is_due(
+        subscription.fetched_at,
+        state.last_fetch_attempt(&subscription.id),
+        hours,
+        now,
+    ) {
         return Outcome::NotDue;
     }
 
     state.logs.push(LogLevel::Info, "Автообновление подписки");
-    match subscription_fetch_inner(state, None, None, None) {
+    match subscription_fetch_inner(state, &subscription.id, now) {
         Ok(response) => {
-            state.set_last_fetch_attempt(now);
             state
                 .logs
                 .push(LogLevel::Info, "Автообновление подписки выполнено");
@@ -118,9 +130,6 @@ pub(crate) fn run(state: &AppState, now: u64) -> Outcome {
             Outcome::Busy
         }
         Err(error) => {
-            // Попытка запоминается и при ошибке: иначе сломанный провайдер
-            // получал бы запрос на каждой проверке расписания.
-            state.set_last_fetch_attempt(now);
             state.logs.push(
                 LogLevel::Warn,
                 format!("Автообновление подписки не удалось: {}", error.code),
@@ -130,12 +139,30 @@ pub(crate) fn run(state: &AppState, now: u64) -> Outcome {
     }
 }
 
+/// Проверяет расписание всех подписок. Подписки обновляются по очереди:
+/// запросы к разным провайдерам не перемешиваются, а окно всё равно не ждёт.
+pub(crate) fn run(state: &AppState, now: u64) -> Vec<SubOutcome> {
+    state
+        .store
+        .subscriptions()
+        .iter()
+        .map(|subscription| {
+            (
+                subscription.id.clone(),
+                run_subscription(state, subscription, now),
+            )
+        })
+        .collect()
+}
+
 /// Запускает планировщик в фоне. Вызывается из `setup` после трея: ожидание
 /// сети не должно задерживать появление окна.
 pub(crate) fn spawn(app: AppHandle) {
     tauri::async_runtime::spawn_blocking(move || loop {
-        if let Outcome::Updated(response) = run(&app.state::<AppState>(), now_secs()) {
-            let _ = app.emit(UPDATED, response);
+        for (_id, outcome) in run(&app.state::<AppState>(), now_secs()) {
+            if let Outcome::Updated(response) = outcome {
+                let _ = app.emit(UPDATED, response);
+            }
         }
         thread::sleep(Duration::from_secs(TICK_SECS));
     });
@@ -144,8 +171,9 @@ pub(crate) fn spawn(app: AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::CommandError;
     use crate::privileged::{MockHelperClient, UnsupportedInstaller};
-    use crate::store::{AppSettings, Store};
+    use crate::store::Store;
     use crate::subscription::{FetchError, FetchRequest, SubscriptionFetcher};
     use splitroute_protocol::{Profile, Protocol, TlsConfig, TlsKind, Transport};
     use std::path::PathBuf;
@@ -208,9 +236,9 @@ mod tests {
         .expect("фикстура подписки")
     }
 
-    fn profile() -> Profile {
+    fn profile(id: &str) -> Profile {
         Profile {
-            id: "p1".to_string(),
+            id: id.to_string(),
             name: "Тестовая локация".to_string(),
             protocol: Protocol::Vless,
             server: "203.0.113.10".to_string(),
@@ -240,12 +268,19 @@ mod tests {
         )
     }
 
-    /// Сохраняет интервал и URL подписки, как это делает экран настроек.
-    fn prepare(state: &AppState, hours: u16, url: &str) {
-        let mut settings: AppSettings = state.store.settings();
-        settings.subscription.auto_update_hours = hours;
-        settings.subscription.url = url.to_string();
-        state.store.update_settings(settings).unwrap();
+    /// Создаёт подписку с интервалом и URL, как это делает экран настроек.
+    fn prepare(state: &AppState, hours: u16, url: &str) -> String {
+        let entry = state.store.add_subscription("", url, "", hours).unwrap();
+        entry.id
+    }
+
+    /// Итог проверки конкретной подписки.
+    fn outcome_of<'a>(outcomes: &'a [SubOutcome], id: &str) -> &'a Outcome {
+        &outcomes
+            .iter()
+            .find(|(subscription_id, _)| subscription_id == id)
+            .expect("итог по подписке")
+            .1
     }
 
     #[test]
@@ -286,71 +321,104 @@ mod tests {
     fn disabled_interval_does_not_touch_network() {
         let fetcher = CountingFetcher::succeeding();
         let state = state_with(fetcher.clone(), "disabled");
-        prepare(&state, 0, URL);
+        let id = prepare(&state, 0, URL);
 
-        assert!(matches!(run(&state, NOW), Outcome::Disabled));
+        let outcomes = run(&state, NOW);
+        assert!(matches!(outcome_of(&outcomes, &id), Outcome::Disabled));
         assert_eq!(fetcher.calls(), 0);
-        assert!(state.next_update_at().is_none());
+        let entry = state.store.subscription(&id).unwrap();
+        assert!(state.next_update_at(&entry).is_none());
     }
 
+    /// Подписка с пустым URL (возможна только правкой state.json — add/update
+    /// пустой URL отвергают) не попадает в сеть: защита на случай ручной правки.
     #[test]
     fn empty_url_does_not_touch_network() {
         let fetcher = CountingFetcher::succeeding();
-        let state = state_with(fetcher.clone(), "no-url");
-        prepare(&state, 6, "");
+        let path = temp_path("no-url");
+        let mut data = crate::store::StoredData::default();
+        data.settings.subscription.hwid = "0123456789abcdef".to_string();
+        data.subscriptions.push(SubscriptionState {
+            id: "s1".to_string(),
+            name: String::new(),
+            url: "  ".to_string(),
+            user_agent: String::new(),
+            auto_update_hours: 6,
+            profiles: Vec::new(),
+            fetched_at: None,
+        });
+        std::fs::write(&path, serde_json::to_vec(&data).unwrap()).unwrap();
+        let state = AppState::new(
+            Arc::new(MockHelperClient::new()),
+            Arc::new(UnsupportedInstaller),
+            Store::load(&path),
+            fetcher.clone(),
+        );
 
-        assert!(matches!(run(&state, NOW), Outcome::NoUrl));
+        let outcomes = run(&state, NOW);
+        assert!(matches!(outcome_of(&outcomes, "s1"), Outcome::NoUrl));
         assert_eq!(fetcher.calls(), 0);
-        assert!(state.next_update_at().is_none(), "расписания нет");
+        let entry = state.store.subscription("s1").unwrap();
+        assert!(state.next_update_at(&entry).is_none(), "расписания нет");
     }
 
     #[test]
     fn fresh_subscription_is_not_fetched_again() {
         let fetcher = CountingFetcher::succeeding();
         let state = state_with(fetcher.clone(), "fresh");
-        prepare(&state, 12, URL);
-        state.store.set_profiles(Vec::new(), NOW - 60).unwrap();
+        let id = prepare(&state, 12, URL);
+        state
+            .store
+            .set_subscription_profiles(&id, Vec::new(), NOW - 60)
+            .unwrap();
 
-        assert!(matches!(run(&state, NOW), Outcome::NotDue));
+        let outcomes = run(&state, NOW);
+        assert!(matches!(outcome_of(&outcomes, &id), Outcome::NotDue));
         assert_eq!(fetcher.calls(), 0);
-        assert_eq!(state.next_update_at(), Some(NOW - 60 + 43_200));
+        let entry = state.store.subscription(&id).unwrap();
+        assert_eq!(state.next_update_at(&entry), Some(NOW - 60 + 43_200));
     }
 
     #[test]
     fn due_subscription_is_fetched_and_cache_updated() {
         let fetcher = CountingFetcher::succeeding();
         let state = state_with(fetcher.clone(), "due");
-        prepare(&state, 12, URL);
+        let id = prepare(&state, 12, URL);
 
-        let outcome = run(&state, NOW);
-        assert!(matches!(outcome, Outcome::Updated(_)), "{outcome:?}");
+        let outcomes = run(&state, NOW);
+        assert!(matches!(outcome_of(&outcomes, &id), Outcome::Updated(_)));
         assert_eq!(fetcher.calls(), 1);
-        assert_eq!(state.store.data().profiles.len(), 2);
+        let entry = state.store.subscription(&id).unwrap();
+        assert_eq!(entry.profiles.len(), 2);
         assert!(
-            state.store.data().profiles_fetched_at.is_some(),
+            entry.fetched_at.is_some(),
             "время успешного ответа сохранено"
         );
-        // Отсчёт идёт от попытки (в тесте она синтетическая и позже системных
-        // часов): следующее обновление — через интервал, а не сразу.
-        assert_eq!(state.next_update_at(), Some(NOW + 43_200));
+        // Отсчёт идёт от попытки: следующее обновление — через интервал,
+        // а не на каждом тике.
+        assert_eq!(state.next_update_at(&entry), Some(NOW + 43_200));
     }
 
     #[test]
     fn failure_keeps_cache_and_postpones_the_next_attempt() {
         let fetcher = CountingFetcher::failing();
         let state = state_with(fetcher.clone(), "failure");
-        prepare(&state, 12, URL);
+        let id = prepare(&state, 12, URL);
         // Кэш прошлого успешного ответа устарел, но сети нет.
-        state.store.set_profiles(vec![profile()], 1).unwrap();
+        state
+            .store
+            .set_subscription_profiles(&id, vec![profile("p1")], 1)
+            .unwrap();
 
-        let outcome = run(&state, NOW);
-        assert!(matches!(outcome, Outcome::Failed), "{outcome:?}");
+        let outcomes = run(&state, NOW);
+        assert!(matches!(outcome_of(&outcomes, &id), Outcome::Failed));
+        let entry = state.store.subscription(&id).unwrap();
         assert_eq!(
-            state.store.data().profiles.len(),
+            entry.profiles.len(),
             1,
             "кэш последнего успешного ответа сохраняется"
         );
-        assert_eq!(state.store.data().profiles_fetched_at, Some(1));
+        assert_eq!(entry.fetched_at, Some(1));
         let warnings = state.logs.list(Some(LogLevel::Warn), 20);
         assert!(warnings
             .iter()
@@ -360,34 +428,121 @@ mod tests {
             .all(|entry| !entry.message.contains("203.0.113")));
 
         // Следующая попытка — не раньше интервала, а не на каждом тике.
-        assert!(matches!(run(&state, NOW + 60), Outcome::NotDue));
+        assert!(matches!(
+            outcome_of(&run(&state, NOW + 60), &id),
+            Outcome::NotDue
+        ));
         assert_eq!(
             fetcher.calls(),
             1,
             "сломанный провайдер не опрашивается чаще"
         );
-        assert_eq!(state.next_update_at(), Some(NOW + 43_200));
+        assert_eq!(state.next_update_at(&entry), Some(NOW + 43_200));
+    }
+
+    /// Проверяет расписание нескольких подписок: обновляется только истёкшая.
+    #[test]
+    fn scheduler_updates_each_due_subscription_independently() {
+        let fetcher = CountingFetcher::succeeding();
+        let state = state_with(fetcher.clone(), "multi");
+        let due = prepare(&state, 1, URL);
+        let fresh = prepare(&state, 12, URL);
+        let disabled = prepare(&state, 0, URL);
+        state
+            .store
+            .set_subscription_profiles(&fresh, vec![profile("p1")], NOW - 60)
+            .unwrap();
+
+        let outcomes = run(&state, NOW);
+        assert!(matches!(outcome_of(&outcomes, &due), Outcome::Updated(_)));
+        assert!(matches!(outcome_of(&outcomes, &fresh), Outcome::NotDue));
+        assert!(matches!(
+            outcome_of(&outcomes, &disabled),
+            Outcome::Disabled
+        ));
+        assert_eq!(
+            fetcher.calls(),
+            1,
+            "загрузка одна: только истёкший интервал"
+        );
+        // Все три подписки прошли проверку расписания.
+        assert_eq!(outcomes.len(), 3);
+    }
+
+    /// Ручная попытка (в том числе неудачная) переносит расписание этой
+    /// подписки на полный интервал (PRD §6.1).
+    #[test]
+    fn manual_attempt_postpones_the_schedule() {
+        let fetcher = CountingFetcher::failing();
+        let state = state_with(fetcher.clone(), "manual");
+        let id = prepare(&state, 12, URL);
+
+        let error = subscription_fetch_inner(&state, &id, NOW).unwrap_err();
+        assert_eq!(error.code, "NETWORK");
+        assert_eq!(fetcher.calls(), 1);
+        let entry = state.store.subscription(&id).unwrap();
+        assert_eq!(entry.fetched_at, None, "кэш пуст: ответа не было");
+        assert_eq!(
+            state.next_update_at(&entry),
+            Some(NOW + 43_200),
+            "неудачная ручная попытка тоже отодвигает автообновление"
+        );
+        assert!(matches!(
+            outcome_of(&run(&state, NOW + 60), &id),
+            Outcome::NotDue
+        ));
+        assert_eq!(fetcher.calls(), 1);
     }
 
     #[test]
-    fn parallel_fetch_is_rejected() {
+    fn parallel_fetch_of_one_subscription_is_rejected() {
         let fetcher = CountingFetcher::succeeding();
         let state = state_with(fetcher.clone(), "parallel");
-        prepare(&state, 12, URL);
+        let id = prepare(&state, 12, URL);
 
-        let guard = state.try_begin_fetch().expect("первый захват");
-        assert!(matches!(run(&state, NOW), Outcome::Busy));
+        let guard = state.try_begin_fetch(&id).expect("первый захват");
+        assert!(matches!(outcome_of(&run(&state, NOW), &id), Outcome::Busy));
         assert_eq!(
-            subscription_fetch_inner(&state, None, None, None)
-                .unwrap_err()
-                .code,
+            subscription_fetch_inner(&state, &id, NOW).unwrap_err().code,
             "FETCH_IN_PROGRESS"
         );
         assert_eq!(fetcher.calls(), 0);
 
         // После освобождения загрузка снова возможна.
         drop(guard);
-        assert!(matches!(run(&state, NOW), Outcome::Updated(_)));
+        assert!(matches!(
+            outcome_of(&run(&state, NOW), &id),
+            Outcome::Updated(_)
+        ));
         assert_eq!(fetcher.calls(), 1);
+    }
+
+    /// Разные подписки не блокируют друг друга: guard на одну подписку не
+    /// мешает загрузке другой.
+    #[test]
+    fn parallel_fetch_of_different_subscriptions_is_allowed() {
+        let fetcher = CountingFetcher::succeeding();
+        let state = state_with(fetcher.clone(), "parallel-multi");
+        let first = prepare(&state, 12, URL);
+        let second = prepare(&state, 12, URL);
+
+        let _guard = state.try_begin_fetch(&first).expect("захват первой");
+        let outcomes = run(&state, NOW);
+        assert!(matches!(outcome_of(&outcomes, &first), Outcome::Busy));
+        assert!(matches!(
+            outcome_of(&outcomes, &second),
+            Outcome::Updated(_)
+        ));
+        assert_eq!(fetcher.calls(), 1);
+    }
+
+    /// Неизвестный идентификатор подписки даёт типизированную ошибку.
+    #[test]
+    fn fetch_unknown_subscription_is_not_found() {
+        let fetcher = CountingFetcher::succeeding();
+        let state = state_with(fetcher.clone(), "unknown");
+        let error: CommandError = subscription_fetch_inner(&state, "missing", NOW).unwrap_err();
+        assert_eq!(error.code, "SUBSCRIPTION_NOT_FOUND");
+        assert_eq!(fetcher.calls(), 0);
     }
 }

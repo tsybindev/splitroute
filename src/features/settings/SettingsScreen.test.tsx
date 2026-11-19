@@ -40,29 +40,29 @@ describe("SettingsScreen", () => {
     expect(screen.getByText("Загрузка…")).toBeInTheDocument();
   });
 
-  it("сохраняет изменённый URL подписки", async () => {
+  it("сохраняет изменённый HWID устройства", async () => {
     const user = userEvent.setup();
     const settings = makeSettings();
     const saved = makeSettings({
       subscription: {
         ...settings.subscription,
-        url: "https://example.invalid/sub",
+        hwid: "abcdef0123456789",
       },
     });
     apiMock.settingsUpdate.mockResolvedValue(saved);
     useAppStore.setState({ settings });
 
     render(<SettingsScreen />);
-    const input = screen.getByLabelText(/URL подписки/);
+    const input = screen.getByLabelText(/HWID/);
     await user.clear(input);
-    await user.type(input, "https://example.invalid/sub");
+    await user.type(input, "abcdef0123456789");
     await user.click(screen.getByRole("button", { name: "Сохранить настройки" }));
 
     await waitFor(() =>
       expect(apiMock.settingsUpdate).toHaveBeenCalledWith(
         expect.objectContaining({
           subscription: expect.objectContaining({
-            url: "https://example.invalid/sub",
+            hwid: "abcdef0123456789",
           }),
         }),
       ),

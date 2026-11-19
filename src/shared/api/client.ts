@@ -17,6 +17,8 @@ import type {
   ProfilesResponse,
   RunningApp,
   SubscriptionFetchResponse,
+  SubscriptionInput,
+  SubscriptionView,
   TrafficStats,
   UpdateChannel,
   UpdateCheckResult,
@@ -48,12 +50,17 @@ export const api = {
   disconnect: () => invoke<HelperStatus>("disconnect"),
   helperInstall: () => invoke<void>("helper_install"),
   helperUninstall: () => invoke<void>("helper_uninstall"),
-  subscriptionFetch: (url?: string, hwid?: string, userAgent?: string) =>
-    invoke<SubscriptionFetchResponse>("subscription_fetch", {
-      url: url ?? null,
-      hwid: hwid ?? null,
-      userAgent: userAgent ?? null,
-    }),
+  // Ручное обновление одной подписки: сеть в Rust, окно не ждёт ответа.
+  subscriptionFetch: (id: string) =>
+    invoke<SubscriptionFetchResponse>("subscription_fetch", { id }),
+  // Подписки: список приходит в profiles_list, эти команды управляют записями.
+  subscriptionAdd: (input: SubscriptionInput) =>
+    invoke<SubscriptionView>("subscription_add", { ...input }),
+  subscriptionUpdate: (id: string, input: SubscriptionInput) =>
+    invoke<SubscriptionView>("subscription_update", { id, ...input }),
+  // Удаление возвращает общий список: выбор локации мог сброситься.
+  subscriptionDelete: (id: string) =>
+    invoke<ProfilesResponse>("subscription_delete", { id }),
   profilesList: () => invoke<ProfilesResponse>("profiles_list"),
   // Задержки меряет Rust: TCP-connect с таймаутом, без ядра и секретов.
   profilesPing: () => invoke<LatencyResponse>("profiles_ping"),

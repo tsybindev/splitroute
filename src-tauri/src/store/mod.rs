@@ -12,14 +12,31 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use splitroute_protocol::{AppRule, Language, Profile, Settings};
 
-/// Настройки подписки и идентификации устройства.
+/// Глобальные настройки подписок: HWID — идентификатор устройства, один на все
+/// провайдера. Параметры конкретной подписки (URL, UA, интервал) живут в
+/// `SubscriptionState`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SubscriptionSettings {
-    /// Пустая строка означает «подписка не добавлена».
-    pub url: String,
     pub hwid: String,
+}
+
+/// Одна подписка: параметры провайдера и кэш последнего успешного ответа.
+/// Несколько подписок независимы; активная локация — одна на приложение.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SubscriptionState {
+    /// Стабильный идентификатор записи; генерируется при создании.
+    pub id: String,
+    /// Отображаемое имя. Пустое — UI показывает «Подписка N».
+    pub name: String,
+    pub url: String,
     pub user_agent: String,
     pub auto_update_hours: u16,
+    /// Кэш последнего успешного ответа; при ошибке сети сохраняется.
+    #[serde(default)]
+    pub profiles: Vec<Profile>,
+    /// Время последнего успешного обновления (unix, секунды).
+    #[serde(default)]
+    pub fetched_at: Option<u64>,
 }
 
 /// Порог деградации по умолчанию: новая локация должна быть быстрее на 100 мс.
@@ -193,10 +210,7 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             subscription: SubscriptionSettings {
-                url: String::new(),
                 hwid: generate_hwid(),
-                user_agent: DEFAULT_USER_AGENT.to_string(),
-                auto_update_hours: 12,
             },
             network: Settings::default(),
             preferences: AppPreferences {
@@ -217,15 +231,108 @@ impl Default for AppSettings {
 pub struct StoredData {
     #[serde(default)]
     pub settings: AppSettings,
+    /// Подписки в порядке добавления. Устаревший файл с одной подпиской
+    /// переносится в первую запись при чтении (см. `StoredData::migrate_legacy`).
     #[serde(default)]
-    pub profiles: Vec<Profile>,
+    pub subscriptions: Vec<SubscriptionState>,
+    /// Активная локация — одна на приложение. Идентификатор профиля
+    /// вычисляется из содержимого, поэтому коллизия между подписками
+    /// означает буквально одинаковые профили.
     #[serde(default)]
     pub selected_profile_id: Option<String>,
     #[serde(default)]
     pub rules: Vec<AppRule>,
-    /// Время последнего успешного обновления подписки (unix, секунды).
-    #[serde(default)]
-    pub profiles_fetched_at: Option<u64>,
+}
+
+impl StoredData {
+    /// Все профили всех подписок в порядке добавления подписок.
+    pub fn all_profiles(&self) -> Vec<Profile> {
+        self.subscriptions
+            .iter()
+            .flat_map(|subscription| subscription.profiles.iter().cloned())
+            .collect()
+    }
+
+    /// Ищет профиль по идентификатору среди всех подписок.
+    pub fn find_profile(&self, id: &str) -> Option<&Profile> {
+        self.subscriptions
+            .iter()
+            .flat_map(|subscription| subscription.profiles.iter())
+            .find(|profile| profile.id == id)
+    }
+
+    /// Есть ли профиль с таким идентификатором в какой-нибудь подписке.
+    fn profile_exists(&self, id: &str) -> bool {
+        self.find_profile(id).is_some()
+    }
+
+    /// Сбрасывает выбор, если выбранного профиля больше нет ни в одной подписке.
+    /// Автовыбор здесь не выполняется: он происходит только при успешной
+    /// загрузке подписки.
+    fn reconcile_selection(&mut self) {
+        if let Some(selected) = self.selected_profile_id.as_ref() {
+            if !self.profile_exists(selected) {
+                self.selected_profile_id = None;
+            }
+        }
+    }
+
+    /// Переносит состояние до появления нескольких подписок: один URL в
+    /// `settings.subscription` и общий список профилей становятся первой
+    /// записью. Возвращает `true`, если миграция выполнилась.
+    fn migrate_legacy(&mut self, raw: &serde_json::Value) -> bool {
+        if !self.subscriptions.is_empty() {
+            return false;
+        }
+        let Some(legacy) = raw
+            .get("settings")
+            .and_then(|settings| settings.get("subscription"))
+        else {
+            return false;
+        };
+        let url = legacy
+            .get("url")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if url.is_empty() {
+            return false;
+        }
+        let user_agent = legacy
+            .get("user_agent")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let auto_update_hours = legacy
+            .get("auto_update_hours")
+            .and_then(|value| value.as_u64())
+            .map(|value| value as u16)
+            .unwrap_or(12);
+        let profiles: Vec<Profile> = raw
+            .get("profiles")
+            .and_then(|value| serde_json::from_value(value.clone()).ok())
+            .unwrap_or_default();
+        let fetched_at = raw
+            .get("profiles_fetched_at")
+            .and_then(|value| value.as_u64());
+        self.subscriptions.push(SubscriptionState {
+            id: new_subscription_id(),
+            name: String::new(),
+            url,
+            user_agent,
+            auto_update_hours,
+            profiles,
+            fetched_at,
+        });
+        true
+    }
+}
+
+/// Стабильный идентификатор записи подписки.
+pub fn new_subscription_id() -> String {
+    uuid::Uuid::new_v4().simple().to_string()
 }
 
 /// Ошибка чтения/записи состояния.
@@ -237,6 +344,10 @@ pub enum StoreError {
     Write(String),
     #[error("некорректный HWID: ожидается 16 hex-символов")]
     InvalidHwid,
+    #[error("{0}")]
+    NotFound(String),
+    #[error("URL подписки не задан")]
+    InvalidUrl,
 }
 
 /// Путь по умолчанию: `<config>/splitroute/state.json`.
@@ -303,22 +414,157 @@ impl Store {
         Ok(snapshot.settings)
     }
 
-    /// Кладёт результат успешного обновления подписки (кэш последнего ответа).
-    pub fn set_profiles(&self, profiles: Vec<Profile>, fetched_at: u64) -> Result<(), StoreError> {
+    /// Список подписок в порядке добавления.
+    pub fn subscriptions(&self) -> Vec<SubscriptionState> {
+        self.inner.lock().unwrap().subscriptions.clone()
+    }
+
+    /// Одна подписка по идентификатору.
+    pub fn subscription(&self, id: &str) -> Option<SubscriptionState> {
+        self.inner
+            .lock()
+            .unwrap()
+            .subscriptions
+            .iter()
+            .find(|subscription| subscription.id == id)
+            .cloned()
+    }
+
+    /// Добавляет подписку. Пустой UA заменяется на собственный приложения.
+    pub fn add_subscription(
+        &self,
+        name: &str,
+        url: &str,
+        user_agent: &str,
+        auto_update_hours: u16,
+    ) -> Result<SubscriptionState, StoreError> {
+        if url.trim().is_empty() {
+            return Err(StoreError::InvalidUrl);
+        }
+        let entry = SubscriptionState {
+            id: new_subscription_id(),
+            name: name.trim().to_string(),
+            url: url.trim().to_string(),
+            user_agent: {
+                let trimmed = user_agent.trim();
+                if trimmed.is_empty() {
+                    DEFAULT_USER_AGENT.to_string()
+                } else {
+                    trimmed.to_string()
+                }
+            },
+            auto_update_hours,
+            profiles: Vec::new(),
+            fetched_at: None,
+        };
         let snapshot = {
             let mut data = self.inner.lock().unwrap();
-            if data
-                .selected_profile_id
-                .as_ref()
-                .is_some_and(|id| !profiles.iter().any(|profile| &profile.id == id))
+            data.subscriptions.push(entry.clone());
+            data.clone()
+        };
+        write_data(&self.path, &snapshot).map_err(|error| StoreError::Write(error.to_string()))?;
+        Ok(entry)
+    }
+
+    /// Обновляет параметры подписки; кэш профилей сохраняется, если URL не
+    /// изменился. Смена URL сбрасывает кэш прежнего провайдера.
+    pub fn update_subscription(
+        &self,
+        id: &str,
+        name: &str,
+        url: &str,
+        user_agent: &str,
+        auto_update_hours: u16,
+    ) -> Result<SubscriptionState, StoreError> {
+        if url.trim().is_empty() {
+            return Err(StoreError::InvalidUrl);
+        }
+        let url = url.trim().to_string();
+        let snapshot = {
+            let mut data = self.inner.lock().unwrap();
+            let entry = data
+                .subscriptions
+                .iter_mut()
+                .find(|subscription| subscription.id == id)
+                .ok_or_else(|| StoreError::NotFound("подписка не найдена".to_string()))?;
+            entry.name = name.trim().to_string();
+            let url_changed = entry.url != url;
+            entry.url = url;
+            let trimmed = user_agent.trim();
+            entry.user_agent = if trimmed.is_empty() {
+                DEFAULT_USER_AGENT.to_string()
+            } else {
+                trimmed.to_string()
+            };
+            entry.auto_update_hours = auto_update_hours;
+            if url_changed {
+                // Кэш относится к прежнему провайдеру: показать его локации
+                // для нового URL было бы обманом.
+                entry.profiles.clear();
+                entry.fetched_at = None;
+            }
+            data.reconcile_selection();
+            data.clone()
+        };
+        write_data(&self.path, &snapshot).map_err(|error| StoreError::Write(error.to_string()))?;
+        self.subscription(id)
+            .ok_or_else(|| StoreError::NotFound("подписка не найдена".to_string()))
+    }
+
+    /// Удаляет подписку вместе с её кэшем. Активный туннель не затрагивается;
+    /// выбор локации сбрасывается, только если профиль исчез отовсюду.
+    pub fn delete_subscription(&self, id: &str) -> Result<Vec<SubscriptionState>, StoreError> {
+        let snapshot = {
+            let mut data = self.inner.lock().unwrap();
+            if !data
+                .subscriptions
+                .iter()
+                .any(|subscription| subscription.id == id)
             {
-                data.selected_profile_id = None;
+                return Err(StoreError::NotFound("подписка не найдена".to_string()));
             }
-            if data.selected_profile_id.is_none() {
-                data.selected_profile_id = profiles.first().map(|profile| profile.id.clone());
+            data.subscriptions
+                .retain(|subscription| subscription.id != id);
+            data.reconcile_selection();
+            data.clone()
+        };
+        write_data(&self.path, &snapshot).map_err(|error| StoreError::Write(error.to_string()))?;
+        Ok(snapshot.subscriptions)
+    }
+
+    /// Кладёт результат успешного обновления одной подписки (кэш последнего
+    /// ответа). Выбор локации автоматически переходит на первый профиль этой
+    /// подписки, только если прежний выбор исчез отовсюду.
+    pub fn set_subscription_profiles(
+        &self,
+        id: &str,
+        profiles: Vec<Profile>,
+        fetched_at: u64,
+    ) -> Result<(), StoreError> {
+        let snapshot = {
+            let mut data = self.inner.lock().unwrap();
+            let index = data
+                .subscriptions
+                .iter()
+                .position(|subscription| subscription.id == id)
+                .ok_or_else(|| StoreError::NotFound("подписка не найдена".to_string()))?;
+            {
+                let entry = &mut data.subscriptions[index];
+                entry.profiles = profiles;
+                entry.fetched_at = Some(fetched_at);
             }
-            data.profiles = profiles;
-            data.profiles_fetched_at = Some(fetched_at);
+            // Существование выбранного профиля проверяется уже по новому
+            // состоянию: пропавший профиль мог быть именно в этой подписке.
+            let selection_missing = match data.selected_profile_id.as_ref() {
+                Some(selected) => !data.profile_exists(selected),
+                None => true,
+            };
+            if selection_missing {
+                data.selected_profile_id = data.subscriptions[index]
+                    .profiles
+                    .first()
+                    .map(|profile| profile.id.clone());
+            }
             data.clone()
         };
         write_data(&self.path, &snapshot).map_err(|error| StoreError::Write(error.to_string()))
@@ -327,8 +573,10 @@ impl Store {
     pub fn select_profile(&self, id: &str) -> Result<(), StoreError> {
         let snapshot = {
             let mut data = self.inner.lock().unwrap();
-            if !data.profiles.iter().any(|profile| profile.id == id) {
-                return Err(StoreError::Read("профиль не найден в подписке".to_string()));
+            if !data.profile_exists(id) {
+                return Err(StoreError::Read(
+                    "профиль не найден ни в одной подписке".to_string(),
+                ));
             }
             data.selected_profile_id = Some(id.to_string());
             data.clone()
@@ -367,7 +615,15 @@ impl Store {
 
 fn read_data(path: &Path) -> Option<StoredData> {
     let raw = fs::read_to_string(path).ok()?;
-    serde_json::from_str(&raw).ok()
+    let value: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let mut data: StoredData = serde_json::from_value(value.clone()).ok()?;
+    if data.migrate_legacy(&value) {
+        // Миграцию сразу пишем на диск: идентификатор записи подписки не
+        // должен меняться между запусками. Ошибка записи не критична — при
+        // следующем запуске миграция повторится.
+        let _ = write_data(path, &data);
+    }
+    Some(data)
 }
 
 fn write_data(path: &Path, data: &StoredData) -> io::Result<()> {
@@ -454,14 +710,13 @@ mod tests {
             .hwid
             .bytes()
             .all(|byte| byte.is_ascii_hexdigit()));
-        assert!(settings.subscription.url.is_empty());
-        assert_eq!(
-            settings.subscription.user_agent, "SplitRoute/0.1.0",
-            "собственный UA: провайдер отдаёт base64-список vless-ссылок"
+        assert!(
+            store.data().subscriptions.is_empty(),
+            "свежая установка не содержит подписок"
         );
         assert!(settings.preferences.close_to_tray);
         assert_eq!(settings.preferences.language, Language::Ru);
-        assert!(store.data().profiles.is_empty());
+        assert!(store.data().all_profiles().is_empty());
     }
 
     /// Старый state.json без поля `language` читается как `ru`.
@@ -587,16 +842,22 @@ mod tests {
         let _ = fs::remove_file(&path);
     }
 
-    /// Сохранённый UA — это выбор пользователя: загрузка его не переписывает.
+    /// Сохранённый UA подписки — это выбор пользователя: загрузка его
+    /// не переписывает.
     #[test]
-    fn saved_user_agent_is_kept_on_load() {
+    fn saved_subscription_user_agent_is_kept_on_load() {
         let path = temp_path("saved-ua");
-        let mut data = StoredData::default();
-        data.settings.subscription.user_agent = "Custom/1.0".to_string();
-        write_data(&path, &data).unwrap();
-
         let store = Store::load(&path);
-        assert_eq!(store.settings().subscription.user_agent, "Custom/1.0");
+        let entry = store
+            .add_subscription("", "https://example.invalid/sub", "Custom/1.0", 12)
+            .unwrap();
+        write_data(&path, &store.data()).unwrap();
+
+        let reloaded = Store::load(&path);
+        assert_eq!(
+            reloaded.subscription(&entry.id).unwrap().user_agent,
+            "Custom/1.0"
+        );
         let _ = fs::remove_file(&path);
     }
 
@@ -605,46 +866,244 @@ mod tests {
         let path = temp_path("settings");
         let store = Store::load(&path);
         let mut settings = store.settings();
-        settings.subscription.url = "https://example.invalid/sub".to_string();
         settings.network.mtu = 1400;
         store.update_settings(settings.clone()).unwrap();
+        store
+            .add_subscription("Основная", "https://example.invalid/sub", "", 6)
+            .unwrap();
 
         let reloaded = Store::load(&path);
         assert_eq!(reloaded.settings(), settings);
+        let subscriptions = reloaded.subscriptions();
+        assert_eq!(subscriptions.len(), 1);
+        assert_eq!(subscriptions[0].name, "Основная");
+        assert_eq!(subscriptions[0].url, "https://example.invalid/sub");
+        assert_eq!(subscriptions[0].user_agent, DEFAULT_USER_AGENT);
+        assert_eq!(subscriptions[0].auto_update_hours, 6);
+        let _ = fs::remove_file(&path);
+    }
+
+    /// Устаревший state.json с одной подпиской переносится в первую запись,
+    /// включая кэш профилей и время последнего ответа.
+    #[test]
+    fn legacy_state_migrates_to_first_subscription() {
+        let path = temp_path("legacy");
+        let mut data = StoredData::default();
+        data.settings.subscription.hwid = "0123456789abcdef".to_string();
+        write_data(&path, &data).unwrap();
+        // Правим файл руками: в новой модели этих полей больше нет.
+        let raw = fs::read_to_string(&path).unwrap();
+        let mut value: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        value["settings"]["subscription"] = serde_json::json!({
+            "url": "https://example.invalid/sub",
+            "hwid": "0123456789abcdef",
+            "user_agent": "Custom/1.0",
+            "auto_update_hours": 6,
+        });
+        value["profiles"] = serde_json::to_value(vec![profile("p1"), profile("p2")]).unwrap();
+        value["selected_profile_id"] = serde_json::json!("p2");
+        value["profiles_fetched_at"] = serde_json::json!(1234);
+        fs::write(&path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+
+        let store = Store::load(&path);
+        let subscriptions = store.subscriptions();
+        assert_eq!(subscriptions.len(), 1, "создана одна запись");
+        let entry = &subscriptions[0];
+        assert!(!entry.id.is_empty());
+        assert_eq!(entry.url, "https://example.invalid/sub");
+        assert_eq!(entry.user_agent, "Custom/1.0");
+        assert_eq!(entry.auto_update_hours, 6);
+        assert_eq!(entry.profiles.len(), 2);
+        assert_eq!(entry.fetched_at, Some(1234));
+        assert_eq!(store.data().selected_profile_id.as_deref(), Some("p2"));
+        assert_eq!(
+            store.settings().subscription.hwid,
+            "0123456789abcdef",
+            "HWID сохраняется"
+        );
+
+        // Миграция записана на диск: повторное чтение даёт те же идентификатор
+        // и данные, а устаревшие поля больше не хранятся.
+        let reloaded = Store::load(&path);
+        assert_eq!(reloaded.subscriptions(), subscriptions);
+        let raw = fs::read_to_string(&path).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert!(value.get("profiles").is_none(), "плоский список удалён");
+        assert!(
+            value["settings"]["subscription"].get("url").is_none(),
+            "URL теперь в записи подписки"
+        );
+        let _ = fs::remove_file(&path);
+    }
+
+    /// Файл без подписки (пустой URL) не создаёт записей.
+    #[test]
+    fn legacy_state_without_url_migrates_to_empty_list() {
+        let path = temp_path("legacy-empty");
+        let mut data = StoredData::default();
+        data.settings.subscription.hwid = "0123456789abcdef".to_string();
+        write_data(&path, &data).unwrap();
+
+        let store = Store::load(&path);
+        assert!(store.subscriptions().is_empty());
         let _ = fs::remove_file(&path);
     }
 
     #[test]
-    fn invalid_hwid_is_rejected() {
-        let store = Store::load(temp_path("hwid"));
-        let mut settings = store.settings();
-        settings.subscription.hwid = "zz".to_string();
+    fn add_subscription_requires_url_and_fills_defaults() {
+        let store = Store::load(temp_path("add"));
         assert!(matches!(
-            store.update_settings(settings),
-            Err(StoreError::InvalidHwid)
+            store.add_subscription("", "  ", "", 12),
+            Err(StoreError::InvalidUrl)
+        ));
+        let entry = store
+            .add_subscription("  Главная  ", " url ", "", 0)
+            .unwrap();
+        assert_eq!(entry.name, "Главная", "имя обрезается");
+        assert_eq!(entry.url, "url");
+        assert_eq!(entry.user_agent, DEFAULT_USER_AGENT, "пустой UA — свой");
+        assert_eq!(entry.auto_update_hours, 0);
+        assert!(entry.profiles.is_empty());
+        assert_eq!(entry.fetched_at, None);
+    }
+
+    #[test]
+    fn subscription_update_keeps_cache_until_url_changes() {
+        let store = Store::load(temp_path("update"));
+        let entry = store
+            .add_subscription("", "https://a.invalid/sub", "", 12)
+            .unwrap();
+        store
+            .set_subscription_profiles(&entry.id, vec![profile("p1")], 100)
+            .unwrap();
+        store.select_profile("p1").unwrap();
+
+        // UA и интервал меняются — кэш остаётся.
+        let updated = store
+            .update_subscription(&entry.id, "A", "https://a.invalid/sub", "Custom/2.0", 6)
+            .unwrap();
+        assert_eq!(updated.user_agent, "Custom/2.0");
+        assert_eq!(updated.auto_update_hours, 6);
+        assert_eq!(updated.profiles.len(), 1);
+        assert_eq!(updated.fetched_at, Some(100));
+
+        // Смена URL сбрасывает кэш и оставляет выбор пустым: профиль исчез.
+        let updated = store
+            .update_subscription(&entry.id, "A", "https://b.invalid/sub", "", 6)
+            .unwrap();
+        assert!(updated.profiles.is_empty());
+        assert_eq!(updated.fetched_at, None);
+        assert_eq!(store.data().selected_profile_id, None);
+        assert_eq!(
+            updated.user_agent, DEFAULT_USER_AGENT,
+            "пустой UA заменяется на свой"
+        );
+        assert!(matches!(
+            store.update_subscription(&entry.id, "", " ", "", 6),
+            Err(StoreError::InvalidUrl)
         ));
     }
 
     #[test]
-    fn profiles_are_cached_and_selection_reset_when_missing() {
-        let store = Store::load(temp_path("profiles"));
+    fn subscription_delete_resets_selection_only_when_profile_gone() {
+        let store = Store::load(temp_path("delete"));
+        let first = store
+            .add_subscription("A", "https://a.invalid/sub", "", 12)
+            .unwrap();
+        let second = store
+            .add_subscription("B", "https://b.invalid/sub", "", 12)
+            .unwrap();
         store
-            .set_profiles(vec![profile("p1"), profile("p2")], 123)
+            .set_subscription_profiles(&first.id, vec![profile("p1")], 1)
+            .unwrap();
+        store
+            .set_subscription_profiles(&second.id, vec![profile("p2")], 2)
             .unwrap();
         store.select_profile("p2").unwrap();
+
+        // Удаление другой подписки выбор не трогает.
+        let rest = store.delete_subscription(&first.id).unwrap();
+        assert_eq!(rest.len(), 1);
         assert_eq!(store.data().selected_profile_id.as_deref(), Some("p2"));
 
-        store.set_profiles(vec![profile("p1")], 124).unwrap();
+        // Удаление подписки с выбранной локацией сбрасывает выбор.
+        store.delete_subscription(&second.id).unwrap();
+        assert_eq!(store.data().selected_profile_id, None);
+        assert!(matches!(
+            store.delete_subscription(&first.id),
+            Err(StoreError::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn profiles_are_cached_per_subscription_and_selection_survives_other_updates() {
+        let store = Store::load(temp_path("profiles"));
+        let first = store
+            .add_subscription("A", "https://a.invalid/sub", "", 12)
+            .unwrap();
+        let second = store
+            .add_subscription("B", "https://b.invalid/sub", "", 12)
+            .unwrap();
+
+        // Первая загрузка выбирает первый профиль автоматически.
+        store
+            .set_subscription_profiles(&first.id, vec![profile("p1"), profile("p2")], 123)
+            .unwrap();
+        assert_eq!(store.data().selected_profile_id.as_deref(), Some("p1"));
+        store.select_profile("p2").unwrap();
+
+        // Обновление второй подписки не трогает выбор из первой.
+        store
+            .set_subscription_profiles(&second.id, vec![profile("p3")], 124)
+            .unwrap();
         let data = store.data();
-        assert_eq!(data.profiles.len(), 1);
-        assert_eq!(data.selected_profile_id.as_deref(), Some("p1"));
-        assert_eq!(data.profiles_fetched_at, Some(124));
+        assert_eq!(data.subscriptions.len(), 2);
+        assert!(data.find_profile("p3").is_some());
+        assert_eq!(data.selected_profile_id.as_deref(), Some("p2"));
+        assert_eq!(
+            data.subscriptions
+                .iter()
+                .find(|subscription| subscription.id == second.id)
+                .unwrap()
+                .fetched_at,
+            Some(124)
+        );
+
+        // Обновление первой подписки убирает p2: выбор переносится на первый
+        // профиль обновлённой подписки.
+        store
+            .set_subscription_profiles(&first.id, vec![profile("p1")], 125)
+            .unwrap();
+        assert_eq!(store.data().selected_profile_id.as_deref(), Some("p1"));
+
+        // Обновление второй подписки выбор не трогает: p1 живёт в первой.
+        store
+            .set_subscription_profiles(&second.id, vec![profile("p4")], 126)
+            .unwrap();
+        assert_eq!(store.data().selected_profile_id.as_deref(), Some("p1"));
     }
 
     #[test]
     fn select_unknown_profile_is_error() {
         let store = Store::load(temp_path("select"));
         assert!(store.select_profile("missing").is_err());
+        let entry = store
+            .add_subscription("", "https://a.invalid/sub", "", 12)
+            .unwrap();
+        store
+            .set_subscription_profiles(&entry.id, vec![profile("p1")], 1)
+            .unwrap();
+        store.select_profile("p1").unwrap();
+        assert_eq!(store.data().selected_profile_id.as_deref(), Some("p1"));
+    }
+
+    #[test]
+    fn set_profiles_on_missing_subscription_is_not_found() {
+        let store = Store::load(temp_path("missing-sub"));
+        assert!(matches!(
+            store.set_subscription_profiles("nope", vec![profile("p1")], 1),
+            Err(StoreError::NotFound(_))
+        ));
     }
 
     #[test]

@@ -61,7 +61,7 @@ pub(crate) fn run(state: &AppState) -> Outcome {
     let has_profile = data
         .selected_profile_id
         .as_deref()
-        .is_some_and(|id| data.profiles.iter().any(|profile| profile.id == id));
+        .is_some_and(|id| data.find_profile(id).is_some());
     if !has_profile {
         state.logs.push(
             LogLevel::Debug,
@@ -196,15 +196,28 @@ mod tests {
         settings.preferences.connect_on_start = true;
         state.store.update_settings(settings).unwrap();
         if with_profile {
-            state.store.set_profiles(vec![profile()], 1).unwrap();
+            seed_profiles(state, &[profile()]);
         }
+    }
+
+    /// Создаёт подписку и кладёт в её кэш заданные профили.
+    fn seed_profiles(state: &AppState, profiles: &[Profile]) -> String {
+        let entry = state
+            .store
+            .add_subscription("", "https://example.invalid/sub", "", 12)
+            .unwrap();
+        state
+            .store
+            .set_subscription_profiles(&entry.id, profiles.to_vec(), 1)
+            .unwrap();
+        entry.id
     }
 
     #[test]
     fn disabled_setting_does_not_start_core() {
         let helper = Arc::new(MockHelperClient::new());
         let state = state_with(helper.clone(), "disabled");
-        state.store.set_profiles(vec![profile()], 1).unwrap();
+        seed_profiles(&state, &[profile()]);
 
         assert!(matches!(run(&state), Outcome::Disabled));
         assert_eq!(helper.start_calls(), 0);
@@ -333,7 +346,11 @@ mod tests {
         let state = state_with(helper.clone(), "stale");
         prepare(&state, true);
         // Профиль выбран, но подписка обновилась и его больше нет.
-        state.store.set_profiles(Vec::new(), 2).unwrap();
+        let id = state.store.subscriptions()[0].id.clone();
+        state
+            .store
+            .set_subscription_profiles(&id, Vec::new(), 2)
+            .unwrap();
         assert!(state.store.data().selected_profile_id.is_none());
         state
             .store

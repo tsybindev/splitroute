@@ -98,9 +98,29 @@ export interface NetworkSettings {
   kill_switch: boolean;
 }
 
+/** Глобальные настройки подписок: HWID — один идентификатор устройства. */
 export interface SubscriptionSettings {
-  url: string;
   hwid: string;
+}
+
+/** Параметры одной подписки и её расписание (PRD §6.1). */
+export interface SubscriptionView {
+  id: string;
+  /** Пустое имя показывается как «Подписка N». */
+  name: string;
+  url: string;
+  user_agent: string;
+  auto_update_hours: number;
+  fetched_at: number | null;
+  /** Когда произойдёт следующее автообновление; null — не запланировано. */
+  next_update_at: number | null;
+  profiles: Profile[];
+}
+
+/** Данные формы одной подписки (добавление и изменение). */
+export interface SubscriptionInput {
+  name: string;
+  url: string;
   user_agent: string;
   auto_update_hours: number;
 }
@@ -147,15 +167,21 @@ export interface SkippedProfile {
 }
 
 export interface ProfilesResponse {
+  /** Локации, сгруппированные по подпискам в порядке добавления. */
+  subscriptions: SubscriptionView[];
+  /** Все локации плоским списком: задержки и выбор не зависят от подписки. */
   profiles: Profile[];
   selected_profile_id: string | null;
-  fetched_at: number | null;
-  /** Когда произойдёт следующее автообновление (M1); null — не запланировано. */
-  next_update_at: number | null;
 }
 
-export interface SubscriptionFetchResponse extends ProfilesResponse {
+export interface SubscriptionFetchResponse {
+  subscription_id: string;
+  name: string;
+  profiles: Profile[];
   skipped: SkippedProfile[];
+  selected_profile_id: string | null;
+  fetched_at: number;
+  next_update_at: number | null;
 }
 
 export interface LogEntry {

@@ -1,4 +1,5 @@
 import { Gauge, RefreshCw } from "lucide-react";
+import type { SubscriptionView } from "../../shared/api/types";
 import { errorText, locale, t } from "../../shared/i18n";
 import { latencyById, sortProfilesByLatency } from "../../shared/lib/latency";
 import { useAppStore } from "../../shared/state/appStore";
@@ -20,82 +21,39 @@ function latencyTone(milliseconds: number): Tone {
 }
 
 export function ProfilesScreen() {
-  const profiles = useAppStore((state) => state.profiles);
-  const selectedProfileId = useAppStore((state) => state.selectedProfileId);
-  const fetchedAt = useAppStore((state) => state.fetchedAt);
-  const nextUpdateAt = useAppStore((state) => state.nextUpdateAt);
-  const autoUpdateHours =
-    useAppStore((state) => state.settings?.subscription.auto_update_hours) ?? 0;
-  const skippedCount = useAppStore((state) => state.skippedCount);
-  const latency = useAppStore((state) => state.latency);
-  const fetchError = useAppStore((state) => state.fetchError);
+  const subscriptions = useAppStore((state) => state.subscriptions);
   const busy = useAppStore((state) => state.busy);
-  const refreshSubscription = useAppStore((state) => state.refreshSubscription);
   const pingProfiles = useAppStore((state) => state.pingProfiles);
-  const selectProfile = useAppStore((state) => state.selectProfile);
   const setActiveTab = useAppStore((state) => state.setActiveTab);
 
-  const refreshing = Boolean(busy.subscription);
   const pinging = Boolean(busy.ping);
-  const latencyResults = latencyById(latency);
-  const ordered = sortProfilesByLatency(profiles, latency);
+  const hasSubscriptions = subscriptions.length > 0;
+  const hasProfiles = subscriptions.some((entry) => entry.profiles.length > 0);
 
   return (
     <div className="flex flex-col gap-4">
       <Card title={t("profiles.title")}>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="text-sm text-neutral-400">
-            {fetchedAt
-              ? t("profiles.fetchedAt", { time: formatTime(fetchedAt) })
-              : t("profiles.empty.hint")}
-          </div>
-          <div className="flex flex-wrap gap-2">
+        {hasSubscriptions ? (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="text-sm text-neutral-400">
+              {t("profiles.count", { count: subscriptions.length })}
+            </div>
             <Button
               onClick={() => void pingProfiles()}
-              disabled={pinging || profiles.length === 0}
+              disabled={pinging || !hasProfiles}
             >
               <Gauge className={`size-4 ${pinging ? "animate-pulse" : ""}`} />
               {pinging ? t("profiles.pinging") : t("profiles.ping")}
             </Button>
-            <Button
-              onClick={() => void refreshSubscription()}
-              disabled={refreshing}
-            >
-              <RefreshCw className={`size-4 ${refreshing ? "animate-spin" : ""}`} />
-              {refreshing ? t("profiles.refreshing") : t("profiles.refresh")}
-            </Button>
           </div>
-        </div>
-        {autoUpdateHours > 0
-          ? nextUpdateAt
-            ? (
-                <p className="mt-2 text-xs text-neutral-500">
-                  {t("profiles.nextUpdate", { time: formatTime(nextUpdateAt) })}
-                </p>
-              )
-            : null
-          : fetchedAt
-            ? (
-                <p className="mt-2 text-xs text-neutral-500">
-                  {t("profiles.autoUpdateOff")}
-                </p>
-              )
-            : null}
-        {skippedCount > 0 ? (
-          <p className="mt-3 text-sm text-amber-300">
-            {t("profiles.skipped", { count: skippedCount })}
-          </p>
         ) : null}
       </Card>
 
-      {fetchError ? (
-        <ErrorBox
-          error={fetchError}
-          onRetry={() => void refreshSubscription()}
-        />
-      ) : null}
-
-      {profiles.length === 0 ? (
+      {hasSubscriptions ? (
+        subscriptions.map((entry, index) => (
+          <SubscriptionGroup key={entry.id} entry={entry} index={index} />
+        ))
+      ) : (
         <EmptyState
           title={t("profiles.empty.title")}
           hint={t("profiles.empty.hint")}
@@ -104,8 +62,80 @@ export function ProfilesScreen() {
             {t("profiles.empty.goSettings")}
           </Button>
         </EmptyState>
-      ) : (
-        <ul className="flex flex-col gap-2">
+      )}
+    </div>
+  );
+}
+
+function SubscriptionGroup({
+  entry,
+  index,
+}: {
+  entry: SubscriptionView;
+  index: number;
+}) {
+  const selectedProfileId = useAppStore((state) => state.selectedProfileId);
+  const skippedCount = useAppStore((state) => state.skippedCounts[entry.id]);
+  const latency = useAppStore((state) => state.latency);
+  const fetchError = useAppStore((state) => state.fetchErrors[entry.id]);
+  const busy = useAppStore((state) => state.busy);
+  const refreshSubscription = useAppStore((state) => state.refreshSubscription);
+  const selectProfile = useAppStore((state) => state.selectProfile);
+
+  const refreshing = Boolean(busy[`subscription-${entry.id}`]);
+  const latencyResults = latencyById(latency);
+  const ordered = sortProfilesByLatency(entry.profiles, latency);
+  const title = entry.name.trim().length
+    ? entry.name
+    : t("profiles.defaultName", { n: index + 1 });
+
+  return (
+    <Card title={title}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="text-sm text-neutral-400">
+          {entry.fetched_at
+            ? t("profiles.fetchedAt", { time: formatTime(entry.fetched_at) })
+            : t("profiles.empty.hint")}
+        </div>
+        <Button
+          onClick={() => void refreshSubscription(entry.id)}
+          disabled={refreshing}
+        >
+          <RefreshCw className={`size-4 ${refreshing ? "animate-spin" : ""}`} />
+          {refreshing ? t("profiles.refreshing") : t("profiles.refresh")}
+        </Button>
+      </div>
+      {entry.auto_update_hours > 0
+        ? entry.next_update_at
+          ? (
+              <p className="mt-2 text-xs text-neutral-500">
+                {t("profiles.nextUpdate", { time: formatTime(entry.next_update_at) })}
+              </p>
+            )
+          : null
+        : entry.fetched_at
+          ? (
+              <p className="mt-2 text-xs text-neutral-500">
+                {t("profiles.autoUpdateOff")}
+              </p>
+            )
+          : null}
+      {skippedCount > 0 ? (
+        <p className="mt-3 text-sm text-amber-300">
+          {t("profiles.skipped", { count: skippedCount })}
+        </p>
+      ) : null}
+      {fetchError ? (
+        <div className="mt-3">
+          <ErrorBox
+            error={fetchError}
+            onRetry={() => void refreshSubscription(entry.id)}
+          />
+        </div>
+      ) : null}
+
+      {entry.profiles.length > 0 ? (
+        <ul className="mt-3 flex flex-col gap-2">
           {ordered.map((profile) => {
             const selected = profile.id === selectedProfileId;
             const result = latencyResults.get(profile.id);
@@ -157,7 +187,7 @@ export function ProfilesScreen() {
             );
           })}
         </ul>
-      )}
-    </div>
+      ) : null}
+    </Card>
   );
 }

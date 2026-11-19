@@ -41,10 +41,9 @@ describe("EN-локализация экранов", () => {
     apiMock.settingsUpdate.mockImplementation(async (next) => next);
     apiMock.rulesList.mockResolvedValue([]);
     apiMock.profilesList.mockResolvedValue({
+      subscriptions: [],
       profiles: [],
       selected_profile_id: null,
-      fetched_at: null,
-      next_update_at: null,
     });
     apiMock.helperStatus.mockResolvedValue(stoppedStatus);
     apiMock.autoconnectStatus.mockResolvedValue(null);

@@ -12,6 +12,7 @@ import { Checkbox } from "../../shared/ui/Checkbox";
 import { ErrorBox } from "../../shared/ui/ErrorBox";
 import { Field, inputClass } from "../../shared/ui/Field";
 import { UpdateCard } from "./UpdateCard";
+import { SubscriptionsCard } from "./SubscriptionsCard";
 
 export function SettingsScreen() {
   const stored = useAppStore((state) => state.settings);
@@ -110,82 +111,35 @@ function SettingsForm({ initial }: { initial: AppSettings }) {
 
   return (
     <div className="flex flex-col gap-4">
-      <Card title={t("settings.subscription.title")}>
+      <SubscriptionsCard />
+
+      <Card title={t("settings.device.title")}>
         <div className="grid gap-3">
           <Field
-            label={t("settings.subscription.url")}
-            hint={t("settings.subscription.urlHint")}
-            htmlFor="subscription-url"
+            label={t("settings.device.hwid")}
+            hint={t("settings.device.hwidHint")}
+            htmlFor="subscription-hwid"
           >
-            <input
-              id="subscription-url"
-              type="url"
-              className={inputClass}
-              value={form.subscription.url}
-              onChange={(event) =>
-                updateSubscription({ url: event.target.value })
-              }
-            />
-          </Field>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field
-              label={t("settings.subscription.hwid")}
-              hint={t("settings.subscription.hwidHint")}
-              htmlFor="subscription-hwid"
-            >
-              <div className="flex gap-2">
-                <input
-                  id="subscription-hwid"
-                  className={inputClass}
-                  value={form.subscription.hwid}
-                  onChange={(event) =>
-                    updateSubscription({ hwid: event.target.value })
-                  }
-                />
-                <Button
-                  onClick={() => {
-                    void regenerateHwid().then((hwid) => {
-                      if (hwid) updateSubscription({ hwid });
-                    });
-                  }}
-                >
-                  <RefreshCw className="size-4" />
-                  {t("settings.subscription.regenerate")}
-                </Button>
-              </div>
-            </Field>
-            <Field
-              label={t("settings.subscription.userAgent")}
-              htmlFor="subscription-agent"
-            >
+            <div className="flex gap-2">
               <input
-                id="subscription-agent"
+                id="subscription-hwid"
                 className={inputClass}
-                value={form.subscription.user_agent}
+                value={form.subscription.hwid}
                 onChange={(event) =>
-                  updateSubscription({ user_agent: event.target.value })
+                  updateSubscription({ hwid: event.target.value })
                 }
               />
-            </Field>
-          </div>
-          <Field
-            label={t("settings.subscription.autoUpdate")}
-            hint={t("settings.subscription.autoUpdateHint")}
-            htmlFor="subscription-interval"
-          >
-            <input
-              id="subscription-interval"
-              type="number"
-              min={0}
-              max={168}
-              className={inputClass}
-              value={form.subscription.auto_update_hours}
-              onChange={(event) =>
-                updateSubscription({
-                  auto_update_hours: Number(event.target.value),
-                })
-              }
-            />
+              <Button
+                onClick={() => {
+                  void regenerateHwid().then((hwid) => {
+                    if (hwid) updateSubscription({ hwid });
+                  });
+                }}
+              >
+                <RefreshCw className="size-4" />
+                {t("settings.device.regenerate")}
+              </Button>
+            </div>
           </Field>
         </div>
       </Card>

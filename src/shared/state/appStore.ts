@@ -24,6 +24,9 @@ import type {
   Platform,
   Profile,
   RunningApp,
+  SubscriptionFetchResponse,
+  SubscriptionInput,
+  SubscriptionView,
   UpdateChannel,
   UpdateCheckResult,
   UpdateProgress,
@@ -41,12 +44,13 @@ export interface NewRuleInput {
 interface AppState {
   activeTab: TabId;
   settings: AppSettings | null;
+  /** Подписки в порядке добавления: локации и расписание по группам. */
+  subscriptions: SubscriptionView[];
+  /** Все локации плоским списком: задержки и выбор не зависят от подписки. */
   profiles: Profile[];
   selectedProfileId: string | null;
-  fetchedAt: number | null;
-  /** Когда ждать следующее автообновление подписки (M1); null — не запланировано. */
-  nextUpdateAt: number | null;
-  skippedCount: number;
+  /** Сколько профилей было пропущено при последней загрузке каждой подписки. */
+  skippedCounts: Record<string, number>;
   latency: LatencyResponse | null;
   rules: AppRuleView[];
   installedApps: InstalledApp[];
@@ -58,7 +62,8 @@ interface AppState {
   helperStatus: HelperStatus | null;
   helperStatusError: CommandError | null;
   connection: ConnectionState;
-  fetchError: CommandError | null;
+  /** Ошибка последнего обновления по каждой подписке. */
+  fetchErrors: Record<string, CommandError>;
   actionError: CommandError | null;
   /** Автоподключение при старте не удалось (B2): причина для ErrorBox. */
   startupError: CommandError | null;
@@ -76,7 +81,10 @@ interface AppState {
   setActiveTab: (tab: TabId) => void;
   initialize: () => Promise<void>;
   subscribe: () => Promise<() => void>;
-  refreshSubscription: () => Promise<void>;
+  refreshSubscription: (id: string) => Promise<void>;
+  addSubscription: (input: SubscriptionInput) => Promise<void>;
+  updateSubscription: (id: string, input: SubscriptionInput) => Promise<void>;
+  deleteSubscription: (id: string) => Promise<void>;
   pingProfiles: () => Promise<void>;
   autoSwitchCheck: () => Promise<void>;
   switchProfile: (id: string) => Promise<void>;
@@ -111,11 +119,10 @@ interface AppState {
 const initialState = {
   activeTab: "connect" as TabId,
   settings: null,
+  subscriptions: [] as SubscriptionView[],
   profiles: [] as Profile[],
   selectedProfileId: null,
-  fetchedAt: null,
-  nextUpdateAt: null,
-  skippedCount: 0,
+  skippedCounts: {} as Record<string, number>,
   latency: null as LatencyResponse | null,
   rules: [] as AppRuleView[],
   installedApps: [] as InstalledApp[],
@@ -127,7 +134,7 @@ const initialState = {
   helperStatus: null,
   helperStatusError: null,
   connection: "disconnected" as ConnectionState,
-  fetchError: null,
+  fetchErrors: {} as Record<string, CommandError>,
   actionError: null,
   startupError: null,
   notice: null,
@@ -144,6 +151,45 @@ const initialState = {
 
 function connectionFromStatus(status: HelperStatus): ConnectionState {
   return status.state === "running" ? "connected" : "disconnected";
+}
+
+/** Плоский список локаций из всех подписок. */
+function flattenProfiles(subscriptions: SubscriptionView[]): Profile[] {
+  return subscriptions.flatMap((entry) => entry.profiles);
+}
+
+/**
+ * Результат успешной загрузки одной подписки в общее состояние: обновляет
+ * её группу (параметры запроса сохраняются — в ответе их нет), плоский
+ * список, выбор и счётчик пропущенных; ошибка этой подписки снимается.
+ */
+function applyFetchResponse(
+  state: Pick<AppState, "subscriptions" | "skippedCounts" | "fetchErrors">,
+  response: SubscriptionFetchResponse,
+): Partial<AppState> {
+  const subscriptions = state.subscriptions.map((entry) =>
+    entry.id === response.subscription_id
+      ? {
+          ...entry,
+          name: response.name,
+          profiles: response.profiles,
+          fetched_at: response.fetched_at,
+          next_update_at: response.next_update_at,
+        }
+      : entry,
+  );
+  const fetchErrors = { ...state.fetchErrors };
+  delete fetchErrors[response.subscription_id];
+  return {
+    subscriptions,
+    profiles: flattenProfiles(subscriptions),
+    selectedProfileId: response.selected_profile_id,
+    skippedCounts: {
+      ...state.skippedCounts,
+      [response.subscription_id]: response.skipped.length,
+    },
+    fetchErrors,
+  };
 }
 
 function detectPlatform(): Platform {
@@ -202,10 +248,9 @@ export const useAppStore = create<AppState>((set, get) => {
         (async () => {
           const response = await api.profilesList();
           set({
+            subscriptions: response.subscriptions,
             profiles: response.profiles,
             selectedProfileId: response.selected_profile_id,
-            fetchedAt: response.fetched_at,
-            nextUpdateAt: response.next_update_at,
           });
         })(),
         (async () => {
@@ -241,16 +286,10 @@ export const useAppStore = create<AppState>((set, get) => {
         set({ startupError: error });
         void get().loadLogs(null);
       });
-      // Фоновое автообновление подписки (M1): список локаций и расписание
-      // обновляются без участия пользователя, окно не перезагружается.
+      // Фоновое автообновление подписок (M1): локации и расписание обновляются
+      // без участия пользователя, окно не перезагружается.
       const stopSubscription = await onSubscriptionUpdated((response) => {
-        set({
-          profiles: response.profiles,
-          selectedProfileId: response.selected_profile_id,
-          fetchedAt: response.fetched_at,
-          nextUpdateAt: response.next_update_at,
-          skippedCount: response.skipped.length,
-        });
+        set(applyFetchResponse(get(), response));
         void get().loadLogs(null);
       });
       return () => {
@@ -260,19 +299,11 @@ export const useAppStore = create<AppState>((set, get) => {
       };
     },
 
-    refreshSubscription: async () => {
-      await withBusy("subscription", async () => {
+    refreshSubscription: async (id) => {
+      await withBusy(`subscription-${id}`, async () => {
         try {
-          const response = await api.subscriptionFetch();
-          set({
-            profiles: response.profiles,
-            selectedProfileId: response.selected_profile_id,
-            fetchedAt: response.fetched_at,
-            nextUpdateAt: response.next_update_at,
-            skippedCount: response.skipped.length,
-            fetchError: null,
-            actionError: null,
-          });
+          const response = await api.subscriptionFetch(id);
+          set(applyFetchResponse(get(), response));
           // Автовыбор: после успешного обновления список локаций уже известен.
           if (get().settings?.preferences.auto_select.enabled) {
             void get().pingProfiles();
@@ -281,7 +312,63 @@ export const useAppStore = create<AppState>((set, get) => {
           const commandError = toCommandError(error);
           // Параллельная загрузка (планировщик) — не ошибка для пользователя.
           if (commandError.code === "FETCH_IN_PROGRESS") return;
-          set({ fetchError: commandError });
+          set({
+            fetchErrors: { ...get().fetchErrors, [id]: commandError },
+          });
+        }
+      });
+    },
+
+    addSubscription: async (input) => {
+      await withBusy("subscription-add", async () => {
+        try {
+          const entry = await api.subscriptionAdd(input);
+          set({
+            subscriptions: [...get().subscriptions, entry],
+            actionError: null,
+          });
+          // Локации появляются сразу после добавления: грузим без клика.
+          void get().refreshSubscription(entry.id);
+        } catch (error) {
+          set({ actionError: toCommandError(error) });
+        }
+      });
+    },
+
+    updateSubscription: async (id, input) => {
+      await withBusy(`subscription-update-${id}`, async () => {
+        try {
+          const updated = await api.subscriptionUpdate(id, input);
+          const subscriptions = get().subscriptions.map((entry) =>
+            entry.id === id ? updated : entry,
+          );
+          set({
+            subscriptions,
+            profiles: flattenProfiles(subscriptions),
+            actionError: null,
+          });
+          // После смены URL кэш пуст: локации появляются сами, без клика.
+          if (!updated.profiles.length) {
+            void get().refreshSubscription(id);
+          }
+        } catch (error) {
+          set({ actionError: toCommandError(error) });
+        }
+      });
+    },
+
+    deleteSubscription: async (id) => {
+      await withBusy(`subscription-delete-${id}`, async () => {
+        try {
+          const response = await api.subscriptionDelete(id);
+          set({
+            subscriptions: response.subscriptions,
+            profiles: response.profiles,
+            selectedProfileId: response.selected_profile_id,
+            actionError: null,
+          });
+        } catch (error) {
+          set({ actionError: toCommandError(error) });
         }
       });
     },
@@ -706,7 +793,7 @@ export const useAppStore = create<AppState>((set, get) => {
 
     dismissUpdate: () => set({ updateCheck: null }),
 
-    clearNotice: () => set({ notice: null, actionError: null, fetchError: null }),
+    clearNotice: () => set({ notice: null, actionError: null }),
   };
 });
 

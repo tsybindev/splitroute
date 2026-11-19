@@ -7,15 +7,13 @@ import type {
   InstalledApp,
   Profile,
   RunningApp,
+  SubscriptionView,
 } from "../shared/api/types";
 
 export function makeSettings(overrides: Partial<AppSettings> = {}): AppSettings {
   return {
     subscription: {
-      url: "",
       hwid: "0123456789abcdef",
-      user_agent: "SplitRoute/test",
-      auto_update_hours: 12,
       ...overrides.subscription,
     },
     network: {
@@ -106,6 +104,22 @@ export function makeRunningApp(
     name: "Google Chrome",
     path: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     platform: "macos",
+    ...overrides,
+  };
+}
+
+export function makeSubscription(
+  overrides: Partial<SubscriptionView> = {},
+): SubscriptionView {
+  return {
+    id: "sub-1",
+    name: "Основная",
+    url: "https://example.invalid/sub",
+    user_agent: "SplitRoute/test",
+    auto_update_hours: 12,
+    fetched_at: null,
+    next_update_at: null,
+    profiles: [],
     ...overrides,
   };
 }

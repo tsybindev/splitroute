@@ -3,7 +3,7 @@
 //! UI не формирует конфиг sing-box: подключение собирается здесь из сохранённых
 //! настроек, выбранного профиля и правил allowlist (PRD §6.2).
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
@@ -19,7 +19,7 @@ use crate::latency::{self, LatencyProbe, LatencyTracker, PingResult, SwitchPolic
 use crate::logging::{LogBuffer, LogEntry};
 use crate::privileged::{HelperClient, HelperClientError, HelperInstaller, InstallerError};
 use crate::rules;
-use crate::store::{now_secs, AppSettings, Store, StoreError, UpdateChannel};
+use crate::store::{now_secs, AppSettings, Store, StoreError, SubscriptionState, UpdateChannel};
 use crate::subscription::{
     fetch_and_parse, FetchError, FetchRequest, SkippedProfile, SubscriptionFetcher,
 };
@@ -106,17 +106,24 @@ struct TrafficState {
     error_logged: bool,
 }
 
-/// Код ошибки: загрузка подписки уже идёт. Параллельный запрос отклоняется,
-/// чтобы ручное обновление и планировщик не дублировали сетевую операцию.
+/// Код ошибки: загрузка этой подписки уже идёт. Параллельный запрос
+/// отклоняется, чтобы ручное обновление и планировщик не дублировали сетевую
+/// операцию. Обновления разных подписок друг другу не мешают.
 pub(crate) const FETCH_IN_PROGRESS: &str = "FETCH_IN_PROGRESS";
 
-/// Право на одну загрузку подписки. Флаг снимается при `Drop`, поэтому ошибка
-/// или паника не оставляют приложение без возможности обновиться снова.
-pub(crate) struct FetchGuard<'a>(&'a AtomicBool);
+/// Право на одну загрузку подписки. Идентификатор снимается при `Drop`,
+/// поэтому ошибка или паника не оставляют подписку заблокированной навсегда.
+pub(crate) struct FetchGuard<'a> {
+    busy: &'a Mutex<HashSet<String>>,
+    id: String,
+}
 
 impl Drop for FetchGuard<'_> {
     fn drop(&mut self) {
-        self.0.store(false, Ordering::Release);
+        self.busy
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&self.id);
     }
 }
 
@@ -133,11 +140,13 @@ pub struct AppState {
     /// Ошибка автоподключения при запуске (B2): UI показывает её, пока не
     /// пройдёт удачное подключение или отключение.
     startup_error: Mutex<Option<CommandError>>,
-    /// Идёт загрузка подписки: параллельные запросы не запускаются.
-    fetching: AtomicBool,
-    /// Время последней попытки обновления подписки (unix, секунды). В памяти:
-    /// после перезапуска расписание снова отсчитывается от `profiles_fetched_at`.
-    last_fetch_attempt: Mutex<Option<u64>>,
+    /// Идущие загрузки: не больше одной на подписку, разные подписки
+    /// обновляются параллельно.
+    fetching: Mutex<HashSet<String>>,
+    /// Время последней попытки обновления каждой подписки (unix, секунды).
+    /// В памяти: после перезапуска расписание снова отсчитывается от
+    /// `fetched_at` записи.
+    last_fetch_attempt: Mutex<HashMap<String, u64>>,
 }
 
 impl AppState {
@@ -173,8 +182,8 @@ impl AppState {
             probe,
             latency: Mutex::new(LatencyTracker::default()),
             startup_error: Mutex::new(None),
-            fetching: AtomicBool::new(false),
-            last_fetch_attempt: Mutex::new(None),
+            fetching: Mutex::new(HashSet::new()),
+            last_fetch_attempt: Mutex::new(HashMap::new()),
         }
     }
 
@@ -240,35 +249,44 @@ impl AppState {
             .clone()
     }
 
-    /// Захватывает право на загрузку подписки. `None` — загрузка уже идёт.
-    pub(crate) fn try_begin_fetch(&self) -> Option<FetchGuard<'_>> {
-        self.fetching
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .ok()
-            .map(|_| FetchGuard(&self.fetching))
+    /// Захватывает право на загрузку подписки. `None` — эта подписка уже
+    /// обновляется. Разные подписки друг другу не мешают.
+    pub(crate) fn try_begin_fetch(&self, id: &str) -> Option<FetchGuard<'_>> {
+        let mut busy = self
+            .fetching
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if busy.contains(id) {
+            return None;
+        }
+        busy.insert(id.to_string());
+        Some(FetchGuard {
+            busy: &self.fetching,
+            id: id.to_string(),
+        })
     }
 
-    pub(crate) fn last_fetch_attempt(&self) -> Option<u64> {
-        *self
-            .last_fetch_attempt
+    pub(crate) fn last_fetch_attempt(&self, id: &str) -> Option<u64> {
+        self.last_fetch_attempt
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(id)
+            .copied()
     }
 
-    pub(crate) fn set_last_fetch_attempt(&self, at: u64) {
-        *self
-            .last_fetch_attempt
+    pub(crate) fn set_last_fetch_attempt(&self, id: &str, at: u64) {
+        self.last_fetch_attempt
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(at);
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(id.to_string(), at);
     }
 
-    /// Когда ждать следующее автообновление подписки (M1, PRD §6.1).
-    pub(crate) fn next_update_at(&self) -> Option<u64> {
-        let hours = self.store.settings().subscription.auto_update_hours;
+    /// Когда ждать следующее автообновление этой подписки (M1, PRD §6.1).
+    pub(crate) fn next_update_at(&self, subscription: &SubscriptionState) -> Option<u64> {
         crate::autoupdate::next_update_at(
-            self.store.data().profiles_fetched_at,
-            self.last_fetch_attempt(),
-            hours,
+            subscription.fetched_at,
+            self.last_fetch_attempt(&subscription.id),
+            subscription.auto_update_hours,
         )
     }
 }
@@ -291,23 +309,40 @@ impl TrafficStats {
     }
 }
 
-/// Профили и выбранная локация для экрана «Локации».
+/// Одна подписка для UI: параметры, расписание и кэш локаций.
 #[derive(Debug, Clone, Serialize)]
-pub struct ProfilesResponse {
-    pub profiles: Vec<Profile>,
-    pub selected_profile_id: Option<String>,
+pub struct SubscriptionView {
+    pub id: String,
+    pub name: String,
+    pub url: String,
+    pub user_agent: String,
+    pub auto_update_hours: u16,
     pub fetched_at: Option<u64>,
     /// Когда произойдёт следующее автообновление (M1); `null` — не запланировано.
     pub next_update_at: Option<u64>,
+    pub profiles: Vec<Profile>,
 }
 
-/// Результат обновления подписки.
+/// Профили и выбранная локация для экрана «Локации».
+#[derive(Debug, Clone, Serialize)]
+pub struct ProfilesResponse {
+    /// Локации, сгруппированные по подпискам в порядке добавления.
+    pub subscriptions: Vec<SubscriptionView>,
+    /// Все локации плоским списком: задержки и активная локация не зависят
+    /// от того, к какой подписке они относятся.
+    pub profiles: Vec<Profile>,
+    pub selected_profile_id: Option<String>,
+}
+
+/// Результат обновления одной подписки.
 #[derive(Debug, Clone, Serialize)]
 pub struct SubscriptionFetchResponse {
+    pub subscription_id: String,
+    pub name: String,
     pub profiles: Vec<Profile>,
     pub skipped: Vec<SkippedProfile>,
     pub selected_profile_id: Option<String>,
-    pub fetched_at: Option<u64>,
+    pub fetched_at: u64,
     pub next_update_at: Option<u64>,
 }
 
@@ -322,13 +357,39 @@ pub struct LatencyResponse {
     pub checked_at: u64,
 }
 
+/// Проекция записи подписки для UI: без `raw` профилей, с расписанием.
+fn subscription_view(state: &AppState, subscription: &SubscriptionState) -> SubscriptionView {
+    SubscriptionView {
+        id: subscription.id.clone(),
+        name: subscription.name.clone(),
+        url: subscription.url.clone(),
+        user_agent: subscription.user_agent.clone(),
+        auto_update_hours: subscription.auto_update_hours,
+        fetched_at: subscription.fetched_at,
+        next_update_at: state.next_update_at(subscription),
+        profiles: subscription
+            .profiles
+            .iter()
+            .cloned()
+            .map(sanitize_profile)
+            .collect(),
+    }
+}
+
 fn profiles_response(state: &AppState) -> ProfilesResponse {
     let data = state.store.data();
     ProfilesResponse {
-        profiles: data.profiles.into_iter().map(sanitize_profile).collect(),
+        subscriptions: data
+            .subscriptions
+            .iter()
+            .map(|subscription| subscription_view(state, subscription))
+            .collect(),
+        profiles: data
+            .all_profiles()
+            .into_iter()
+            .map(sanitize_profile)
+            .collect(),
         selected_profile_id: data.selected_profile_id,
-        fetched_at: data.profiles_fetched_at,
-        next_update_at: state.next_update_at(),
     }
 }
 
@@ -347,16 +408,12 @@ pub(crate) fn connect_inner(state: &AppState) -> Result<HelperStatus, CommandErr
             "Локация не выбрана. Обновите подписку и выберите локацию.",
         )
     })?;
-    let profile = data
-        .profiles
-        .iter()
-        .find(|profile| profile.id == selected)
-        .ok_or_else(|| {
-            CommandError::new(
-                "PROFILE_MISSING",
-                "Выбранная локация отсутствует в подписке.",
-            )
-        })?;
+    let profile = data.find_profile(selected).ok_or_else(|| {
+        CommandError::new(
+            "PROFILE_MISSING",
+            "Выбранная локация отсутствует в подписке.",
+        )
+    })?;
 
     // Статистика не должна быть условием подключения: без свободного порта
     // туннель всё равно поднимается, а UI показывает «—».
@@ -428,7 +485,8 @@ pub(crate) fn disconnect_inner(state: &AppState) -> Result<HelperStatus, Command
 pub(crate) fn profiles_ping_inner(state: &AppState) -> LatencyResponse {
     let data = state.store.data();
     let auto = data.settings.preferences.auto_select.clone();
-    let results = latency::measure(state.probe.as_ref(), &data.profiles, latency::PROBE_TIMEOUT);
+    let profiles = data.all_profiles();
+    let results = latency::measure(state.probe.as_ref(), &profiles, latency::PROBE_TIMEOUT);
     let best = latency::best_profile(&results).cloned();
 
     let running = state
@@ -452,8 +510,7 @@ pub(crate) fn profiles_ping_inner(state: &AppState) -> LatencyResponse {
         None
     };
 
-    let names: std::collections::HashMap<&str, &str> = data
-        .profiles
+    let names: std::collections::HashMap<&str, &str> = profiles
         .iter()
         .map(|profile| (profile.id.as_str(), profile.name.as_str()))
         .collect();
@@ -521,21 +578,17 @@ pub(crate) fn switch_profile_inner(
     id: &str,
 ) -> Result<HelperStatus, CommandError> {
     let data = state.store.data();
-    let target = data
-        .profiles
-        .iter()
-        .find(|profile| profile.id == id)
-        .ok_or_else(|| {
-            CommandError::new(
-                "PROFILE_MISSING",
-                "Выбранная локация отсутствует в подписке.",
-            )
-        })?;
+    let target = data.find_profile(id).ok_or_else(|| {
+        CommandError::new(
+            "PROFILE_MISSING",
+            "Выбранная локация отсутствует в подписке.",
+        )
+    })?;
     let target_name = target.name.clone();
     let previous = data.selected_profile_id.clone();
     let previous_name = previous
         .as_deref()
-        .and_then(|id| data.profiles.iter().find(|profile| profile.id == id))
+        .and_then(|id| data.find_profile(id))
         .map(|profile| profile.name.clone());
     let status = state.helper.status()?;
 
@@ -624,69 +677,93 @@ pub fn traffic_stats(state: tauri::State<'_, AppState>) -> TrafficStats {
     traffic_stats_inner(&state)
 }
 
+/// Загружает одну подписку по её идентификатору.
+///
+/// Используется и вручную, и планировщиком автообновления, поэтому попытка
+/// запоминается здесь для обоих путей: следующее автообновление подписки
+/// отодвигается на интервал после любой попытки (PRD §6.1). `now` передаётся
+/// явно: планировщик считает расписание от своего «сейчас», тесты не зависят
+/// от системных часов.
 pub(crate) fn subscription_fetch_inner(
     state: &AppState,
-    url: Option<String>,
-    hwid: Option<String>,
-    user_agent: Option<String>,
+    id: &str,
+    now: u64,
 ) -> Result<SubscriptionFetchResponse, CommandError> {
-    // Одна загрузка за раз: ручное обновление и планировщик не дублируют запрос.
-    let _guard = state.try_begin_fetch().ok_or_else(|| {
+    // Одна загрузка на подписку: ручное обновление и планировщик не дублируют
+    // запрос. Обновления разных подписок друг другу не мешают. Guard с `Drop`
+    // живёт до конца функции: параллельный запрос отклоняется и при ошибке.
+    let _guard = state.try_begin_fetch(id).ok_or_else(|| {
         CommandError::new(FETCH_IN_PROGRESS, "Обновление подписки уже выполняется.")
     })?;
 
-    let settings = state.store.settings();
-    let url = url
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or(settings.subscription.url);
-    let hwid = hwid
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or(settings.subscription.hwid);
-    let user_agent = user_agent
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or(settings.subscription.user_agent);
-
-    let request = FetchRequest {
-        url,
-        hwid,
-        user_agent,
-    };
-    if request.url.trim().is_empty() {
+    let subscription = state
+        .store
+        .subscription(id)
+        .ok_or_else(|| CommandError::new("SUBSCRIPTION_NOT_FOUND", "Подписка не найдена."))?;
+    if subscription.url.trim().is_empty() {
         return Err(FetchError::MissingUrl.into());
     }
 
-    state.logs.push(LogLevel::Info, "Обновление подписки");
+    let request = FetchRequest {
+        url: subscription.url.clone(),
+        hwid: state.store.settings().subscription.hwid,
+        user_agent: subscription.user_agent.clone(),
+    };
+
+    state.logs.push(
+        LogLevel::Info,
+        format!(
+            "Обновление подписки: {}",
+            subscription_display_name(&subscription)
+        ),
+    );
     match fetch_and_parse(state.fetcher.as_ref(), &request) {
-        Ok(subscription) => {
+        Ok(parsed) => {
             let fetched_at = now_secs();
             state
                 .store
-                .set_profiles(subscription.profiles.clone(), fetched_at)?;
+                .set_subscription_profiles(id, parsed.profiles.clone(), fetched_at)?;
+            state.set_last_fetch_attempt(id, now);
             state.logs.push(
                 LogLevel::Info,
                 format!(
-                    "Подписка обновлена: профилей {}",
-                    subscription.profiles.len()
+                    "Подписка обновлена: {} — профилей {}",
+                    subscription_display_name(&subscription),
+                    parsed.profiles.len()
                 ),
             );
             Ok(SubscriptionFetchResponse {
-                profiles: subscription
-                    .profiles
-                    .into_iter()
-                    .map(sanitize_profile)
-                    .collect(),
-                skipped: subscription.skipped,
+                subscription_id: id.to_string(),
+                name: subscription.name,
+                profiles: parsed.profiles.into_iter().map(sanitize_profile).collect(),
+                skipped: parsed.skipped,
                 selected_profile_id: state.store.data().selected_profile_id,
-                fetched_at: Some(fetched_at),
-                next_update_at: state.next_update_at(),
+                fetched_at,
+                next_update_at: state
+                    .store
+                    .subscription(id)
+                    .and_then(|updated| state.next_update_at(&updated)),
             })
         }
         Err(error) => {
+            // Попытка запоминается и при ошибке: иначе сломанный провайдер
+            // получал бы запрос на каждой проверке расписания.
+            state.set_last_fetch_attempt(id, now);
             state
                 .logs
                 .push(LogLevel::Warn, format!("Ошибка подписки: {}", error.code()));
             Err(error.into())
         }
+    }
+}
+
+/// Отображаемое имя подписки для логов: имя задаёт пользователь и секретом
+/// не является, поэтому пустое имя не превращается в URL.
+fn subscription_display_name(subscription: &SubscriptionState) -> String {
+    if subscription.name.trim().is_empty() {
+        "без имени".to_string()
+    } else {
+        subscription.name.trim().to_string()
     }
 }
 
@@ -716,23 +793,28 @@ fn diagnostics_text(state: &AppState) -> String {
     let location = data
         .selected_profile_id
         .as_ref()
-        .and_then(|id| data.profiles.iter().find(|profile| &profile.id == id))
+        .and_then(|id| data.find_profile(id))
         .map(|profile| profile.name.clone())
         .unwrap_or_else(|| "не выбрана".to_string());
-    let subscription = data
-        .profiles_fetched_at
+    let profiles = data.all_profiles();
+    let fetched = data
+        .subscriptions
+        .iter()
+        .filter_map(|subscription| subscription.fetched_at)
+        .max()
         .map(|time| format!("обновлена {time}"))
         .unwrap_or_else(|| "нет данных".to_string());
 
     format!(
-        "SplitRoute {}\nОС: {} ({})\nHelper: {}\nЛокация: {}\nПодписка: {} (профилей {})\nПравил: {}\n",
+        "SplitRoute {}\nОС: {} ({})\nHelper: {}\nЛокация: {}\nПодписок: {} ({}, профилей {})\nПравил: {}\n",
         env!("CARGO_PKG_VERSION"),
         std::env::consts::OS,
         std::env::consts::ARCH,
         helper,
         location,
-        subscription,
-        data.profiles.len(),
+        data.subscriptions.len(),
+        fetched,
+        profiles.len(),
         data.rules.len()
     )
 }
@@ -779,17 +861,74 @@ pub fn helper_uninstall(state: tauri::State<'_, AppState>) -> Result<(), Command
     Ok(state.installer.uninstall()?)
 }
 
-/// `async` обязателен: запрос к провайдеру блокирующий и может идти десятки
-/// секунд. В Tauri 2 синхронные команды выполняются на главном потоке, из-за
-/// чего загрузка подписки замораживала всё окно до ответа или таймаута.
+/// Ручное обновление одной подписки. `async` обязателен: запрос к провайдеру
+/// блокирующий и может идти десятки секунд. В Tauri 2 синхронные команды
+/// выполняются на главном потоке, из-за чего загрузка подписки замораживала
+/// всё окно до ответа или таймаута.
 #[tauri::command(async)]
 pub fn subscription_fetch(
     state: tauri::State<'_, AppState>,
-    url: Option<String>,
-    hwid: Option<String>,
-    user_agent: Option<String>,
+    id: String,
 ) -> Result<SubscriptionFetchResponse, CommandError> {
-    subscription_fetch_inner(&state, url, hwid, user_agent)
+    subscription_fetch_inner(&state, &id, now_secs())
+}
+
+/// Список подписок с расписанием и кэшем локаций.
+#[tauri::command]
+pub fn subscriptions_list(state: tauri::State<'_, AppState>) -> Vec<SubscriptionView> {
+    state
+        .store
+        .subscriptions()
+        .iter()
+        .map(|subscription| subscription_view(&state, subscription))
+        .collect()
+}
+
+/// Добавляет подписку. Загрузку после добавления запускает UI: команда не
+/// должна тянуть сеть под блокировкой стора дольше, чем нужно.
+#[tauri::command]
+pub fn subscription_add(
+    state: tauri::State<'_, AppState>,
+    name: String,
+    url: String,
+    user_agent: String,
+    auto_update_hours: u16,
+) -> Result<SubscriptionView, CommandError> {
+    let entry = state
+        .store
+        .add_subscription(&name, &url, &user_agent, auto_update_hours)?;
+    state.logs.push(
+        LogLevel::Info,
+        format!("Подписка добавлена: {}", subscription_display_name(&entry)),
+    );
+    Ok(subscription_view(&state, &entry))
+}
+
+/// Обновляет параметры подписки. Смена URL сбрасывает кэш этой подписки.
+#[tauri::command]
+pub fn subscription_update(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    name: String,
+    url: String,
+    user_agent: String,
+    auto_update_hours: u16,
+) -> Result<SubscriptionView, CommandError> {
+    let entry =
+        state
+            .store
+            .update_subscription(&id, &name, &url, &user_agent, auto_update_hours)?;
+    Ok(subscription_view(&state, &entry))
+}
+
+/// Удаляет подписку вместе с кэшем. Активный туннель не затрагивается.
+#[tauri::command]
+pub fn subscription_delete(
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<ProfilesResponse, CommandError> {
+    state.store.delete_subscription(&id)?;
+    Ok(profiles_response(&state))
 }
 
 #[tauri::command]
@@ -1143,22 +1282,32 @@ mod tests {
         .expect("фикстура подписки")
     }
 
+    /// Создаёт (один раз) подписку с тестовым URL и загружает её. Повторный
+    /// вызов обновляет ту же подписку: так проверяется и повторная загрузка.
+    fn fetch_sub(state: &AppState) -> Result<SubscriptionFetchResponse, CommandError> {
+        let id = match state.store.subscriptions().first() {
+            Some(existing) => existing.id.clone(),
+            None => {
+                state
+                    .store
+                    .add_subscription("", "https://example.invalid/sub", "", 12)
+                    .unwrap()
+                    .id
+            }
+        };
+        subscription_fetch_inner(state, &id, 1_800_000_000)
+    }
+
     #[test]
     fn fetch_success_caches_profiles_and_selects_first() {
         let state = state_with(Ok(fixture()));
-        let result = subscription_fetch_inner(
-            &state,
-            Some("https://example.invalid/sub".to_string()),
-            None,
-            None,
-        )
-        .unwrap();
+        let result = fetch_sub(&state).unwrap();
         assert_eq!(result.profiles.len(), 2);
         assert_eq!(
             result.selected_profile_id.as_deref(),
             Some(result.profiles[0].id.as_str())
         );
-        assert_eq!(state.store.data().profiles.len(), 2);
+        assert_eq!(state.store.data().all_profiles().len(), 2);
     }
 
     #[test]
@@ -1172,25 +1321,13 @@ mod tests {
                 body: fixture(),
             }),
         );
-        subscription_fetch_inner(
-            &state,
-            Some("https://example.invalid/sub".to_string()),
-            None,
-            None,
-        )
-        .unwrap();
-        assert_eq!(state.store.data().profiles.len(), 2);
+        fetch_sub(&state).unwrap();
+        assert_eq!(state.store.data().all_profiles().len(), 2);
 
-        let error = subscription_fetch_inner(
-            &state,
-            Some("https://example.invalid/sub".to_string()),
-            None,
-            None,
-        )
-        .unwrap_err();
+        let error = fetch_sub(&state).unwrap_err();
         assert_eq!(error.code, "NETWORK");
         assert_eq!(
-            state.store.data().profiles.len(),
+            state.store.data().all_profiles().len(),
             2,
             "кэш последнего успешного ответа сохраняется"
         );
@@ -1199,13 +1336,7 @@ mod tests {
     #[test]
     fn responses_do_not_expose_raw_profile_json() {
         let state = state_with(Ok(fixture()));
-        let response = subscription_fetch_inner(
-            &state,
-            Some("https://example.invalid/sub".to_string()),
-            None,
-            None,
-        )
-        .unwrap();
+        let response = fetch_sub(&state).unwrap();
         assert!(response
             .profiles
             .iter()
@@ -1217,16 +1348,18 @@ mod tests {
         assert!(state
             .store
             .data()
-            .profiles
+            .all_profiles()
             .iter()
             .all(|profile| profile.raw.is_some()));
     }
 
+    /// Подписка без URL не создаётся (store отвергает пустой URL), поэтому
+    /// загрузка несуществующей записи — типизированная ошибка, а не паника.
     #[test]
-    fn fetch_without_url_is_typed_error() {
+    fn fetch_unknown_subscription_is_typed_error() {
         let state = state_with(Ok(fixture()));
-        let error = subscription_fetch_inner(&state, None, None, None).unwrap_err();
-        assert_eq!(error.code, "MISSING_URL");
+        let error = subscription_fetch_inner(&state, "missing", 1_800_000_000).unwrap_err();
+        assert_eq!(error.code, "SUBSCRIPTION_NOT_FOUND");
     }
 
     #[test]
@@ -1239,13 +1372,7 @@ mod tests {
     #[test]
     fn connect_starts_helper_with_generated_config() {
         let state = state_with(Ok(fixture()));
-        subscription_fetch_inner(
-            &state,
-            Some("https://example.invalid/sub".to_string()),
-            None,
-            None,
-        )
-        .unwrap();
+        fetch_sub(&state).unwrap();
         let status = connect_inner(&state).unwrap();
         assert_eq!(status.state, splitroute_protocol::CoreState::Running);
         assert_eq!(
@@ -1269,16 +1396,14 @@ mod tests {
     fn diagnostics_contains_no_secrets() {
         let state = state_with(Ok(fixture()));
         let mut settings = state.store.settings();
-        settings.subscription.url = "https://secret.invalid/sub".to_string();
         settings.subscription.hwid = "0123456789abcdef".to_string();
         settings_update_inner(&state, settings).unwrap();
-        subscription_fetch_inner(
-            &state,
-            Some("https://example.invalid/sub".to_string()),
-            None,
-            None,
-        )
-        .unwrap();
+        // URL подписки живёт в записи и в диагностику не попадает.
+        let entry = state
+            .store
+            .add_subscription("", "https://secret.invalid/sub", "", 12)
+            .unwrap();
+        subscription_fetch_inner(&state, &entry.id, 1_800_000_000).unwrap();
 
         let text = diagnostics_text(&state);
         assert!(!text.contains("secret.invalid"));
@@ -1411,13 +1536,7 @@ mod tests {
     #[test]
     fn logs_capture_events() {
         let state = state_with(Ok(fixture()));
-        subscription_fetch_inner(
-            &state,
-            Some("https://example.invalid/sub".to_string()),
-            None,
-            None,
-        )
-        .unwrap();
+        fetch_sub(&state).unwrap();
         let entries = state.logs.list(None, 10);
         assert!(!entries.is_empty());
     }
@@ -1425,13 +1544,7 @@ mod tests {
     #[test]
     fn connect_logs_proxy_dns_mode_without_warning() {
         let state = state_with(Ok(fixture()));
-        subscription_fetch_inner(
-            &state,
-            Some("https://example.invalid/sub".to_string()),
-            None,
-            None,
-        )
-        .unwrap();
+        fetch_sub(&state).unwrap();
         connect_inner(&state).unwrap();
 
         let infos = state.logs.list(Some(LogLevel::Info), 20);
@@ -1453,13 +1566,7 @@ mod tests {
         let mut settings = state.store.settings();
         settings.network.dns_mode = splitroute_protocol::DnsMode::System;
         settings_update_inner(&state, settings).unwrap();
-        subscription_fetch_inner(
-            &state,
-            Some("https://example.invalid/sub".to_string()),
-            None,
-            None,
-        )
-        .unwrap();
+        fetch_sub(&state).unwrap();
         connect_inner(&state).unwrap();
 
         let warnings = state.logs.list(Some(LogLevel::Warn), 10);
@@ -1482,13 +1589,7 @@ mod tests {
                 body: Ok(fixture()),
             }),
         );
-        subscription_fetch_inner(
-            &state,
-            Some("https://example.invalid/sub".to_string()),
-            None,
-            None,
-        )
-        .unwrap();
+        fetch_sub(&state).unwrap();
 
         let mut settings = state.store.settings();
         settings.network.kill_switch = true;
@@ -1547,13 +1648,7 @@ mod tests {
     #[test]
     fn profiles_ping_reports_latencies_and_hides_addresses() {
         let state = state_with(Ok(fixture())).with_test_probe(Arc::new(FixedProbe));
-        subscription_fetch_inner(
-            &state,
-            Some("https://example.invalid/sub".to_string()),
-            None,
-            None,
-        )
-        .unwrap();
+        fetch_sub(&state).unwrap();
 
         let response = profiles_ping_inner(&state);
         assert_eq!(response.results.len(), 2);
@@ -1586,13 +1681,7 @@ mod tests {
             }),
         )
         .with_test_probe(Arc::new(DegradedProbe));
-        subscription_fetch_inner(
-            &state,
-            Some("https://example.invalid/sub".to_string()),
-            None,
-            None,
-        )
-        .unwrap();
+        fetch_sub(&state).unwrap();
         let mut settings = state.store.settings();
         settings.preferences.auto_select.auto_switch = true;
         settings.preferences.auto_select.confirmations = 2;
@@ -1637,14 +1726,8 @@ mod tests {
                 body: Ok(fixture()),
             }),
         );
-        subscription_fetch_inner(
-            &state,
-            Some("https://example.invalid/sub".to_string()),
-            None,
-            None,
-        )
-        .unwrap();
-        let second = state.store.data().profiles[1].id.clone();
+        fetch_sub(&state).unwrap();
+        let second = state.store.data().all_profiles()[1].id.clone();
 
         let status = switch_profile_inner(&state, &second).unwrap();
         assert_eq!(status.state, CoreState::Stopped);
@@ -1713,18 +1796,12 @@ mod tests {
                 body: Ok(fixture()),
             }),
         );
-        subscription_fetch_inner(
-            &state,
-            Some("https://example.invalid/sub".to_string()),
-            None,
-            None,
-        )
-        .unwrap();
+        fetch_sub(&state).unwrap();
         let mut settings = state.store.settings();
         settings.network.kill_switch = true;
         settings_update_inner(&state, settings).unwrap();
         let first = state.store.data().selected_profile_id.clone().unwrap();
-        let second = state.store.data().profiles[1].id.clone();
+        let second = state.store.data().all_profiles()[1].id.clone();
         connect_inner(&state).unwrap();
 
         let error = switch_profile_inner(&state, &second).unwrap_err();
@@ -1837,23 +1914,11 @@ mod tests {
             }),
         );
 
-        let error = subscription_fetch_inner(
-            &state,
-            Some("https://example.invalid/sub".to_string()),
-            None,
-            None,
-        )
-        .unwrap_err();
+        let error = fetch_sub(&state).unwrap_err();
         assert_eq!(error.code, "UNAUTHORIZED");
-        assert!(state.store.data().profiles.is_empty());
+        assert!(state.store.data().all_profiles().is_empty());
 
-        let response = subscription_fetch_inner(
-            &state,
-            Some("https://example.invalid/sub".to_string()),
-            None,
-            None,
-        )
-        .unwrap();
+        let response = fetch_sub(&state).unwrap();
         assert_eq!(response.profiles.len(), 2);
         assert_eq!(
             response.selected_profile_id.as_deref(),
@@ -1876,18 +1941,12 @@ mod tests {
 
         // Пустое состояние: нет подписки, локации и правил.
         let empty = state.store.data();
-        assert!(empty.profiles.is_empty());
+        assert!(empty.subscriptions.is_empty());
         assert!(empty.selected_profile_id.is_none());
         assert!(empty.rules.is_empty());
 
         // Успешное обновление: два профиля, первый выбран автоматически.
-        let fetched = subscription_fetch_inner(
-            &state,
-            Some("https://example.invalid/sub".to_string()),
-            None,
-            None,
-        )
-        .unwrap();
+        let fetched = fetch_sub(&state).unwrap();
         assert_eq!(fetched.profiles.len(), 2);
         let first = fetched.profiles[0].id.clone();
         let second = fetched.profiles[1].id.clone();
@@ -1976,13 +2035,7 @@ mod tests {
                 body: Ok(fixture()),
             }),
         );
-        subscription_fetch_inner(
-            &state,
-            Some("https://example.invalid/sub".to_string()),
-            None,
-            None,
-        )
-        .unwrap();
+        fetch_sub(&state).unwrap();
 
         connect_inner(&state).unwrap();
         let first = state.traffic_endpoint().expect("сессия статистики создана");

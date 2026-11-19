@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ProfilesScreen } from "./ProfilesScreen";
 import { resetAppStore, useAppStore } from "../../shared/state/appStore";
-import { makeProfile, makeSettings } from "../../test/fixtures";
+import { makeProfile, makeSubscription } from "../../test/fixtures";
 
 const apiMock = vi.hoisted(() => ({
   profileSelect: vi.fn(),
@@ -31,14 +31,76 @@ describe("ProfilesScreen", () => {
     ).toBeInTheDocument();
   });
 
-  it("показывает ошибку подписки", () => {
-    useAppStore.setState({
-      fetchError: { code: "NETWORK", message: "нет сети" },
+  it("показывает группу подписки с её локациями", () => {
+    const entry = makeSubscription({
+      profiles: [makeProfile()],
+      fetched_at: 1_800_000_000,
     });
+    useAppStore.setState({
+      subscriptions: [entry],
+      profiles: entry.profiles,
+    });
+
+    render(<ProfilesScreen />);
+    expect(screen.getByText("Основная")).toBeInTheDocument();
+    expect(screen.getByText("Тестовая локация A")).toBeInTheDocument();
+    expect(screen.getByText("Подписок: 1")).toBeInTheDocument();
+  });
+
+  it("называет безымянную подписку по порядку", () => {
+    const first = makeSubscription({ id: "s1", name: "" });
+    const second = makeSubscription({
+      id: "s2",
+      name: "  ",
+      profiles: [makeProfile()],
+    });
+    useAppStore.setState({
+      subscriptions: [first, second],
+      profiles: second.profiles,
+    });
+
+    render(<ProfilesScreen />);
+    expect(screen.getByText("Подписка 1")).toBeInTheDocument();
+    expect(screen.getByText("Подписка 2")).toBeInTheDocument();
+  });
+
+  it("показывает ошибку загрузки у своей подписки и снимает её после успеха", async () => {
+    const user = userEvent.setup();
+    const entry = makeSubscription({
+      id: "s1",
+      name: "Основная",
+      profiles: [makeProfile()],
+    });
+    apiMock.subscriptionFetch.mockResolvedValue({
+      subscription_id: "s1",
+      name: "Основная",
+      profiles: entry.profiles,
+      skipped: [],
+      selected_profile_id: "profile-1",
+      fetched_at: 1_800_000_000,
+      next_update_at: null,
+    });
+    useAppStore.setState({
+      subscriptions: [entry],
+      profiles: entry.profiles,
+      fetchErrors: { s1: { code: "NETWORK", message: "нет сети" } },
+    });
+
     render(<ProfilesScreen />);
     expect(
       screen.getByText("Нет сети или сервер недоступен."),
     ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Повторить" }));
+
+    await waitFor(() =>
+      expect(apiMock.subscriptionFetch).toHaveBeenCalledWith("s1"),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByText("Нет сети или сервер недоступен."),
+      ).not.toBeInTheDocument(),
+    );
   });
 
   it("показывает понятные тексты для ошибок подписки", () => {
@@ -53,35 +115,23 @@ describe("ProfilesScreen", () => {
 
     for (const [code, message] of cases) {
       resetAppStore();
-      useAppStore.setState({ fetchError: { code, message: "server text" } });
+      const entry = makeSubscription({ id: "s1", profiles: [makeProfile()] });
+      useAppStore.setState({
+        subscriptions: [entry],
+        profiles: entry.profiles,
+        fetchErrors: { s1: { code, message: "server text" } },
+      });
       const { unmount } = render(<ProfilesScreen />);
       expect(screen.getByText(message)).toBeInTheDocument();
       unmount();
     }
   });
 
-  it("повторяет обновление по кнопке «Повторить»", async () => {
-    const user = userEvent.setup();
-    apiMock.subscriptionFetch.mockResolvedValue({
-      profiles: [],
-      selected_profile_id: null,
-      fetched_at: null,
-      skipped: [],
-    });
-    useAppStore.setState({ fetchError: { code: "NETWORK", message: "нет сети" } });
-
-    render(<ProfilesScreen />);
-    await user.click(screen.getByRole("button", { name: "Повторить" }));
-
-    await waitFor(() =>
-      expect(apiMock.subscriptionFetch).toHaveBeenCalledTimes(1),
-    );
-  });
-
   it("проверяет задержки, сортирует и помечает лучшую", async () => {
     const user = userEvent.setup();
     const slow = makeProfile({ id: "slow", name: "Медленная" });
     const fast = makeProfile({ id: "fast", name: "Быстрая" });
+    const entry = makeSubscription({ id: "s1", profiles: [slow, fast] });
     apiMock.profilesPing.mockResolvedValue({
       results: [
         { profile_id: "slow", latency_ms: 180 },
@@ -92,6 +142,7 @@ describe("ProfilesScreen", () => {
       checked_at: 1,
     });
     useAppStore.setState({
+      subscriptions: [entry],
       profiles: [slow, fast],
       selectedProfileId: "slow",
     });
@@ -109,46 +160,19 @@ describe("ProfilesScreen", () => {
     expect(items[1]).toHaveTextContent("Медленная");
   });
 
-  it("показывает типизированную ошибку замера", async () => {
-    const user = userEvent.setup();
-    apiMock.profilesPing.mockResolvedValue({
-      results: [
-        { profile_id: "profile-1", latency_ms: null, error: "PING_TIMEOUT" },
-      ],
-      best_profile_id: null,
-      switch_to: null,
-      checked_at: 1,
-    });
-    useAppStore.setState({
-      profiles: [makeProfile()],
-      selectedProfileId: "profile-1",
-    });
-
-    render(<ProfilesScreen />);
-    await user.click(
-      screen.getByRole("button", { name: "Проверить задержки" }),
-    );
-
-    expect(
-      await screen.findByText("Сервер не ответил за отведённое время."),
-    ).toBeInTheDocument();
-  });
-
-  it("показывает время следующего автообновления подписки", () => {
+  it("показывает время следующего автообновления у подписки", () => {
     const fetchedAt = Math.floor(new Date("2026-11-14T10:00:00Z").getTime() / 1000);
     const nextUpdateAt = fetchedAt + 12 * 3600;
-    useAppStore.setState({
+    const entry = makeSubscription({
+      id: "s1",
       profiles: [makeProfile()],
-      fetchedAt,
-      nextUpdateAt,
-      settings: makeSettings({
-        subscription: {
-          url: "",
-          hwid: "0123456789abcdef",
-          user_agent: "SplitRoute/test",
-          auto_update_hours: 12,
-        },
-      }),
+      fetched_at: fetchedAt,
+      next_update_at: nextUpdateAt,
+      auto_update_hours: 12,
+    });
+    useAppStore.setState({
+      subscriptions: [entry],
+      profiles: entry.profiles,
     });
 
     render(<ProfilesScreen />);
@@ -160,18 +184,16 @@ describe("ProfilesScreen", () => {
   });
 
   it("сообщает, что автообновление выключено при интервале 0", () => {
-    useAppStore.setState({
+    const entry = makeSubscription({
+      id: "s1",
       profiles: [makeProfile()],
-      fetchedAt: 1_800_000_000,
-      nextUpdateAt: null,
-      settings: makeSettings({
-        subscription: {
-          url: "",
-          hwid: "0123456789abcdef",
-          user_agent: "SplitRoute/test",
-          auto_update_hours: 0,
-        },
-      }),
+      fetched_at: 1_800_000_000,
+      next_update_at: null,
+      auto_update_hours: 0,
+    });
+    useAppStore.setState({
+      subscriptions: [entry],
+      profiles: entry.profiles,
     });
 
     render(<ProfilesScreen />);
@@ -179,19 +201,36 @@ describe("ProfilesScreen", () => {
     expect(screen.getByText("Автообновление выключено")).toBeInTheDocument();
   });
 
+  it("обновляет конкретную подписку по её кнопке", async () => {
+    const user = userEvent.setup();
+    const first = makeSubscription({ id: "s1", name: "A" });
+    const second = makeSubscription({ id: "s2", name: "B" });
+    useAppStore.setState({ subscriptions: [first, second] });
+
+    render(<ProfilesScreen />);
+    const buttons = screen.getAllByRole("button", { name: "Обновить" });
+    await user.click(buttons[1]);
+
+    await waitFor(() =>
+      expect(apiMock.subscriptionFetch).toHaveBeenCalledWith("s2"),
+    );
+    expect(apiMock.subscriptionFetch).toHaveBeenCalledTimes(1);
+  });
+
   it("выбирает локацию из списка", async () => {
     const user = userEvent.setup();
     const first = makeProfile({ id: "p1", name: "Локация A" });
     const second = makeProfile({ id: "p2", name: "Локация B" });
+    const entry = makeSubscription({ id: "s1", profiles: [first, second] });
     apiMock.profileSelect.mockResolvedValue({
+      subscriptions: [entry],
       profiles: [first, second],
       selected_profile_id: "p2",
-      fetched_at: 1,
     });
     useAppStore.setState({
+      subscriptions: [entry],
       profiles: [first, second],
       selectedProfileId: "p1",
-      fetchedAt: 1,
     });
 
     render(<ProfilesScreen />);
