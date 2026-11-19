@@ -110,11 +110,24 @@
 
 ---
 
+## Этап 6 — несколько подписок (done, 2026-11-19)
+
+Фича из Backlog (PRD §13 п. 8). Helper и его протокол не менялись.
+
+| ID | Задача | Владелец | Критерий приёмки |
+|---|---|---|---|
+| S6-T1 | Модель и миграция: записи `SubscriptionState {id, name, url, user_agent, auto_update_hours, profiles, fetched_at}` в `state.json`, HWID общий, активная локация плоская; legacy-файл с одной подпиской переносится в первую запись и сразу сохраняется | rust-core | done — `crates/protocol` не менялся, `src-tauri/src/store/mod.rs`: CRUD подписок (`add/update/delete_subscription`, `set_subscription_profiles`), `all_profiles`/`find_profile`; миграция идемпотентна (проверена тестом на файле, включая запись нового формата); 12 новых тестов store |
+| S6-T2 | Команды и автообновление: `subscription_fetch(id)`, `subscriptions_list`, `subscription_add/update/delete`; guard загрузки на подписку; попытка (в т.ч. ручная и неудачная) переносит расписание записи; планировщик обходит все подписки, событие `subscription-updated` — по одной записи | rust-core | done — `subscription_fetch_inner(state, id, now)`: guard `Mutex<HashSet>` по id, `SUBSCRIPTION_NOT_FOUND`/`FETCH_IN_PROGRESS` типизированы; `autoupdate::run` → `Vec<(id, Outcome)>`; устранено расхождение с PRD §6.1 (ручная неудачная попытка теперь тоже переносит расписание); 13 тестов autoupdate + 3 команды |
+| S6-T3 | UI: «Локации» сгруппированы по подпискам (имя/«Подписка N», расписание и «Обновить» у каждой), карта «Подписки» в настройках (добавить/изменить/удалить/обновить, черновики полей переживают фоновое обновление), HWID в карте «Устройство»; строки `ru`/`en` | react-ui | done — `SubscriptionsCard` (+тесты), `ProfilesScreen` на группах, `appStore`: `subscriptions`/`skippedCounts`/`fetchErrors` по подпискам, ошибки загрузки показываются внутри группы; словари `ru`/`en` синхронны, тест парности ключей зелёный |
+| S6-T4 | Проверка и handoff | оркестратор | done — 397 Rust- и 103 frontend-теста, fmt/clippy/typecheck/lint/build чисто, `cargo check -p splitroute-helper --target x86_64-pc-windows-msvc` чисто; live-проверка (MockHelper, изолированный `HOME`, локальный HTTP): миграция legacy-файла, ровно 1 запрос на истёкший интервал с ожидаемыми UA/HWID, кэш профиля в записи, автовыбор, второй тик без запросов; processes/port чисто. Коммит `f824f82`, документация — research §29 |
+
+---
+
 ## Backlog
 
 - Clash YAML.
 - Импорт по QR.
-- Несколько подписок одновременно.
+- ~~Несколько подписок одновременно~~ — done в S6-T1…S6-T4 (`f824f82`).
 - IPv6-маршрутизация выбранных приложений (после решения PRD).
 - ~~Применять `connect_on_start` при запуске: настройка сохраняется, но пока не используется~~ — done в S4-T13 (`1525df3`).
 - Автообновление подписки по `auto_update_hours` (M1) и индикация следующего обновления — done в S4-T14.
