@@ -131,7 +131,7 @@ Copyright Tauri Programme within The Commons Conservancy и участники �
 `rustc_version`, `rustls-pki-types`, `rustls-platform-verifier`, `rustversion`,
 `scopeguard`, `security-framework`, `semver`, `serde`, `serde-untagged`,
 `serde_core`, `serde_derive`, `serde_derive_internals`, `serde_json`,
-`serde_repr`, `serde_spanned`, `serde_with`, `sha2`, `shlex`,
+`serde_repr`, `serde_spanned`, `serde_with`, `serde_yaml`, `sha2`, `shlex`,
 `signal-hook-registry`, `simdutf8`, `siphasher`, `smallvec`, `socket2`,
 `stable_deref_trait`, `string_cache`, `swift-rs`, `syn`, `system-deps`,
 `tempfile`, `tendril`, `thiserror`, `time`, `tokio`, `tokio-rustls`, `toml`,

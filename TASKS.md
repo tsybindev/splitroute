@@ -123,9 +123,21 @@
 
 ---
 
+## Этап 7 — Clash YAML (done, 2026-11-20)
+
+Формат подписки Clash YAML — фича из Backlog. Helper и его протокол не менялись.
+
+| ID | Задача | Владелец | Критерий приёмки |
+|---|---|---|---|
+| S7-T1 | Парсер Clash YAML: детект формата в цепочке подписки (YAML-отображение с ключом `proxies`, включая JSON-нотацию и flow-стиль), конвертация только `type: vless` + TCP + Reality/TLS, неподдерживаемые узлы (тип, транспорт, `tls: false`, `skip-cert-verify`) пропускаются с причиной | rust-core | done — `src-tauri/src/subscription/clash.rs` (`try_parse`/`parse_proxies`), цепочка в `mod.rs` расширена (JSON → vless → Clash → base64), `finish_links` переименован в `finish`; 16 новых тестов (11 clash, 4 mod.rs, 1 fetch end-to-end); зависимость `serde_yaml 0.9` с обоснованием (PRD §13 п. 9, research §30) |
+| S7-T2 | Локализация сообщения о неизвестном формате: упомянуть Happ-JSON, Clash YAML и vless-ссылки | react-ui | done — `errors.INVALID_FORMAT` обновлён в `ru.ts`/`en.ts`, тест парности ключей зелёный |
+| S7-T3 | Проверка и handoff | оркестратор | done — 413 Rust- и 103 frontend-теста, fmt/clippy/typecheck/lint/build чисто, `cargo check -p splitroute-helper --target x86_64-pc-windows-msvc` чисто; live-проверка (MockHelper, изолированный `HOME`, локальный HTTP с Clash-фикстурой): ровно 1 запрос с ожидаемыми UA/X-HWID, vless-узел разобран в кэш записи со всеми Reality-полями, vmess скипнут, через 70 с повторных запросов нет; процессы/порты чисто. Коммит `ceca190`, документация — research §30 |
+
+---
+
 ## Backlog
 
-- Clash YAML.
+- ~~Clash YAML~~ — done в S7-T1…S7-T3 (`ceca190`).
 - Импорт по QR.
 - ~~Несколько подписок одновременно~~ — done в S6-T1…S6-T4 (`f824f82`).
 - IPv6-маршрутизация выбранных приложений (после решения PRD).
