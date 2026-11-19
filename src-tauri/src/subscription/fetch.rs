@@ -175,6 +175,7 @@ mod tests {
     use std::thread;
 
     use super::*;
+    use splitroute_protocol::TlsKind;
 
     struct MockFetcher {
         body: Result<String, FetchError>,
@@ -336,6 +337,46 @@ mod tests {
         let subscription = fetch_and_parse(&ReqwestFetcher::new(), &target).unwrap();
         assert_eq!(subscription.profiles.len(), 1);
         assert_eq!(subscription.profiles[0].name, "Test Location");
+        handle.join().unwrap();
+    }
+
+    const CLASH_YAML_BODY: &str = "\
+port: 7890
+proxies:
+  - name: Reality Node
+    type: vless
+    server: example.com
+    port: 443
+    uuid: d811a5ee-1d55-4dca-bd7f-f68b768a2241
+    flow: xtls-rprx-vision
+    tls: true
+    servername: example.com
+    client-fingerprint: chrome
+    reality-opts:
+      public-key: public-key
+      short-id: 00e5e640a81a9ac1
+  - name: Old VMess
+    type: vmess
+    server: example.org
+    port: 443
+    uuid: d811a5ee-1d55-4dca-bd7f-f68b768a2241
+";
+
+    #[test]
+    fn clash_yaml_is_parsed_end_to_end() {
+        init_tls();
+        let (url, handle) = spawn_http_server("200 OK", CLASH_YAML_BODY.to_string());
+        let mut target = request();
+        target.url = url;
+        let subscription = fetch_and_parse(&ReqwestFetcher::new(), &target).unwrap();
+        assert_eq!(subscription.profiles.len(), 1);
+        assert_eq!(subscription.skipped.len(), 1);
+        assert_eq!(subscription.profiles[0].name, "Reality Node");
+        assert_eq!(subscription.profiles[0].tls.kind, TlsKind::Reality);
+        assert_eq!(
+            subscription.skipped[0].reason,
+            "Old VMess: type=vmess не поддерживается"
+        );
         handle.join().unwrap();
     }
 

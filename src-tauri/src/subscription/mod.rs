@@ -1,4 +1,5 @@
-//! Парсер Happ-совместимой подписки: массив Xray-конфигов → `Vec<Profile>`.
+//! Парсер подписки: Happ-JSON, Clash YAML или список `vless://`-ссылок →
+//! `Vec<Profile>`.
 //!
 //! Маппинг повторяет проверенный спайком `spike/convert.py` (VLESS + Reality/TLS +
 //! TCP). Профили без outbound `proxy`, с другим протоколом или транспортом
@@ -9,6 +10,7 @@ use serde_json::Value;
 use splitroute_protocol::{Profile, Protocol, TlsConfig, TlsKind, Transport};
 
 pub mod base64;
+pub mod clash;
 pub mod fetch;
 pub mod vless;
 
@@ -51,9 +53,10 @@ pub fn parse_subscription(raw: &str) -> Result<Vec<Profile>, SubscriptionError> 
 
 /// Разбирает подписку и возвращает профили вместе с пропусками.
 ///
-/// Формат определяется по телу: Happ-JSON, base64-список `vless://` или тот же
-/// список открытым текстом. Так клиент работает и с Happ User-Agent (JSON), и
-/// с собственным `SplitRoute/*` (base64).
+/// Формат определяется по телу: Happ-JSON, Clash YAML, base64-список
+/// `vless://` или тот же список открытым текстом. Так клиент работает и с
+/// Happ User-Agent (JSON), и с собственным `SplitRoute/*` (base64), и с
+/// подписками в формате Clash.
 pub fn parse_subscription_report(raw: &str) -> Result<Subscription, SubscriptionError> {
     let trimmed = raw.trim().trim_start_matches('\u{feff}').trim();
     if trimmed.is_empty() {
@@ -63,20 +66,26 @@ pub fn parse_subscription_report(raw: &str) -> Result<Subscription, Subscription
         return parse_json_report(trimmed);
     }
     if vless::contains_links(trimmed) {
-        return finish_links(vless::parse_links(trimmed));
+        return finish(vless::parse_links(trimmed));
+    }
+    if let Some(subscription) = clash::try_parse(trimmed)? {
+        return finish(subscription);
     }
     if let Some(decoded) = base64::decode(trimmed) {
         let text = String::from_utf8_lossy(&decoded);
         if vless::contains_links(&text) {
-            return finish_links(vless::parse_links(&text));
+            return finish(vless::parse_links(&text));
         }
     }
     Err(SubscriptionError::InvalidFormat(
-        "ожидался JSON-массив профилей или base64-список vless-ссылок".to_string(),
+        "ожидался Happ-JSON, Clash YAML или список vless-ссылок (base64 или открытым текстом)"
+            .to_string(),
     ))
 }
 
-fn finish_links(subscription: Subscription) -> Result<Subscription, SubscriptionError> {
+/// Единый финал для vless-списков и Clash: если ни один узел не
+/// сконвертирован, это ошибка `NoProfiles`, а не пустой успех.
+fn finish(subscription: Subscription) -> Result<Subscription, SubscriptionError> {
     if subscription.profiles.is_empty() {
         return Err(SubscriptionError::NoProfiles {
             total: subscription.profiles.len() + subscription.skipped.len(),
@@ -87,8 +96,29 @@ fn finish_links(subscription: Subscription) -> Result<Subscription, Subscription
 }
 
 fn parse_json_report(raw: &str) -> Result<Subscription, SubscriptionError> {
-    let payload: Value = serde_json::from_str(raw)
-        .map_err(|error| SubscriptionError::InvalidJson(error.to_string()))?;
+    let payload: Value = match serde_json::from_str(raw) {
+        Ok(payload) => payload,
+        Err(error) => {
+            // YAML — надмножество JSON: тело в фигурных скобках без кавычек
+            // ключей может оказаться Clash-конфигом в flow-стиле.
+            return match clash::try_parse(raw)? {
+                Some(subscription) => Ok(subscription),
+                None => Err(SubscriptionError::InvalidJson(error.to_string())),
+            };
+        }
+    };
+    // JSON-объект с ключом proxies — Clash в JSON-нотации, а не Happ-профиль.
+    if payload
+        .as_object()
+        .is_some_and(|object| object.contains_key("proxies"))
+    {
+        let root: serde_yaml::Value = serde_yaml::from_str(raw)
+            .map_err(|error| SubscriptionError::InvalidJson(error.to_string()))?;
+        let proxies = root
+            .get("proxies")
+            .ok_or_else(|| SubscriptionError::InvalidFormat("нет ключа proxies".to_string()))?;
+        return finish(clash::parse_proxies(proxies)?);
+    }
     let items = payload.as_array().ok_or(SubscriptionError::NotAnArray)?;
     if items.is_empty() {
         return Err(SubscriptionError::Empty);
@@ -499,5 +529,80 @@ mod tests {
             parse_subscription_report("aGVsbG8gd29ybGQ="),
             Err(SubscriptionError::InvalidFormat(_))
         ));
+    }
+
+    const CLASH_REALITY_YAML: &str = "\
+port: 7890
+proxies:
+  - name: Тестовая локация A
+    type: vless
+    server: example.com
+    port: 443
+    uuid: d811a5ee-1d55-4dca-bd7f-f68b768a2241
+    flow: xtls-rprx-vision
+    tls: true
+    servername: example.com
+    client-fingerprint: chrome
+    reality-opts:
+      public-key: public-key
+      short-id: 00e5e640a81a9ac1
+";
+
+    #[test]
+    fn clash_yaml_subscription_is_parsed() {
+        let report = parse_subscription_report(CLASH_REALITY_YAML).unwrap();
+        assert_eq!(report.profiles.len(), 1);
+        assert!(report.skipped.is_empty());
+        let profile = &report.profiles[0];
+        assert_eq!(profile.name, "Тестовая локация A");
+        assert_eq!(profile.server, "example.com");
+        assert_eq!(profile.port, 443);
+        assert_eq!(profile.tls.kind, TlsKind::Reality);
+        assert_eq!(profile.tls.public_key.as_deref(), Some("public-key"));
+        assert_eq!(profile.tls.short_id.as_deref(), Some("00e5e640a81a9ac1"));
+    }
+
+    #[test]
+    fn clash_json_notation_is_parsed_as_clash() {
+        let raw = r#"{"proxies":[{"name":"TLS","type":"vless","server":"example.com","port":443,"uuid":"d811a5ee-1d55-4dca-bd7f-f68b768a2241","tls":true}]}"#;
+        let report = parse_subscription_report(raw).unwrap();
+        assert_eq!(report.profiles.len(), 1);
+        assert_eq!(report.profiles[0].name, "TLS");
+        assert_eq!(report.profiles[0].tls.kind, TlsKind::Tls);
+        assert_eq!(report.profiles[0].tls.server_name, "example.com");
+    }
+
+    #[test]
+    fn clash_flow_style_is_parsed_as_clash() {
+        // Не JSON: ключи без кавычек — YAML flow-стиль.
+        let raw = "{port: 7890, proxies: [{name: TLS, type: vless, server: example.com, port: 443, uuid: d811a5ee-1d55-4dca-bd7f-f68b768a2241, tls: true}]}";
+        let report = parse_subscription_report(raw).unwrap();
+        assert_eq!(report.profiles.len(), 1);
+        assert_eq!(report.profiles[0].name, "TLS");
+        assert_eq!(report.profiles[0].tls.kind, TlsKind::Tls);
+    }
+
+    #[test]
+    fn clash_with_only_unsupported_nodes_is_no_profiles() {
+        let raw = "\
+proxies:
+  - name: VMess
+    type: vmess
+    server: example.com
+    port: 443
+    uuid: d811a5ee-1d55-4dca-bd7f-f68b768a2241
+  - name: Trojan
+    type: trojan
+    server: example.org
+    port: 443
+    password: secret
+";
+        assert_eq!(
+            parse_subscription_report(raw).unwrap_err(),
+            SubscriptionError::NoProfiles {
+                total: 2,
+                skipped: 2
+            }
+        );
     }
 }

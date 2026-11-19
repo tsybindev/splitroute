@@ -260,7 +260,8 @@ export const en: Record<MessageKey, string> = {
   "errors.NOT_FOUND": "Subscription not found (404). Check the URL.",
   "errors.HTTP_ERROR": "Server returned an error. Try again later.",
   "errors.INVALID_JSON": "Server returned invalid JSON.",
-  "errors.INVALID_FORMAT": "Unknown response format. Check the User-Agent in settings.",
+  "errors.INVALID_FORMAT":
+    "Unknown response format. Supported: Happ JSON, Clash YAML, vless links. Check the User-Agent in settings.",
   "errors.EMPTY": "Subscription is empty.",
   "errors.NO_PROFILES": "No supported profiles in the subscription.",
   "errors.MISSING_URL": "Subscription URL is not set.",

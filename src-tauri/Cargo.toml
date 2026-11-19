@@ -15,6 +15,10 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
+# Разбор тела подписки в формате Clash YAML. serde_yaml 0.9 — зрелый
+# минимальный serde-парсер; крейт в archive-статусе, но API заморожен и
+# стабилен, а форки (serde_yml) менее проверены.
+serde_yaml = { workspace = true }
 thiserror = { workspace = true }
 splitroute-protocol = { path = "../crates/protocol" }
 reqwest = { version = "0.13", default-features = false, features = [

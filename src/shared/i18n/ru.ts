@@ -259,7 +259,7 @@ export const ru = {
   "errors.HTTP_ERROR": "Сервер вернул ошибку. Попробуйте позже.",
   "errors.INVALID_JSON": "Сервер вернул некорректный JSON.",
   "errors.INVALID_FORMAT":
-    "Неизвестный формат ответа. Проверьте User-Agent в настройках.",
+    "Неизвестный формат ответа. Поддерживаются Happ-JSON, Clash YAML и vless-ссылки. Проверьте User-Agent в настройках.",
   "errors.EMPTY": "Подписка пуста.",
   "errors.NO_PROFILES": "В подписке нет поддерживаемых профилей.",
   "errors.MISSING_URL": "URL подписки не задан.",
