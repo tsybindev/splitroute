@@ -15,12 +15,16 @@ pub const NFT_TABLE: &str = "splitroute_killswitch";
 pub const PF_ANCHOR: &str = "com.apple/splitroute.killswitch";
 
 /// Правила pf: последним идёт блок, быстрые `pass` исключают нужное.
+///
+/// Порядок опций pf-грамматики строгий: `hosts` (`all`, `from … to …`) — до
+/// `filteropt` (`user`, `keep state`), иначе pfctl отбивает файл целиком
+/// (`rules:5: syntax error`) и kill switch не включается.
 pub const PF_RULES: &str = "\
 # SplitRoute kill switch: fail-closed, правила ставит helper.
 pass out quick on lo0 all
 pass out quick inet from any to { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, 224.0.0.0/4 } keep state
 pass out quick inet6 from any to { fe80::/10, fc00::/7, ff00::/8 } keep state
-pass out quick user root all keep state
+pass out quick all user root keep state
 block drop out all
 ";
 
@@ -268,7 +272,8 @@ mod tests {
     #[test]
     fn pf_rules_allow_loopback_lan_and_root_before_block() {
         assert!(PF_RULES.contains("pass out quick on lo0 all"));
-        assert!(PF_RULES.contains("pass out quick user root all"));
+        // Порядок pf-грамматики: hosts (`all`) — до `user root`.
+        assert!(PF_RULES.contains("pass out quick all user root keep state"));
         assert!(PF_RULES.contains("192.168.0.0/16"));
         let block = PF_RULES
             .find("block drop out all")
