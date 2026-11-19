@@ -111,6 +111,10 @@ struct TrafficState {
 /// операцию. Обновления разных подписок друг другу не мешают.
 pub(crate) const FETCH_IN_PROGRESS: &str = "FETCH_IN_PROGRESS";
 
+/// Код ошибки: таска фоновой загрузки погибла (паника в `spawn_blocking`).
+/// Случай «не должно случаться» — защитная ветка на месте JoinError.
+pub(crate) const FETCH_ABORTED: &str = "FETCH_ABORTED";
+
 /// Право на одну загрузку подписки. Идентификатор снимается при `Drop`,
 /// поэтому ошибка или паника не оставляют подписку заблокированной навсегда.
 pub(crate) struct FetchGuard<'a> {
@@ -670,11 +674,16 @@ pub(crate) fn traffic_stats_inner(state: &AppState) -> TrafficStats {
     }
 }
 
-/// `async` обязателен: опрос локального API — блокирующая операция с таймаутом,
-/// он не должен выполняться на главном потоке окна.
-#[tauri::command(async)]
-pub fn traffic_stats(state: tauri::State<'_, AppState>) -> TrafficStats {
-    traffic_stats_inner(&state)
+/// Опрос локального Clash API: блокирующий reqwest, поэтому тело выполняется в
+/// `spawn_blocking`. Прямое исполнение в таске runtime паникует: blocking-клиент
+/// reqwest в debug-сборке дропает свой внутренний runtime, а tokio запрещает
+/// дропать runtime из async-контекста — таска команды умирает и промис в UI не
+/// разрешается.
+#[tauri::command]
+pub async fn traffic_stats(app: tauri::AppHandle) -> TrafficStats {
+    tauri::async_runtime::spawn_blocking(move || traffic_stats_inner(&app.state::<AppState>()))
+        .await
+        .unwrap_or_else(|_| TrafficStats::unavailable())
 }
 
 /// Загружает одну подписку по её идентификатору.
@@ -861,16 +870,26 @@ pub fn helper_uninstall(state: tauri::State<'_, AppState>) -> Result<(), Command
     Ok(state.installer.uninstall()?)
 }
 
-/// Ручное обновление одной подписки. `async` обязателен: запрос к провайдеру
-/// блокирующий и может идти десятки секунд. В Tauri 2 синхронные команды
-/// выполняются на главном потоке, из-за чего загрузка подписки замораживала
-/// всё окно до ответа или таймаута.
-#[tauri::command(async)]
-pub fn subscription_fetch(
-    state: tauri::State<'_, AppState>,
+/// Ручное обновление одной подписки.
+///
+/// Блокирующий запрос к провайдеру (до 45 с) выполняется в `spawn_blocking`:
+/// `#[tauri::command(async)]` на синхронном теле ставит его в таску runtime,
+/// где blocking-reqwest паникует при освобождении своего внутреннего runtime
+/// (tokio запрещает дроп runtime из async-контекста). Из-за этого промис в UI
+/// не разрешался — индикатор обновления крутится вечно.
+#[tauri::command]
+pub async fn subscription_fetch(
+    app: tauri::AppHandle,
     id: String,
 ) -> Result<SubscriptionFetchResponse, CommandError> {
-    subscription_fetch_inner(&state, &id, now_secs())
+    let response = tauri::async_runtime::spawn_blocking(move || {
+        subscription_fetch_inner(&app.state::<AppState>(), &id, now_secs())
+    })
+    .await
+    .map_err(|error| {
+        CommandError::new(FETCH_ABORTED, format!("фоновая задача прервана: {error}"))
+    })?;
+    response
 }
 
 /// Список подписок с расписанием и кэшем локаций.

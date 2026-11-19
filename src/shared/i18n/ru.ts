@@ -264,6 +264,7 @@ export const ru = {
   "errors.NO_PROFILES": "В подписке нет поддерживаемых профилей.",
   "errors.MISSING_URL": "URL подписки не задан.",
   "errors.FETCH_IN_PROGRESS": "Обновление подписки уже выполняется.",
+  "errors.FETCH_ABORTED": "Фоновая задача обновления прервана. Попробуйте ещё раз.",
   "errors.NO_PROFILE": "Локация не выбрана.",
   "errors.PROFILE_MISSING": "Выбранная локация отсутствует в подписке.",
   "errors.HELPER_NOT_INSTALLED": "Helper не установлен.",

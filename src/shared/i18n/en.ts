@@ -266,6 +266,7 @@ export const en: Record<MessageKey, string> = {
   "errors.NO_PROFILES": "No supported profiles in the subscription.",
   "errors.MISSING_URL": "Subscription URL is not set.",
   "errors.FETCH_IN_PROGRESS": "A subscription refresh is already running.",
+  "errors.FETCH_ABORTED": "The background refresh task was aborted. Try again.",
   "errors.NO_PROFILE": "No location selected.",
   "errors.PROFILE_MISSING": "The selected location is missing from the subscription.",
   "errors.HELPER_NOT_INSTALLED": "Helper is not installed.",
