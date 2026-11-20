@@ -123,6 +123,19 @@ fn build_dns(settings: &Settings) -> Value {
     }
 }
 
+/// Стек TUN. На Linux system-стек TCP перенаправляет трафик через
+/// nftables-redirect и молча умирает в окружениях с docker-бриджами
+/// (CachyOS, 2026-11-21, research §34): TCP из TUN не доходит до outbound,
+/// UDP/DNS при этом работают. gvisor (userspace TCP) работает. На macOS
+/// смешанный стек — норма (live-проверки §31/§32).
+fn tun_stack() -> &'static str {
+    if cfg!(target_os = "linux") {
+        "gvisor"
+    } else {
+        "mixed"
+    }
+}
+
 fn build_inbounds(settings: &Settings) -> Value {
     let mut address = vec![json!(TUN_ADDRESS_V4)];
     if settings.ipv6_enabled {
@@ -136,7 +149,7 @@ fn build_inbounds(settings: &Settings) -> Value {
         "mtu": settings.mtu,
         "auto_route": true,
         "strict_route": true,
-        "stack": "mixed",
+        "stack": tun_stack(),
     })];
 
     if settings.mixed_inbound_enabled {
@@ -332,6 +345,20 @@ mod tests {
                     })
                 })
         }));
+    }
+
+    #[test]
+    fn tun_stack_is_gvisor_on_linux_and_mixed_elsewhere() {
+        let config = build_config(&Settings::default(), &profile(), &[], None).unwrap();
+        let expected = if cfg!(target_os = "linux") {
+            "gvisor"
+        } else {
+            "mixed"
+        };
+        assert_eq!(
+            config["inbounds"][0]["stack"], expected,
+            "TCP через system-стек на Linux ломается в окружениях с docker (research §34)"
+        );
     }
 
     #[test]
