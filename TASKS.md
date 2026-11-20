@@ -136,10 +136,22 @@
 
 ---
 
+## Этап 8 — QR-импорт подписки (done, 2026-11-20)
+
+Фича из Backlog (PRD §6.1, §13 п. 10). Helper и его протокол не менялись, новых плагинов и правок capabilities нет.
+
+| ID | Задача | Владелец | Критерий приёмки |
+|---|---|---|---|
+| S8-T1 | Декодирование QR в Rust: все коды с картинки + роутинг `url`/`happ`/`node_links`/`unknown`; команды `qr_decode_image` (base64 от вебвью) и `qr_decode_file` (путь от drag-drop), обе в `spawn_blocking` | rust-core | done — модуль `src-tauri/src/qr.rs`; декодер `rqrr 0.11` (pure Rust, image 0.25 — одна версия в дереве), `image` + feature `jpeg`; распознаются `http(s)`-ссылка с хостом и Happ-обёртки `happ://add?url=…`/`happ://add/…` (base64 через декодер подписок, затем percent-decode); `vless://` → `node_links` (импорт узлов без подписки не поддерживается — модель требует URL), иначе `unknown`; несколько QR — первый `url`/`happ` выигрывает; содержимое QR нигде не логируется. Коды ошибок `QR_DECODE_FAILED`/`QR_FILE_UNREADABLE`. 20 тестов (13 роутинг/percent-decode, 7 decode_image — hermetic-генерация QR dev-зависимостью `qrcode 0.14`, multi-QR rqrr находит оба). THIRD_PARTY_NOTICES: +`g2p*`/`qrcode`/`zune-core`/`zune-jpeg`/`lru`/`rqrr`, снимок 536 пакетов, `packaging_config` зелёный |
+| S8-T2 | UI: диалог импорта (drag-drop, выбор файла, вставка скриншота Cmd+V), кнопка «Импорт по QR» в карточке подписок, префилл формы добавления, строки `ru`/`en` | react-ui | done — `QrImportDialog`: drag-drop через оконное событие `onDragDropEvent` (HTML5 dnd при `dragDropEnabled` по умолчанию не доходит до страницы), paste — `clipboardData.items` image/png|jpeg, busy-состояние, ошибки по кодам (`errors.QR_*`); успех `url`/`happ` открывает обычную форму добавления с префиллом URL; отмена по токену декодирования — «Отмена» отменяет и запоздавший результат чтения файла (регресс-тест). 6 новых frontend-тестов |
+| S8-T3 | Проверка и handoff | оркестратор | done (автопроверки) — 443 Rust- (20 новых) и 114 frontend-теста (6 новых), fmt/clippy/typecheck/lint/build, `cargo check -p splitroute-helper --target x86_64-pc-windows-msvc` — чисто. **Live-проверка с реальным QR — за пользователем** (шаблон в NEXT_SESSION.md): изолированный стор `SPLITROUTE_STATE`, kill switch выключен. Коммит `cf385dc`, документация — research §33 |
+
+---
+
 ## Backlog
 
 - ~~Clash YAML~~ — done в S7-T1…S7-T3 (`ceca190`).
-- Импорт по QR.
+- ~~Импорт по QR~~ — done в S8-T1…S8-T3 (`cf385dc`).
 - ~~Несколько подписок одновременно~~ — done в S6-T1…S6-T4 (`f824f82`).
 - IPv6-маршрутизация выбранных приложений (после решения PRD).
 - ~~Применять `connect_on_start` при запуске: настройка сохраняется, но пока не используется~~ — done в S4-T13 (`1525df3`).
