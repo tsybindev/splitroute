@@ -35,10 +35,10 @@
 ## 1. Подготовка машины (CachyOS, одноразово)
 
 ```bash
-# Зависимости (AGENTS.md §5.1)
+# Зависимости (AGENTS.md §5.1); socat — для проб протокола helper'а (§4/§6)
 sudo pacman -Syu --needed base-devel curl wget file openssl git \
   webkit2gtk-4.1 gtk3 libsoup3 libappindicator-gtk3 librsvg patchelf \
-  nodejs npm
+  nodejs npm socat jq
 
 # Rust и pnpm
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -118,9 +118,16 @@ printf '{"protocol":2,"id":"1","command":"status"}\n' | socat - UNIX-CONNECT:/tm
 7. `curl -x http://127.0.0.1:18089 https://example.invalid -m 5` — outbound
    через ядро отвечает (или понятная ошибка сети — ядро живо, это главное).
 8. `stop` → `stopped`; процессы и сокет исчезли
-   (`pgrep -x sing-box`; `ss | grep 18089` пусто; SIGTERM убирает сокет).
+   (`pgrep -f 'binaries/sing-box'` — `pkill -x sing-box` НЕ матчится: comm
+   у dev-ядра обрезан до `sing-box-x86_64`; `ss | grep 18089` пусто).
 9. Повторный `start` после `stop` — работает (перезапуск без перезапуска
    helper'а).
+
+> Пробы протокола идут от uid пользователя (`--allow-uid`): под root
+> helper отвечает `FORBIDDEN «клиент с другим uid»` — это правильное
+> поведение peer-credentials, а не баг. В скриптах под sudo используйте
+> `runuser -u <user> -- socat …`. Под sudo `$HOME=/root` — пути к репо
+> брать из `getent passwd <user>`.
 
 ## 5. TUN и per-app (headless, требует рабочего профиля)
 
@@ -144,15 +151,22 @@ printf '{"protocol":2,"id":"1","command":"status"}\n' | socat - UNIX-CONNECT:/tm
 
 (`route.rules` — упрощённый аналог генератора; точные правила смотри в
 `src-tauri/src/config/mod.rs`. Адреса TUN фиксированные: `172.19.0.1/30`,
-`fdfe:dcba:9876::1/126`.)
+`fdfe:dcba:9876::1/126`. Стек TUN на Linux — `gvisor` (фикс `3810437`,
+research §34: system-стек TCP молча теряет потоки в окружениях с
+docker-бриджами). Генератор НЕ задаёт `interface_name` — ядро назовёт
+устройство `tun0`, не `splitroute-tun`.)
 
 Чек-лист:
 
-1. `start` → `running`. `ip addr show` — есть `splitroute-tun` с адресами
-   `172.19.0.1/30` и `fdfe:dcba:9876::1/126`; `ip route` — маршруты через TUN.
-2. Per-app: `curl -m 10 https://api.ipify.org` — curl в `process_name` → IP
-   прокси-сервера; `wget -qO- -T 10 https://api.ipify.org` (не в правиле) —
-   домашний IP.
+1. `start` → `running`. `ip addr` — устройство с адресами `172.19.0.1/30`
+   (+ `fdfe:dcba:9876::1/126` при включённом IPv6; имя — `tun0`);
+   `ip rule show` — правила 9000–9010, `ip route show table 2022` — default
+   через TUN.
+2. Per-app: `curl -m 10 https://api.ipify.org` (в `process_name`) → egress
+   через прокси-сервер; `wget -qO- -T 10 --tries=1 https://api.ipify.org`
+   (не в правиле) — домашний IP. Egress через прокси не обязан совпадать
+   с адресом входа сервера (edge≠exit у провайдера) — сравнивать curl с
+   wget, а не с IP сервера. wget без `--tries=1` ретраится ~20 раз.
 3. DNS: режим `proxy` — `resolvectl status`/фактический DNS выбранного
    процесса идёт через туннель (`systemd-resolved`-конфликт — сам сценарий
    S2-T9, зафиксировать поведение); локальные имена (`.local`) — напрямую.
@@ -173,14 +187,17 @@ printf '{"protocol":2,"id":"1","command":"status"}\n' | socat - UNIX-CONNECT:/tm
    splitroute_killswitch` с консоли/второго канала.
 3. Убить ядро: `sudo socat - UNIX-CONNECT:<sock>` с `stop`-командой НЕ
    сработает (это честный stop и правила снимутся) — для fail-closed теста
-   убить сам sing-box: `sudo pkill -x sing-box` (хвост имени не мешает: на
-   Linux бинарь `sing-box`, comm совпадает). После этого helper
-   переподключение не делает (это задача приложения), правила остаются:
-   egress от пользователя всё ещё блок, `nft list table` жив.
+   убить sing-box **по PID из `status`** (`kill <pid>`; `pkill -x sing-box`
+   НЕ матчится — comm обрезан до `sing-box-x86_64`). После kill `ps -p <pid>`
+   может ещё пару секунд показывать зомби (helper не сделал `wait()`) —
+   факт смерти проверять по `pgrep -f 'binaries/sing-box'` (cmdline пуст).
+   Helper переподключение не делает (это задача приложения), правила
+   остаются: egress от пользователя всё ещё блок, `nft list table` жив.
 4. `stop` → правила сняты: `nft list tables | grep splitroute` — пусто,
    egress восстановлен, файл `killswitch.nft` из runtime удалён.
-5. Идемпотентность: второй `start` c kill_switch:true подряд — без ошибок
-   (таблица пересоздаётся), `KillSwitchFailed` не возвращается.
+5. Идемпотентность: второй `start` c kill_switch:true подряд →
+   `ALREADY_RUNNING («ядро уже запущено»)` — защита от двойного старта
+   (проверено 2026-11-21); `KillSwitchFailed` не возвращается.
 
 ## 7. GUI-часть (нужен дисплей: пользователь у машины / VNC)
 
@@ -188,6 +205,24 @@ printf '{"protocol":2,"id":"1","command":"status"}\n' | socat - UNIX-CONNECT:/tm
 SPLITROUTE_STATE=/tmp/sr-linux/state/state.json pnpm tauri dev`. Белое окно
 WebKit — `WEBKIT_DISABLE_DMABUF_RENDERER=1` (AGENTS.md troubleshooting).
 Helper на этот раз — dev без `sudo`-конфликта или из §4.
+
+Грабли (проверено 2026-11-21, research §34):
+
+- **single-instance**: если запущен AppImage/установленное приложение —
+  dev-копия умирает мгновенно (tauri CLI SIGTERM → exit 143, без окна).
+  Окно AppImage при этом показывает собственный `HELPER_NOT_INSTALLED`
+  (его проверка — `/run/splitroute/helper.sock`). Закройте все копии перед
+  dev-запуском.
+- **HELPER_NOT_INSTALLED в dev** = мёртвый env-сокет; проверяйте, что env
+  долетел: `tr '\0' '\n' </proc/<pid>/environ | grep SPLITROUTE`.
+- **Плашка «Не установлен» после успешной установки helper'а** в
+  dev-потоке — бейдж отражает доступность env-сокета (dev-helper мёртв),
+  а не факт установки системного; в production-потоке сокет один.
+- **Трей на GNOME** без AppIndicator-расширения не отображается; закрытие
+  окна завершает приложение.
+- Правила per-app применяются при следующем подключении (конфиг
+  генерируется на `start`); «Проверить задержки» — ~15 с на несколько
+  профилей.
 
 1. Окно открывается не белым; «Главная», «Локации» рендерятся.
 2. Подключение/отключение кнопками; бейдж статистики; задержки
@@ -229,3 +264,9 @@ ls -d /tmp/sr-linux   # конфиги с реальными секретами 
   проверено headless/GUI, грабли (как минимум §0-факты про `ct state` и
   SSH, Wayland/AppIndicator, systemd-resolved).
 - `NEXT_SESSION.md` — перезаписать.
+
+**Выполнено 2026-11-21:** вся headless- и GUI-часть пройдена на CachyOS
+(x86_64, kernel 7.3.4, rustc 1.98), факты и грабли — `docs/research.md`
+§34, статусы — TASKS.md S2-T9/S3-T7/S3-T3; найден и исправлен баг TCP
+через TUN (`stack: mixed` → gvisor на Linux, `3810437`). Остатки: установка
+пакета (`.rpm`/`.deb`) в систему, DNS `.local`/mDNS, сон/смена сети.

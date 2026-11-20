@@ -1344,3 +1344,139 @@ URL подписки и HWID в логах и отчёте не выводятс
   сообщение `QR_DECODE_FAILED` просит переснять скриншот целиком.
 - **Осталось:** live-проверка с реальным QR из окна приложения
   (изолированный стор, kill switch выключен), Linux/Windows-рантайм.
+
+## 34. Linux-рантайм на CachyOS по SSH — S2-T9/S3-T7 (проверено 2026-11-21)
+
+Live-проверка Linux-части по `docs/linux-runbook.md`: CachyOS по SSH
+(denis@192.168.0.49, LAN), агент-оркестратор на macOS, sudo-команды
+пользователем. Кодовая база переносилась rsync'ом (origin/main отставал
+на 14 коммитов; дерево рабочее, включая `.git`).
+
+### Среда
+
+- CachyOS x86_64, kernel 7.3.4-1-cachyos, rustc/cargo 1.98.0 (требование
+  1.85+ выполняется), node 26.13.1, pnpm 12.3.4 (глобальный; pin
+  `packageManager: pnpm@11.24.0` не мешал — `pnpm install --frozen-lockfile`
+  и все скрипты прошли без fallback), sing-box 1.14.4 (fetch-core, sha256
+  по `core-version.txt`), 28 ядер / 62 GiB RAM (полная сборка workspace
+  с 393 крейтами — ~40 с).
+- GNOME на Wayland (gnome-shell), docker с 7 бриджами (172.17–172.24/16),
+  сеть wlan0, шлюз 192.168.0.1, systemd-resolved.
+- SSH из LAN: kill switch переживает сессию — предсказание runbook §0
+  (`ct state established` нет, но LAN-daddr разрешён) подтверждено живьём.
+- Поставлены `socat`, `patchelf` (pacman); `jq` был.
+
+### Что проверено (runbook §2–§7)
+
+- **§2:** `cargo test --workspace --locked` — 427 passed / 1 ignored /
+  0 failed (на macOS 444; разница — `cfg(target_os)`, провалов нет);
+  typecheck/lint/vitest — 114 passed (15 файлов). sing-box 1.14.4
+  linux_amd64 верифицирован SHA256.
+- **§3:** `SPLITROUTE_ALLOW_UNSIGNED=1 ./scripts/package.sh` — .deb 34.39 МиБ,
+  .rpm 34.39 МиБ, AppImage 137.76 МиБ (совпадает с §17).
+- **§4:** headless-smoke helper'а под root — 10/10 PASS: сокет 0600,
+  status→start→runtime (config.json 0600, sing-box.log)→порт→outbound
+  HTTP 200 через mixed→stop→restart→сокет удалён. Формат протокола 2:
+  аргументы команды в `payload` (`{"command":"start","payload":{"config":…,
+  "kill_switch":false}}`) — пример в runbook §4 был устаревшим, исправлен.
+- **§5:** TUN+per-app: интерфейс поднимается (имя `tun0` — генератор не
+  задаёт `interface_name`), ip-правила 9000–9010, таблица 2022; per-app
+  доказан (curl из TUN → egress через прокси ≠ домашний; wget → домашний);
+  DNS-hijack работает: запросы systemd-resolved уходят в vless DoT
+  1.1.1.1:853; локалка доступна (ip_is_private → direct).
+- **§6/§6b:** kill switch nftables: таблица `splitroute_killswitch`, правила
+  как в `rules.rs` (lo, LAN v4/v6, skuid 0, drop); egress пользователя
+  блокируется, root проходит; **fail-closed при смерти ядра** (kill по PID
+  из `status`): правила остаются, egress остаётся заблокированным; `stop`
+  снимает таблицу и восстанавливает egress; killswitch.nft появляется/
+  удаляется в runtime.
+- **§7 (GUI):** окно рендерится не белым (`WEBKIT_DISABLE_DMABUF_RENDERER=1`);
+  подключение/отключение через dev-helper (root, `--allow-uid 1000`);
+  **per-app из GUI**: Telegram через VPN подтверждён пользователем
+  («без него не работает»), удалённый из правил браузер — домашний IP;
+  статистика (Clash API) работает; каталог приложений сканируется,
+  добавление/удаление правил ок; «Проверить задержки» работает (~15 с —
+  медленно, UX-заметка); установка helper'а из приложения (pkexec) → unit
+  `splitroute-helper.service` enabled+active, бинари в `/usr/lib/splitroute/`,
+  `RuntimeDirectoryMode=0711`, `--allow-uid 1000`, системный сокет
+  `/run/splitroute/helper.sock` достижим процессом пользователя (probe
+  status отвечает протоколом 2); конфиг, сгенерированный приложением на
+  живом подключении, содержит `gvisor` — фикс подтверждён end-to-end.
+
+### Находки и баги
+
+- **[fix `3810437`] `stack: mixed` ломает TCP через TUN на Linux в
+  окружении с docker.** system-стек TCP sing-box (в `mixed` TCP идёт через
+  него) молча терял ВСЕ TCP-потоки из TUN: процесс опознаётся, но outbound
+  dial не выполняется; UDP (gvisor) и внутренний DNS (vless TCP к
+  1.1.1.1:853) работали → «интернет пропал на всей машине при живой
+  локалке/SSH». Диагностика по логам ядра (286 строк: 18 vless-dial — все
+  к 1.1.1.1:853, 9 UDP packet, 0 TCP-dial из TUN). `stack: gvisor` — TCP
+  работает. Фикс: `tun_stack()` в `config/mod.rs` (Linux → gvisor, macOS →
+  mixed), тест `tun_stack_is_gvisor_on_linux_and_mixed_elsewhere` (зелёный
+  на обеих ОС, 444/427). Предположительная причина отказа system-стека —
+  nftables-redirect конфликтует с docker-правилами (7 бриджей); не
+  вскрывалось глубже — gvisor достаточно.
+- **comm обрезан: `pkill -x sing-box` не матчится.** Dev-ядро
+  `sing-box-x86_64-unknown-linux-gnu` → comm `sing-box-x86_64` (15 симв).
+  Из-за этого «PASS: sing-box убит» в первом прогоне §6 был ложным
+  (не-матчящийся pkill + симметричный pgrep). §6b перепроверил: PID из
+  `status` → kill → правила живы, egress заблокирован, stop снимает.
+  Правило: ядро убивать по PID из ответа helper'а.
+- **Зомби-окно после kill.** `ps -p <pid>` ещё ~секунды показывает процесс
+  (зомби: helper не сделал `wait()`), но `pgrep -f sing-box` уже не
+  матчится (cmdline пуст). Факт смерти ядра — по pgrep -f, не ps.
+- **Пересечение TUN-подсети с docker.** TUN адрес 172.19.0.1/30
+  (`TUN_ADDRESS_V4`) пересекается с docker-бриджем 172.19.0.1/16 на этой
+  машине. На gvisor ядро работало корректно; задокументировано как
+  известный риск для машин с docker-сетями 172.19.x.
+- **Exit-IP ≠ entry-IP.** Egress через прокси не обязан совпадать с
+  адресом входа сервера (у провайдера edge≠exit). Проверка per-app —
+  сравнением curl(TUN) vs wget(direct) (или vs mixed-inbound), а не с
+  адресом сервера из подписки.
+- **ALREADY_RUNNING.** Повторный `start` без `stop` →
+  `ALREADY_RUNNING («ядро уже запущено»)`, а не молчаливое пересоздание
+  (ожидание §6.5 runbook было неверным, исправлено). `KillSwitchFailed`
+  при этом не возвращается — как и требовалось.
+- **Правила per-app применяются только при переподключении** — конфиг
+  генерируется на `start`; hot-reload правил не реализован (дизайн,
+  UX-заметка; если станет нужен — отдельная задача).
+
+### Грабли для будущих сессий
+
+- **sudo: `$HOME=/root`** — скрипты под sudo не должны строить пути
+  пользователя из `$HOME`; брать `getent passwd <user>`.
+- **`sudo a; b; c`** — sudo применяется только к первому слову цепочки.
+- **pgrep -f само-матчится** через ssh (паттерн в cmdline самого шелла) —
+  приём `pgrep -f "splitroute[-]helper"`.
+- **pkill -f по подстроке задевает похожие процессы**: паттерн
+  `target/debug/splitroute` матчится и в `splitroute-helper`; убивать по
+  PID или точным путям.
+- **single-instance**: запущенный AppImage/установленное приложение
+  держит DBus-lock — dev-копия умирает мгновенно (tauri CLI отдаёт
+  SIGTERM → exit 143, «виснет» без окна). Окно AppImage при этом
+  показывает собственный `HELPER_NOT_INSTALLED` (его проверка —
+  `/run/splitroute/helper.sock`).
+- **HELPER_NOT_INSTALLED в dev** = мёртвый env-сокет. Проверять, что env
+  долетел: `tr '\0' '\n' </proc/<pid>/environ | grep SPLITROUTE`.
+- **Плашка «Не установлен» после успешной установки helper'а** в
+  dev-потоке — бейдж отражает доступность env-сокета (dev-helper был
+  мёртв), а не факт установки системного. В production-потоке сокет один.
+- **Трей на GNOME** без AppIndicator-расширения не отображается; закрытие
+  окна завершает приложение (нет hide-to-tray fallback).
+- **wget `-T 15` без `--tries=1` ретраится ~20 раз** (минуты зависания);
+  у curl нет опции `--tries` (это wget) — у curl `-m`/`--retry`.
+- **`nft list` форматирует множества многострочно** — grep по точной
+  строке правила ложно падает; проверять по ключевым элементам
+  (`10.0.0.0/8`, `fe80::/10`).
+- **«NOERROR» в DNS-логах** ложно матчится grep'ом `ERROR`.
+
+### Осталось
+
+- DNS `.local`/mDNS через туннель не проверен (Avahi не разворачивался).
+- Сон/смена сети — не проверены (вне runbook этой сессии).
+- Windows-часть S4-T5c (WFP-отчёт) — остаётся.
+- На CachyOS оставлены: установленный системный helper (решение
+  пользователя) и дерево `~/Dev/splitroute` (13 МБ код + 5.9 ГБ target).
+  Временные артефакты (`/tmp/sr-linux` с state.json реальной подписки)
+  удалены в §8.
