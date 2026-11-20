@@ -5,73 +5,76 @@
 
 ## Состояние
 
-- Этапы 0–4: закрыты в своих частях; **S4-T5c (macOS) — done (2026-11-20)**,
-  Windows-часть — функционал проверен пользователем на реальной машине,
-  детальный WFP-отчёт ожидается. S3-T2/S3-T7 без изменений.
+- Этапы 0–7: закрыты в своих частях; **S4-T15 (автореконнект ядра) — done
+  (2026-11-20, `57158a3`)**, живая проверка пройдена (research §32).
+  Windows-часть S4-T5c — функционал проверен пользователем, детальный
+  WFP-отчёт ожидается. S3-T2/S3-T7 без изменений (blocked, внешние ресурсы).
 - Этап 6 (несколько подписок) — done (2026-11-19, `f824f82`).
 - Этап 7 (Clash YAML) — done (2026-11-20, `ceca190`, docs `b50cf60`).
-- **Рантайм-проверка kill switch macOS (S4-T5c) — done (2026-11-20).**
-  Попутно найдены и исправлены 2 бага: `c3aa3ca` (порядок правила pf) и
-  `a27161b` (blocking-команды в `spawn_blocking`). Детали — research §31.
 - Ветка `main`. CI не менялся.
-- Факты: [docs/research.md](./docs/research.md) §31 (kill switch под root,
-  грабли pkill и spawn_blocking), §30 (Clash YAML), §29 (несколько подписок).
+- Факты: [docs/research.md](./docs/research.md) §32 (автореконнект: решение,
+  live-проверка, грабли HOME и kill switch), §31 (kill switch под root,
+  `spawn_blocking`), §30 (Clash YAML), §29 (несколько подписок).
 
 ### Что работает / проверено
 
-- **Kill switch macOS (S4-T5c):** подключение с pf-анкером
-  `com.apple/splitroute.killswitch` (правила применяются, pf.conf не тронут);
-  прямой egress заблокирован при живом ядре, LAN/loopback живы; реальное
-  убийство ядра → `state: stopped`, правила остаются, egress продолжает
-  блокироваться (fail-closed), UI показывает `CORE_STOPPED` через ~2 с; после
-  отключения — anchor not found, трафик восстановлен, pf Disabled. Откат
-  `KILL_SWITCH_FAILED` не оставляет включённый pf.
-- **Clash YAML (этап 7):** четвёртый формат подписки — детект в цепочке
-  `subscription/mod.rs`, парсер `subscription/clash.rs` (только
-  `type: vless` + TCP + Reality/TLS), JSON-нотация и flow-стиль принимаются.
-- **Всё из этапов 4 и 6** — без изменений: несколько подписок, автообновление,
-  автоподключение, статистика, каталог/иконки, задержки/автовыбор, обновления
-  приложения, локализация, helper'ы и установщики.
-- 413 Rust- и 103 frontend-теста зелёные; fmt/clippy/typecheck/lint/build,
+- **Автореконнект (S4-T15):** детект в Rust-надзоре (`reconnect.rs`, опрос
+  раз в 2 с при активной сессии, работает без kill switch и при закрытом
+  окне); серия до 3 попыток через общий `connect_inner`, пауза 3 с
+  (отменяемая), при исчерпании — `RECONNECT_FAILED` в UI, правила kill
+  switch не снимаются, повторная серия до ручного действия запрещена.
+  Счётчик сбрасывается успешным стартом и ручным отключением (включая
+  переключение локации и stop перед обновлением).
+- **Live (2026-11-20):** stop ядра через сокет helper'а → восстановление
+  за ~2 с (дважды — счётчик/guard сбрасываются); подменный бинарь → 3
+  попытки, исчерпание, красный бокс в UI, ретраев нет; ручное
+  «Подключить»/«Отключить» — сброс серии и чистый выход; бейдж «попытка
+  N из 3» подтверждён пользователем в реальном окне.
+- **Всё из этапов 4, 6 и 7** — без изменений: несколько подписок,
+  автообновление, автоподключение, статистика, каталог/иконки,
+  задержки/автовыбор, обновления приложения, локализация, helper'ы,
+  kill switch (S4-T5c macOS), Clash YAML.
+- 423 Rust- и 107 frontend-тестов зелёные; fmt/clippy/typecheck/lint/build,
   `cargo check -p splitroute-helper --target x86_64-pc-windows-msvc` — чисто.
 
 ### Не проверено / осталось
 
-- **S4-T15 (todo, задача в TASKS.md): автореконнект ядра** — детект работает,
-  автоматического переподключения (до 3 попыток, PRD §13 п. 4) нет.
-- **Windows-часть S4-T5c:** пользователь проверил функционал на реальной
-  машине; детальный WFP-отчёт (фильтры `netsh wfp show filters`, блокировка
-  `curl.exe` при мёртвом `sing-box.exe`, снятие после `stop`, идемпотентность)
-  — записать в TASKS/research, когда будет предоставлен.
-- Клик-проверки UI Clash-подписки — покрыты Vitest, не автоматизировались.
-- Реальный Clash-провайдер с `proxy-providers` (не поддерживается — research §30).
+- Windows-часть S4-T5c: детальный WFP-отчёт (фильтры `netsh wfp show
+  filters`, блокировка `curl.exe` при мёртвом `sing-box.exe`, снятие после
+  `stop`, идемпотентность) — записать в TASKS/research, когда будет.
+- Kill switch в рантайме **вместе с серией** автореконнекта (правила между
+  попытками): покрыто юнит-тестами + S4-T5c; при желании повторить live по
+  шаблону research §32 с kill switch на отдельной/подготовленной машине.
+- Клик-проверки UI Clash-подписки — Vitest, не автоматизировались.
+- Реальный Clash-провайдер с `proxy-providers` (не поддерживается — §30).
 - Blocked (внешние ресурсы): S3-T2 (сертификат Apple), S2-T9/S3-T7 (CachyOS
   GUI/root), S4-T8 (домен манифеста обновлений).
 
 ### Важные факты окружения
 
-- `export PATH="$HOME/.cargo/bin:$PATH"`; для live —
-  `RUSTUP_HOME`/`CARGO_HOME` **до** переопределения `HOME`.
-- **Проверка kill switch без подписи Apple (research §31):** dev-helper под
-  `sudo target/debug/splitroute-helper --socket /tmp/splitroute-dev.sock
-  --runtime-dir /tmp/splitroute-dev-runtime --sing-box <abs путь к бинарю>`;
-  приложение — `SPLITROUTE_HELPER_SOCKET=/tmp/splitroute-dev.sock
-  pnpm tauri dev`. Под sudo `SUDO_UID` подхватывается, сокет chown'ится на
-  пользователя. Прямой пробой протокола: newline-JSON
-  `{"protocol":2,"id":"…","command":"status"}` в unix-сокет.
-- **`pkill -x sing-box` НЕ убивает ядро** (comm обрезается до 16 символов,
-  `sing-box-aarch64`); правильные варианты: `pkill -x
-  sing-box-aarch64-apple-darwin` или `kill -9 <pid из статуса helper'а>`.
-  Из-за этого первые попытки сценария краша были ложными.
-- **Blocking-код в командах — только через `spawn_blocking`**:
-  `#[tauri::command(async)]` на синхронном теле исполняет его на воркере
-  tokio, где blocking-reqwest паникует в debug (дроп внутреннего runtime,
-  reqwest 0.13 `blocking/wait.rs::enter`). Симптом: промис не разрешается,
-  спиннер вечно. Планировщики уже на `spawn_blocking`.
-- Порядок опций pf строгий: `hosts` (`all`, `from…to…`) — до `user`/
-  `keep state`; существующий тест правил закодировал неверный порядок —
-  текст правил синтаксисом не проверялся (research §31).
-- На этой машине в `state.json` появилась **реальная подписка** пользователя
+- `export PATH="$HOME/.cargo/bin:$PATH"`; для live-проверок
+  `RUSTUP_HOME`/`CARGO_HOME` задавать явно, если `HOME` переопределяется.
+- **`HOME` переопределять для приложения НЕЛЬЗЯ** (research §32): webview
+  WKWebView не поднимается — окно открывается полностью белым (только
+  заголовок), фронтенд при этом исправен. Изолированный стор для live —
+  **`SPLITROUTE_STATE=/tmp/…/state.json`** (env-путь стора, образец —
+  `SPLITROUTE_HELPER_SOCKET`).
+- **Kill switch + автоподключение при мёртвом туннеле блокирует всю машину**
+  (R14, fail-closed) — агентная сессия тоже теряет сеть. Live-проверки
+  делать с kill switch выключенным в изолированном сторе.
+- **Убить ядро из непривилегированной сессии нельзя** (`kill -9` root-процесса
+  — operation not permitted; `pkill -x sing-box` не матчится из-за comm 16).
+  Рабочий способ — команда `stop` в unix-сокет helper'а (newline-JSON
+  `{"protocol":2,"id":"…","command":"stop"}`): для надзора приложения это
+  неотличимо от падения. Проба статуса — `/tmp/sr-live-tools/helper_cmd.py`
+  (создавался заново, удалён после проверки).
+- Live-шаблон: dev-helper под `sudo target/debug/splitroute-helper --socket
+  /tmp/splitroute-dev.sock --runtime-dir /tmp/splitroute-dev-runtime
+  --sing-box <abs путь>` (sudo требует пароль — команда выполняется
+  пользователем); приложение — `SPLITROUTE_HELPER_SOCKET=/tmp/splitroute-dev.sock
+  SPLITROUTE_STATE=… pnpm tauri dev`. Подмена бинаря ядра для сценария
+  исчерпания: копия sing-box в `/tmp/…` + заглушка `exit 1`.
+- На этой машине в `state.json` — **реальная подписка** пользователя
   (1 запись, 2 профиля) — секреты не читать, не логировать, не коммитить.
 - Фоновые `&`-процессы не обслуживают TCP; live-сервер — python-оркестратор
   (поток + `subprocess.Popen(start_new_session=True)`), пишется заново в
@@ -101,69 +104,63 @@ pgrep -x sing-box || echo "ядра нет"
 
 ## Промпт следующей подцели
 
-По умолчанию — **S4-T15: автореконнект ядра** (прямое продолжение находки
-S4-T5c). Альтернативы: QR-импорт (backlog), Windows-WFP-отчёт в документацию.
+По умолчанию — **QR-импорт подписки** (backlog). Альтернативы: Windows-WFP-отчёт
+в документацию (когда пользователь предоставит данные), IPv6-маршрутизация
+(нужно решение PRD).
 
 ```text
 Ты — оркестратор разработки SplitRoute (per-app VPN на Tauri 2 + React 19 + TS + Rust + sing-box).
 Рабочий каталог: /Users/tsybin_d/Documents/Dev/Backend/vpn_client/app
 Перед командами: export PATH="$HOME/.cargo/bin:$PATH"
 
-ЦЕЛЬ: реализовать S4-T15 — автореконнект ядра после падения (до 3 попыток),
-PRD §13 п. 4 / R13 — ЕСЛИ пользователь в этой сессии назвал другую задачу,
-выполняй её. После одной подцели остановись: коммит кода/тестов, отдельный
-коммит документации, обновление NEXT_SESSION.md. Следующие задачи не начинай.
+ЦЕЛЬ: реализовать QR-импорт подписки из backlog (TASKS.md «Backlog») —
+ЕСЛИ пользователь в этой сессии назвал другую задачу, выполняй её. После
+одной подцели остановись: коммит кода/тестов, отдельный коммит
+документации, обновление NEXT_SESSION.md. Следующие задачи не начинай.
 
 ПРОЧИТАЙ СНАЧАЛА
-- TASKS.md: строка S4-T15, S4-T5c, S4-T13 (автоподключение), S4-T6 (переключение).
-- PRD.md §13 п. 4 (R13), §6.1–6.2.
-- docs/research.md §31 (что подтверждено в рантайме, как детектится падение).
-- src/shared/state/appStore.ts (`pollConnection`/`protectedCrash`),
-  src/features/connect/ConnectScreen.tsx (опрос раз в 2 с),
-  src-tauri/src/commands/mod.rs (`connect_inner`, `disconnect_inner`),
-  crates/helper/src/core.rs (status/reap, протокол).
-
-ТЕКУЩЕЕ ПОВЕДЕНИЕ
-- Детект: фронт опрашивает `helper_status` раз в 2 с при активном kill switch;
-  при `state: stopped` на подключении — `CORE_STOPPED` и состояние «error».
-  Правила kill switch остаются до отключения (fail-closed, проверено §31).
-- Автопереподключения нет: пользователь должен нажать кнопку сам.
+- TASKS.md: Backlog, строки S7-T1…S7-T3 (Clash YAML — последний формат),
+  S4-T10 (base64/vless), S6-T* (несколько подписок).
+- PRD.md §6.1 (форматы подписки, User-Agent, HWID), §13 п. 8–9.
+- docs/research.md §30 (Clash YAML), §29 (несколько подписок).
+- src-tauri/src/subscription/ (детект формата, парсеры), команды
+  subscription_add/subscription_fetch в src-tauri/src/commands/mod.rs,
+  UI «Настройки» — карточка подписок.
 
 КОНТРАКТ, КОТОРЫЙ НЕЛЬЗЯ ЛОМАТЬ
 - Helper и протокол не меняются; новые привилегии запрещены.
-- Fail-closed: между попытками правила kill switch остаются (если были);
-  при исчерпании серии — явно сообщить пользователю, правила остаются до
-  ручного отключения (не снимать молча).
-- Общий путь `connect_inner` (без дублирования логики кнопки), счётчик попыток
-  сбрасывается успешным стартом и ручным отключением.
-- Не блокировать окно: серии попыток — фоном (`spawn_blocking`), состояние —
-  событие/статус для UI; строки `ru`/`en` (тест парности ключей).
-- Blocking-код в командах — только `spawn_blocking` (research §31, `a27161b`).
-- Секреты в логи не попадают; без новых зависимостей.
+- Форматы Happ-JSON / base64-vless / Clash YAML продолжают работать;
+  детект расширяется, а не переписывается; User-Agent — дискриминатор.
+- Секреты (URL, HWID, UUID, содержимое QR) в логи и коммиты не попадают.
+- Без новых зависимостей, если декодер QR не потребует иначе (обсудить).
+- Blocking-код в командах — только spawn_blocking (research §31).
 
 ПРОВЕРКИ
 - cargo fmt/clippy/test --workspace; pnpm typecheck/lint/test/build;
   cargo check -p splitroute-helper --target x86_64-pc-windows-msvc.
-- Live-проверка по шаблону research §31: dev-helper под sudo +
-  `SPLITROUTE_HELPER_SOCKET`, реальный профиль; убить ядро (pkill -x
-  sing-box-aarch64-apple-darwin или kill по pid из статуса helper'а) —
-  убедиться: 3 попытки, паузы, успех → подключение восстановлено и счётчик
-  сброшен; при недоступном сервере — серия исчерпана, предупреждение,
-  правила kill switch остаются; ручное отключение сбрасывает серию.
-  После проверки всё остановить, порты/процессы чисты.
+- Live-проверка: реальный QR (пользователь показывает/генерирует), загрузка
+  из UI; изолированный стор через SPLITROUTE_STATE, kill switch выключен
+  (research §32: HOME переопределять нельзя, webview ломается).
 
 ДОКУМЕНТАЦИЯ
-- TASKS.md (S4-T15 → done со ссылкой на коммит), PRD §13 п. 4/R13 (статус
-  автореконнекта), research.md §32 (решение и ограничения), NEXT_SESSION.md.
+- TASKS.md (новая задача → done со ссылкой на коммит), PRD §6.1 (если
+  меняется описание форматов), research.md §33 (решение и ограничения),
+  NEXT_SESSION.md.
 
 ОТЧЁТ
-- Коммиты: feat/test для кода, отдельный docs:. Статусы задач в TASKS.md.
+- Коммиты: feat для кода (тесты вместе с кодом), отдельный docs:.
 ```
 
 ---
 
 ## Заметки
 
+- **S4-T15 (research §32):** детект в Rust (`reconnect.rs`), серия через
+  `connect_inner`; guard серии снимается при любом выходе (регресс-тест);
+  `SPLITROUTE_STATE` для изолированного стора; `HOME` для приложения не
+  переопределять — белый webview; stop ядра — через сокет helper'а, а не
+  `kill` (root); kill switch + автоподключение при мёртвом туннеле = блэкаут
+  машины, live-проверки — с kill switch off.
 - **S4-T5c (research §31):** dev-helper под sudo + `SPLITROUTE_HELPER_SOCKET`;
   `pkill -x sing-box` не матчится (comm 16 символов) — только полное имя
   бинаря или PID; blocking-код в командах — только `spawn_blocking`; порядок
@@ -179,7 +176,7 @@ PRD §13 п. 4 / R13 — ЕСЛИ пользователь в этой сесс�
   guard загрузки — `Mutex<HashSet>` по id; UI-черновики `drafts` живут вне
   стора; событие `subscription-updated` — payload одной подписки.
 - **S4-T13:** подписка на `autoconnect-failed` и порядок «сначала слушатели,
-  потом `initialize()`» в App.tsx.
+  потом `initialize()`» в App.tsx. События reconnect — там же (S4-T15).
 - **S4-T5b (Windows):** адреса TUN задублированы в
   `src-tauri/src/config/mod.rs` и `crates/helper/src/killswitch/rules.rs` —
   менять вместе.
