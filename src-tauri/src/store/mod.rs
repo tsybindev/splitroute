@@ -352,6 +352,11 @@ pub enum StoreError {
 
 /// Путь по умолчанию: `<config>/splitroute/state.json`.
 pub fn default_data_path() -> PathBuf {
+    // Dev-проверки (research §31): изолированный стор без переопределения
+    // `HOME` — оно ломает данные webview, окно открывается пустым.
+    if let Ok(path) = std::env::var("SPLITROUTE_STATE") {
+        return PathBuf::from(path);
+    }
     dirs::config_dir()
         .unwrap_or_else(std::env::temp_dir)
         .join("splitroute")
@@ -664,6 +669,21 @@ mod tests {
             "sr-store-{tag}-{}-{unique}.json",
             std::process::id()
         ))
+    }
+
+    /// `SPLITROUTE_STATE` перенаправляет стор (dev-проверки с изолированным
+    /// состоянием). Переменную ставит и снимает сам тест: гонки с параллельными
+    /// тестами нет — `default_data_path` они не вызывают.
+    #[test]
+    fn state_path_env_override_redirects_store() {
+        let path = temp_path("env-override");
+        // SAFETY: тесты исполняются в разных потоках, но этот env читается
+        // только здесь и в `default_data_path` вне тестов.
+        unsafe { std::env::set_var("SPLITROUTE_STATE", &path) };
+        assert_eq!(default_data_path(), path);
+        unsafe { std::env::remove_var("SPLITROUTE_STATE") };
+        assert_ne!(default_data_path(), path);
+        let _ = std::fs::remove_file(&path);
     }
 
     fn profile(id: &str) -> Profile {

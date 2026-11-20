@@ -18,6 +18,7 @@ use crate::config::{build_config, ConfigError};
 use crate::latency::{self, LatencyProbe, LatencyTracker, PingResult, SwitchPolicy};
 use crate::logging::{LogBuffer, LogEntry};
 use crate::privileged::{HelperClient, HelperClientError, HelperInstaller, InstallerError};
+use crate::reconnect::{ReconnectState, ReconnectStatus};
 use crate::rules;
 use crate::store::{now_secs, AppSettings, Store, StoreError, SubscriptionState, UpdateChannel};
 use crate::subscription::{
@@ -151,6 +152,9 @@ pub struct AppState {
     /// В памяти: после перезапуска расписание снова отсчитывается от
     /// `fetched_at` записи.
     last_fetch_attempt: Mutex<HashMap<String, u64>>,
+    /// Серия автореконнекта (S4-T15): активная сессия и счётчик попыток.
+    /// Логика — в `reconnect.rs`, здесь только состояние под мьютексом.
+    pub(crate) reconnect: Mutex<ReconnectState>,
 }
 
 impl AppState {
@@ -188,6 +192,7 @@ impl AppState {
             startup_error: Mutex::new(None),
             fetching: Mutex::new(HashSet::new()),
             last_fetch_attempt: Mutex::new(HashMap::new()),
+            reconnect: Mutex::new(ReconnectState::default()),
         }
     }
 
@@ -467,6 +472,9 @@ pub(crate) fn connect_inner(state: &AppState) -> Result<HelperStatus, CommandErr
     state.set_traffic_endpoint(traffic);
     // Успешное подключение закрывает ошибку автоподключения при запуске (B2).
     state.set_startup_error(None);
+    // Успешный старт открывает наблюдение и сбрасывает серию автореконнекта:
+    // счётчик попыток сбрасывается успешным стартом (S4-T15, PRD §13 п. 4).
+    state.reconnect_arm();
     state
         .logs
         .push(LogLevel::Info, format!("Подключено: {}", profile.name));
@@ -474,6 +482,9 @@ pub(crate) fn connect_inner(state: &AppState) -> Result<HelperStatus, CommandErr
 }
 
 pub(crate) fn disconnect_inner(state: &AppState) -> Result<HelperStatus, CommandError> {
+    // Наблюдение закрывается до stop: идущая серия автореконнекта должна
+    // увидеть отмену как можно раньше, а правила снимает сам stop.
+    state.reconnect_disarm();
     let status = state.helper.stop()?;
     // После `stop` статистика недоступна и UI показывает нули/«—».
     state.set_traffic_endpoint(None);
@@ -607,6 +618,9 @@ pub(crate) fn switch_profile_inner(
         return Ok(status);
     }
 
+    // Переключение — это ручное отключение старой сессии: серия автореконнекта
+    // не должна вмешаться, пока ядро кратковременно остановлено.
+    state.reconnect_disarm();
     state.helper.stop()?;
     state.set_traffic_endpoint(None);
     state.store.select_profile(id)?;
@@ -838,6 +852,14 @@ pub fn helper_status(state: tauri::State<'_, AppState>) -> Result<HelperStatus, 
 #[tauri::command]
 pub fn autoconnect_status(state: tauri::State<'_, AppState>) -> Option<CommandError> {
     state.startup_error()
+}
+
+/// Состояние серии автореконнекта (S4-T15): текущая попытка и причина, если
+/// серия исчерпана. Окно могло пропустить события — читает статус при старте,
+/// как и ошибку автоподключения.
+#[tauri::command]
+pub fn reconnect_status(state: tauri::State<'_, AppState>) -> ReconnectStatus {
+    state.reconnect_snapshot()
 }
 
 #[tauri::command]
@@ -1174,7 +1196,11 @@ pub async fn update_install(
     );
     let helper = state.helper.clone();
     let logs = &state.logs;
+    let app_state = state.inner();
     updates::install(&app, channel, move || {
+        // Остановка перед установкой — ручное действие: серия автореконнекта
+        // не должна поднять ядро обратно посреди замены бинарника.
+        app_state.reconnect_disarm();
         if let Err(error) = helper.stop() {
             logs.push(
                 LogLevel::Warn,

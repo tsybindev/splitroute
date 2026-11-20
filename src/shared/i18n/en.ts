@@ -68,6 +68,8 @@ export const en: Record<MessageKey, string> = {
   "connect.killSwitch.blocked":
     "The core has stopped. The kill switch is blocking direct traffic — disconnect to remove protection.",
   "connect.killSwitch.disarm": "Disconnect and remove protection",
+  "connect.reconnect.attempt":
+    "Reconnecting: attempt {attempt} of {max} — kill switch rules stay in place",
   "connect.autoSelect": "Location auto-select",
   "connect.autoSelect.on": "Enabled",
   "connect.autoSelect.off": "Disabled",
@@ -279,6 +281,8 @@ export const en: Record<MessageKey, string> = {
     "Could not enable the kill switch. Check the helper privileges.",
   "errors.CORE_STOPPED":
     "The core stopped. The kill switch is blocking direct traffic.",
+  "errors.RECONNECT_FAILED":
+    "The core could not be reconnected automatically (3 attempts). With the kill switch enabled, direct traffic stays blocked — connect or disconnect manually.",
   "errors.PING_TIMEOUT": "The server did not respond in time.",
   "errors.PING_UNREACHABLE": "Could not establish a TCP connection to the server.",
   "errors.PING_DNS": "Could not resolve the server address.",

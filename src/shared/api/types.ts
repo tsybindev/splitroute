@@ -218,6 +218,16 @@ export interface CommandError {
   message: string;
 }
 
+/**
+ * Состояние серии автореконнекта (S4-T15, PRD §13 п. 4): номер выполняющейся
+ * попытки, лимит серии и причина, если попытки исчерпаны.
+ */
+export interface ReconnectStatus {
+  attempt: number;
+  max_attempts: number;
+  exhausted: CommandError | null;
+}
+
 /** Состояние канала обновлений (S4-T8). */
 export interface UpdateStatus {
   current_version: string;

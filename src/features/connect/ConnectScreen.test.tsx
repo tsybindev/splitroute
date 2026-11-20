@@ -12,6 +12,7 @@ const apiMock = vi.hoisted(() => ({
   helperStatus: vi.fn(),
   profilesPing: vi.fn(),
   profileSwitch: vi.fn(),
+  reconnectStatus: vi.fn(),
 }));
 
 const noTraffic = { available: false, upload_total: 0, download_total: 0 };
@@ -25,6 +26,9 @@ const emptyLatency = {
 vi.mock("../../shared/api/client", () => ({
   api: apiMock,
   onConnectionChanged: vi.fn(() => Promise.resolve(() => {})),
+  onAutoconnectFailed: vi.fn(() => Promise.resolve(() => {})),
+  onReconnectProgress: vi.fn(() => Promise.resolve(() => {})),
+  onReconnectFailed: vi.fn(() => Promise.resolve(() => {})),
   toCommandError: (error: unknown) => error,
 }));
 
@@ -331,5 +335,54 @@ describe("ConnectScreen", () => {
     await waitFor(() =>
       expect(useAppStore.getState().selectedProfileId).toBe("profile-2"),
     );
+  });
+
+  it("показывает прогресс серии автореконнекта (S4-T15)", () => {
+    useAppStore.setState({
+      settings: makeSettings(),
+      profiles: [makeProfile()],
+      selectedProfileId: "profile-1",
+      helperStatus: stoppedStatus,
+      connection: "error",
+      reconnect: { attempt: 2, max_attempts: 3, exhausted: null },
+    });
+
+    render(<ConnectScreen />);
+    expect(
+      screen.getByText("Автореконнект: попытка 2 из 3 — правила kill switch сохраняются"),
+    ).toBeInTheDocument();
+  });
+
+  it("успешное подключение снимает ошибку падения ядра и прогресс серии", async () => {
+    const user = userEvent.setup();
+    apiMock.connect.mockResolvedValue(runningStatus);
+    useAppStore.setState({
+      settings: makeSettings(),
+      profiles: [makeProfile()],
+      selectedProfileId: "profile-1",
+      helperStatus: stoppedStatus,
+      connection: "error",
+      actionError: { code: "CORE_STOPPED", message: "" },
+      reconnect: { attempt: 1, max_attempts: 3, exhausted: null },
+    });
+
+    render(<ConnectScreen />);
+    expect(
+      screen.getByText("Ядро остановилось. Kill switch блокирует прямой трафик."),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Подключить" }));
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText(
+          "Ядро остановилось. Kill switch блокирует прямой трафик.",
+        ),
+      ).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByText(/Автореконнект: попытка/),
+    ).not.toBeInTheDocument();
+    expect(useAppStore.getState().reconnect).toBeNull();
   });
 });

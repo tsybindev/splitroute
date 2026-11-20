@@ -103,6 +103,7 @@ export function ConnectScreen() {
   const rules = useAppStore((state) => state.rules);
   const helperStatus = useAppStore((state) => state.helperStatus);
   const helperStatusError = useAppStore((state) => state.helperStatusError);
+  const reconnect = useAppStore((state) => state.reconnect);
   const latency = useAppStore((state) => state.latency);
   const actionError = useAppStore((state) => state.actionError);
   const startupError = useAppStore((state) => state.startupError);
@@ -166,6 +167,17 @@ export function ConnectScreen() {
       <Card title={t("connect.title")}>
         <div className="flex flex-col items-center gap-5 py-4">
           <StatusBadge />
+
+          {/* Серия автореконнекта (S4-T15): Rust переподключается сам, UI
+              показывает попытку, а не молчаливое «подключено». */}
+          {reconnect ? (
+            <Badge tone="warn">
+              {t("connect.reconnect.attempt", {
+                attempt: reconnect.attempt,
+                max: reconnect.max_attempts,
+              })}
+            </Badge>
+          ) : null}
 
           <button
             type="button"

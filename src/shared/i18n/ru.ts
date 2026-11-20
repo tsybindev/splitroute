@@ -66,6 +66,8 @@ export const ru = {
   "connect.killSwitch.blocked":
     "Ядро остановлено. Kill switch блокирует прямой трафик — отключитесь, чтобы снять защиту.",
   "connect.killSwitch.disarm": "Отключить и снять защиту",
+  "connect.reconnect.attempt":
+    "Автореконнект: попытка {attempt} из {max} — правила kill switch сохраняются",
   "connect.autoSelect": "Автовыбор локации",
   "connect.autoSelect.on": "Включён",
   "connect.autoSelect.off": "Не включён",
@@ -277,6 +279,8 @@ export const ru = {
     "Не удалось включить kill switch. Проверьте права helper'а.",
   "errors.CORE_STOPPED":
     "Ядро остановилось. Kill switch блокирует прямой трафик.",
+  "errors.RECONNECT_FAILED":
+    "Ядро не удалось подключить заново автоматически (3 попытки). При включённом kill switch прямой трафик остаётся заблокированным — подключитесь или отключитесь вручную.",
   "errors.PING_TIMEOUT": "Сервер не ответил за отведённое время.",
   "errors.PING_UNREACHABLE": "Не удалось установить TCP-соединение с сервером.",
   "errors.PING_DNS": "Не удалось разрешить адрес сервера.",

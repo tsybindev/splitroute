@@ -5,6 +5,8 @@ import {
   api,
   onAutoconnectFailed,
   onConnectionChanged,
+  onReconnectFailed,
+  onReconnectProgress,
   onSubscriptionUpdated,
   onUpdateProgress,
   toCommandError,
@@ -23,6 +25,7 @@ import type {
   LogLevel,
   Platform,
   Profile,
+  ReconnectStatus,
   RunningApp,
   SubscriptionFetchResponse,
   SubscriptionInput,
@@ -62,6 +65,11 @@ interface AppState {
   helperStatus: HelperStatus | null;
   helperStatusError: CommandError | null;
   connection: ConnectionState;
+  /**
+   * Идущая серия автореконнекта (S4-T15): номер попытки и лимит. `null` —
+   * серии нет (не началась, завершилась успехом или отменена).
+   */
+  reconnect: ReconnectStatus | null;
   /** Ошибка последнего обновления по каждой подписке. */
   fetchErrors: Record<string, CommandError>;
   actionError: CommandError | null;
@@ -109,6 +117,7 @@ interface AppState {
   loadLogs: (level: LogLevel | null) => Promise<void>;
   loadDiagnostics: () => Promise<string>;
   loadStartupError: () => Promise<void>;
+  loadReconnectStatus: () => Promise<void>;
   loadUpdateStatus: () => Promise<void>;
   checkForUpdates: (channel: UpdateChannel, silent?: boolean) => Promise<void>;
   installUpdate: (channel: UpdateChannel) => Promise<void>;
@@ -134,6 +143,7 @@ const initialState = {
   helperStatus: null,
   helperStatusError: null,
   connection: "disconnected" as ConnectionState,
+  reconnect: null as ReconnectStatus | null,
   fetchErrors: {} as Record<string, CommandError>,
   actionError: null,
   startupError: null,
@@ -262,6 +272,9 @@ export const useAppStore = create<AppState>((set, get) => {
       // Автоподключение при старте могло завершиться до появления окна: забираем
       // сохранённую причину сбоя (B2). Более поздний сбой придёт событием.
       await get().loadStartupError();
+      // Серия автореконнекта могла идти или исчерпаться при закрытом окне:
+      // читаем состояние, чтобы не потерять прогресс (аналог B2).
+      await get().loadReconnectStatus();
       // Проверка при запуске — только если она включена и канал настроен.
       // Установка никогда не запускается автоматически.
       const settings = get().settings;
@@ -279,11 +292,37 @@ export const useAppStore = create<AppState>((set, get) => {
     subscribe: async () => {
       const stopConnection = await onConnectionChanged((status) => {
         applyStatus(status);
+        // Ядро снова работает: серия автореконнекта завершена, а с ней
+        // уходят показанные причины падения (CORE_STOPPED / RECONNECT_FAILED).
+        if (status.state === "running") {
+          set((state) => ({
+            reconnect: null,
+            actionError:
+              state.actionError?.code === "CORE_STOPPED" ||
+              state.actionError?.code === "RECONNECT_FAILED"
+                ? null
+                : state.actionError,
+          }));
+        }
         void get().loadLogs(null);
       });
       // Поздний сбой автоподключения: окно не блокируется, показываем причину.
       const stopStartup = await onAutoconnectFailed((error) => {
         set({ startupError: error });
+        void get().loadLogs(null);
+      });
+      // Серия автореконнекта (S4-T15): детект и попытки делает Rust, UI
+      // показывает прогресс и исчерпание серии.
+      const stopReconnectProgress = await onReconnectProgress((status) => {
+        set({ reconnect: status });
+        void get().loadLogs(null);
+      });
+      const stopReconnectFailed = await onReconnectFailed((error) => {
+        set({
+          reconnect: null,
+          connection: "error",
+          actionError: error,
+        });
         void get().loadLogs(null);
       });
       // Фоновое автообновление подписок (M1): локации и расписание обновляются
@@ -295,6 +334,8 @@ export const useAppStore = create<AppState>((set, get) => {
       return () => {
         stopConnection();
         stopStartup();
+        stopReconnectProgress();
+        stopReconnectFailed();
         stopSubscription();
       };
     },
@@ -460,6 +501,15 @@ export const useAppStore = create<AppState>((set, get) => {
       try {
         const status = await api.connect();
         applyStatus(status);
+        // Успешный старт сбрасывает серию автореконнекта (как в Rust).
+        set((state) => ({
+          reconnect: null,
+          actionError:
+            state.actionError?.code === "CORE_STOPPED" ||
+            state.actionError?.code === "RECONNECT_FAILED"
+              ? null
+              : state.actionError,
+        }));
       } catch (error) {
         set({ connection: "error", actionError: toCommandError(error) });
       }
@@ -470,6 +520,8 @@ export const useAppStore = create<AppState>((set, get) => {
         connection: "disconnecting",
         actionError: null,
         startupError: null,
+        // Ручное отключение отменяет серию: бейдж прогресса больше не нужен.
+        reconnect: null,
       });
       try {
         const status = await api.disconnect();
@@ -732,6 +784,26 @@ export const useAppStore = create<AppState>((set, get) => {
         set({ startupError: await api.autoconnectStatus() });
       } catch {
         // Автоподключение не критично: окно и ручное подключение работают.
+      }
+    },
+
+    /// Состояние серии автореконнекта (S4-T15) при открытии окна: попытки и
+    /// исчерпание, случившиеся при закрытом окне, показываются по статусу.
+    loadReconnectStatus: async () => {
+      try {
+        const status = await api.reconnectStatus();
+        if (status.exhausted) {
+          // Серия исчерпалась без окна: показываем причину и ошибку сразу.
+          set({
+            reconnect: null,
+            connection: "error",
+            actionError: status.exhausted,
+          });
+        } else if (status.attempt > 0) {
+          set({ reconnect: status });
+        }
+      } catch {
+        // Статус серии не критичен: окно и ручное подключение работают.
       }
     },
 

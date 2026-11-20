@@ -8,6 +8,7 @@ pub mod config;
 pub mod latency;
 pub mod logging;
 pub mod privileged;
+pub mod reconnect;
 pub mod rules;
 pub mod store;
 pub mod subscription;
@@ -112,6 +113,9 @@ pub fn run() {
             autoconnect::spawn(app.handle().clone());
             // Автообновление подписки по интервалу (M1, PRD §6.1) — тоже в фоне.
             autoupdate::spawn(app.handle().clone());
+            // Автореконнект ядра (S4-T15, PRD §13 п. 4): надзор за активной
+            // сессией живёт в фоне и работает при закрытом окне.
+            reconnect::spawn(app.handle().clone());
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -126,6 +130,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::helper_status,
             commands::autoconnect_status,
+            commands::reconnect_status,
             commands::connect,
             commands::disconnect,
             commands::helper_install,

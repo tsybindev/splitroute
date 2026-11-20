@@ -15,6 +15,7 @@ import type {
   LogEntry,
   LogLevel,
   ProfilesResponse,
+  ReconnectStatus,
   RunningApp,
   SubscriptionFetchResponse,
   SubscriptionInput,
@@ -46,6 +47,8 @@ export const api = {
   helperStatus: () => invoke<HelperStatus>("helper_status"),
   // Автоподключение при старте (B2): причина сбоя или null.
   autoconnectStatus: () => invoke<CommandError | null>("autoconnect_status"),
+  // Серия автореконнекта (S4-T15): попытки могли идти при закрытом окне.
+  reconnectStatus: () => invoke<ReconnectStatus>("reconnect_status"),
   connect: () => invoke<HelperStatus>("connect"),
   disconnect: () => invoke<HelperStatus>("disconnect"),
   helperInstall: () => invoke<void>("helper_install"),
@@ -113,6 +116,24 @@ export function onAutoconnectFailed(
   handler: (error: CommandError) => void,
 ): Promise<UnlistenFn> {
   return listen<CommandError>("autoconnect-failed", (event) =>
+    handler(event.payload),
+  );
+}
+
+/** Серия автореконнекта (S4-T15) пошла: началась попытка N из M. */
+export function onReconnectProgress(
+  handler: (status: ReconnectStatus) => void,
+): Promise<UnlistenFn> {
+  return listen<ReconnectStatus>("reconnect-progress", (event) =>
+    handler(event.payload),
+  );
+}
+
+/** Серия автореконнекта (S4-T15) исчерпана: нужно ручное действие. */
+export function onReconnectFailed(
+  handler: (error: CommandError) => void,
+): Promise<UnlistenFn> {
+  return listen<CommandError>("reconnect-failed", (event) =>
     handler(event.payload),
   );
 }
