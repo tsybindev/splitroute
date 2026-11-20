@@ -18,6 +18,7 @@ use crate::config::{build_config, ConfigError};
 use crate::latency::{self, LatencyProbe, LatencyTracker, PingResult, SwitchPolicy};
 use crate::logging::{LogBuffer, LogEntry};
 use crate::privileged::{HelperClient, HelperClientError, HelperInstaller, InstallerError};
+use crate::qr::{self, QrDecodeResponse};
 use crate::reconnect::{ReconnectState, ReconnectStatus};
 use crate::rules;
 use crate::store::{now_secs, AppSettings, Store, StoreError, SubscriptionState, UpdateChannel};
@@ -115,6 +116,13 @@ pub(crate) const FETCH_IN_PROGRESS: &str = "FETCH_IN_PROGRESS";
 /// Код ошибки: таска фоновой загрузки погибла (паника в `spawn_blocking`).
 /// Случай «не должно случаться» — защитная ветка на месте JoinError.
 pub(crate) const FETCH_ABORTED: &str = "FETCH_ABORTED";
+
+/// Код ошибки QR-импорта: байты не декодируются как base64/изображение либо
+/// на картинке нет ни одного QR-кода.
+pub(crate) const QR_DECODE_FAILED: &str = "QR_DECODE_FAILED";
+
+/// Код ошибки QR-импорта: файл не удалось открыть (нет доступа, пути нет).
+pub(crate) const QR_FILE_UNREADABLE: &str = "QR_FILE_UNREADABLE";
 
 /// Право на одну загрузку подписки. Идентификатор снимается при `Drop`,
 /// поэтому ошибка или паника не оставляют подписку заблокированной навсегда.
@@ -970,6 +978,65 @@ pub fn subscription_delete(
 ) -> Result<ProfilesResponse, CommandError> {
     state.store.delete_subscription(&id)?;
     Ok(profiles_response(&state))
+}
+
+/// QR-импорт подписки: декодирует QR-код из PNG/JPEG-байтов (вебвью передаёт
+/// `btoa` от скриншота или файла) и относит содержимое к формату импорта
+/// (`url`/`happ`/`node_links`). Декодирование — в `spawn_blocking`: rqrr
+/// просматривает весь пиксельный буфер и на больших картинках занимает десятки
+/// миллисекунд. Содержимое QR не логируется: ссылка на подписку — секрет.
+#[tauri::command]
+pub async fn qr_decode_image(data_base64: String) -> Result<QrDecodeResponse, CommandError> {
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let bytes = qr::decode_base64_payload(&data_base64).ok_or_else(|| {
+            CommandError::new(
+                QR_DECODE_FAILED,
+                "Не удалось декодировать данные изображения (base64).",
+            )
+        })?;
+        qr_response(&bytes)
+    })
+    .await
+    .map_err(|error| {
+        CommandError::new(
+            QR_DECODE_FAILED,
+            format!("фоновая задача прервана: {error}"),
+        )
+    })?;
+    result
+}
+
+/// QR-импорт подписки из файла: путь приходит от drag-drop события Tauri.
+/// Чтение файла и декодирование — в `spawn_blocking`, чтобы диск и rqrr не
+/// блокировали окно.
+#[tauri::command]
+pub async fn qr_decode_file(path: String) -> Result<QrDecodeResponse, CommandError> {
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let bytes = std::fs::read(&path).map_err(|error| {
+            CommandError::new(
+                QR_FILE_UNREADABLE,
+                format!("Не удалось открыть файл: {error}"),
+            )
+        })?;
+        qr_response(&bytes)
+    })
+    .await
+    .map_err(|error| {
+        CommandError::new(
+            QR_DECODE_FAILED,
+            format!("фоновая задача прервана: {error}"),
+        )
+    })?;
+    result
+}
+
+/// Общий хвост QR-команд: декодирование QR и роутинг первого подходящего
+/// текста. Ошибка декодера — понятное сообщение под одним кодом.
+fn qr_response(bytes: &[u8]) -> Result<QrDecodeResponse, CommandError> {
+    let texts =
+        qr::decode_image(bytes).map_err(|error| CommandError::new(QR_DECODE_FAILED, error.0))?;
+    let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+    Ok(qr::route_payload(&refs))
 }
 
 #[tauri::command]

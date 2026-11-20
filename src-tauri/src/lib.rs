@@ -8,6 +8,7 @@ pub mod config;
 pub mod latency;
 pub mod logging;
 pub mod privileged;
+pub mod qr;
 pub mod reconnect;
 pub mod rules;
 pub mod store;
@@ -140,6 +141,8 @@ pub fn run() {
             commands::subscription_add,
             commands::subscription_update,
             commands::subscription_delete,
+            commands::qr_decode_image,
+            commands::qr_decode_file,
             commands::profiles_list,
             commands::profiles_ping,
             commands::profile_select,

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, RefreshCw, Save, Trash2 } from "lucide-react";
+import { Plus, QrCode, RefreshCw, Save, Trash2 } from "lucide-react";
 import type { SubscriptionInput, SubscriptionView } from "../../shared/api/types";
 import { t } from "../../shared/i18n";
 import { useAppStore } from "../../shared/state/appStore";
@@ -7,6 +7,7 @@ import { Button } from "../../shared/ui/Button";
 import { Card } from "../../shared/ui/Card";
 import { ErrorBox } from "../../shared/ui/ErrorBox";
 import { Field, inputClass } from "../../shared/ui/Field";
+import { QrImportDialog } from "./QrImportDialog";
 
 function inputOf(entry: SubscriptionView): SubscriptionInput {
   return {
@@ -47,6 +48,7 @@ export function SubscriptionsCard() {
   // не затирает незаконченную правку параметров.
   const [drafts, setDrafts] = useState<Record<string, SubscriptionInput>>({});
   const [adding, setAdding] = useState<SubscriptionInput | null>(null);
+  const [qrOpen, setQrOpen] = useState(false);
 
   const draftOf = (entry: SubscriptionView) =>
     drafts[entry.id] ?? inputOf(entry);
@@ -182,13 +184,28 @@ export function SubscriptionsCard() {
           </div>
         </div>
       ) : (
-        <div className="mt-4">
+        <div className="mt-4 flex gap-2">
           <Button onClick={() => setAdding({ ...emptyInput })}>
             <Plus className="size-4" />
             {t("subscriptions.addTitle")}
           </Button>
+          <Button onClick={() => setQrOpen(true)}>
+            <QrCode className="size-4" />
+            {t("subscriptions.qrImport")}
+          </Button>
         </div>
       )}
+
+      <QrImportDialog
+        open={qrOpen}
+        onClose={() => setQrOpen(false)}
+        onImported={(url) => {
+          // QR дал ссылку: открываем обычную форму добавления с префиллом,
+          // название и остальные параметры пользователь дозаполняет сам.
+          setQrOpen(false);
+          setAdding({ ...emptyInput, url });
+        }}
+      />
 
       {actionError ? (
         <div className="mt-4">

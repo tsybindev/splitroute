@@ -18,6 +18,13 @@ vi.mock("../../shared/api/client", () => ({
   toCommandError: (error: unknown) => error,
 }));
 
+// Tauri API в jsdom недоступен: диалог импорта подписывается на drag-drop окна.
+vi.mock("@tauri-apps/api/webviewWindow", () => ({
+  getCurrentWebviewWindow: () => ({
+    onDragDropEvent: () => Promise.resolve(() => {}),
+  }),
+}));
+
 describe("SubscriptionsCard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -32,6 +39,16 @@ describe("SubscriptionsCard", () => {
     await user.click(screen.getByRole("button", { name: "Новая подписка" }));
     expect(screen.getByLabelText("Название")).toBeInTheDocument();
     expect(screen.getByLabelText(/URL подписки/)).toBeInTheDocument();
+  });
+
+  it("кнопка «Импорт по QR» открывает диалог импорта", async () => {
+    const user = userEvent.setup();
+    render(<SubscriptionsCard />);
+
+    await user.click(screen.getByRole("button", { name: "Импорт по QR" }));
+
+    expect(screen.getByText("Импорт подписки по QR")).toBeInTheDocument();
+    expect(screen.getByText(/Перетащите картинку с QR/)).toBeInTheDocument();
   });
 
   it("добавляет подписку и сразу загружает её локации", async () => {

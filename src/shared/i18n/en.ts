@@ -164,6 +164,12 @@ export const en: Record<MessageKey, string> = {
     "0 disables it. Each subscription has its own schedule; refresh runs in the background while the app is open.",
   "subscriptions.save": "Save",
   "subscriptions.delete": "Delete",
+  "subscriptions.qrImport": "Import via QR",
+  "subscriptions.qrTitle": "Import subscription via QR",
+  "subscriptions.qrHint":
+    "Drag an image with a QR code, pick a file, or paste a screenshot (Cmd+V)",
+  "subscriptions.qrPickFile": "Choose file",
+  "subscriptions.qrDecoding": "Decoding QR…",
   "settings.device.title": "Device",
   "settings.device.hwid": "HWID",
   "settings.device.hwidHint": "16 hex characters, shared by all subscriptions. Changing it may reset the subscription binding.",
@@ -303,5 +309,11 @@ export const en: Record<MessageKey, string> = {
   "errors.UPDATE_INSTALL_FAILED": "Could not install the update.",
   "errors.UPDATE_NOT_AVAILABLE":
     "The update is no longer available. Check again.",
+  "errors.QR_DECODE_FAILED":
+    "Could not read the QR code. Make sure the whole code is in frame and the image is not blurry.",
+  "errors.QR_FILE_UNREADABLE": "Could not read the file as an image.",
+  "errors.QR_NODE_LINKS":
+    "The QR contains node links (vless://). Importing nodes without a subscription is not supported yet.",
+  "errors.QR_NO_SUBSCRIPTION": "The QR does not contain a subscription link.",
   "errors.UNKNOWN": "Unknown error.",
 };

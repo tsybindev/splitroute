@@ -15,6 +15,7 @@ import type {
   LogEntry,
   LogLevel,
   ProfilesResponse,
+  QrDecodeResult,
   ReconnectStatus,
   RunningApp,
   SubscriptionFetchResponse,
@@ -64,6 +65,12 @@ export const api = {
   // Удаление возвращает общий список: выбор локации мог сброситься.
   subscriptionDelete: (id: string) =>
     invoke<ProfilesResponse>("subscription_delete", { id }),
+  // Импорт по QR: картинку декодирует Rust, UI получает только результат.
+  // base64 — содержимое PNG/JPEG без префикса data:...;base64,.
+  qrDecodeImage: (dataBase64: string) =>
+    invoke<QrDecodeResult>("qr_decode_image", { dataBase64 }),
+  qrDecodeFile: (path: string) =>
+    invoke<QrDecodeResult>("qr_decode_file", { path }),
   profilesList: () => invoke<ProfilesResponse>("profiles_list"),
   // Задержки меряет Rust: TCP-connect с таймаутом, без ядра и секретов.
   profilesPing: () => invoke<LatencyResponse>("profiles_ping"),

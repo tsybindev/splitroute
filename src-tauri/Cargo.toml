@@ -33,10 +33,20 @@ dirs = "7"
 uuid = { version = "1", features = ["v4"] }
 # Иконки каталога: декодирование PNG и resize. Крейт уже в дереве через
 # tauri/image-png, поэтому новых зависимостей по факту нет.
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# QR-импорт подписки: декодирование QR-кодов со скриншота или файла.
+# rqrr — pure Rust; его опциональная зависимость image допускает 0.25, поэтому
+# версии не дублируются (крейт уже в дереве через tauri/image-png).
+rqrr = "0.11"
 tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-updater = "2"
+
+[dev-dependencies]
+# Генератор QR для тестов декодера. Без фичи `image`: пиксели собираются
+# вручную через `to_colors()`, а PNG кодирует крейт `image` из обычных
+# зависимостей — версии image не пересекаются, граница только PNG-байты.
+qrcode = { version = "0.14", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2"

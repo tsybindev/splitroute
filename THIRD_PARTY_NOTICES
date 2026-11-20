@@ -111,7 +111,7 @@ Copyright Tauri Programme within The Commons Conservancy и участники �
 ## 5. Rust-крейты
 
 Полный список прямых и транзитивных зависимостей со всеми версиями — в
-`Cargo.lock`. Ниже — распределение по лицензиям (снимок на 2026-11-14, 525
+`Cargo.lock`. Ниже — распределение по лицензиям (снимок на 2026-11-20, 536
 пакетов; сборка `cargo metadata --all-features`). Исходники каждого крейта
 доступны на crates.io по имени и версии; лицензия приложена в самом пакете.
 
@@ -122,24 +122,24 @@ Copyright Tauri Programme within The Commons Conservancy и участники �
 `core-foundation`, `core-foundation-sys`, `core-graphics`, `crc32fast`,
 `crossbeam-channel`, `crossbeam-utils`, `crypto-common`, `digest`, `dirs 6/7`,
 `dirs-sys`, `displaydoc`, `dyn-clone`, `embed_plist`, `enumflags2`, `errno`,
-`flate2`, `form_urlencoded`, `futures-*`, `getrandom`, `glob`, `hashbrown`,
-`heck`, `hex`, `html5ever`, `http`, `httparse`, `idna`, `image`, `ipnet`,
-`itoa`, `jni`, `js-sys`, `libc`, `lock_api`, `log`, `markup5ever`, `mime`,
-`num-conv`, `num-traits`, `once_cell`, `openssl-probe`, `parking_lot`,
+`flate2`, `form_urlencoded`, `futures-*`, `g2p*`, `getrandom`, `glob`,
+`hashbrown`, `heck`, `hex`, `html5ever`, `http`, `httparse`, `idna`, `image`,
+`ipnet`, `itoa`, `jni`, `js-sys`, `libc`, `lock_api`, `log`, `markup5ever`,
+`mime`, `num-conv`, `num-traits`, `once_cell`, `openssl-probe`, `parking_lot`,
 `parking_lot_core`, `percent-encoding`, `pkg-config`, `png`, `proc-macro2`,
-`quote`, `ref-cast`, `regex`, `regex-automata`, `regex-syntax`, `reqwest`,
-`rustc_version`, `rustls-pki-types`, `rustls-platform-verifier`, `rustversion`,
-`scopeguard`, `security-framework`, `semver`, `serde`, `serde-untagged`,
-`serde_core`, `serde_derive`, `serde_derive_internals`, `serde_json`,
-`serde_repr`, `serde_spanned`, `serde_with`, `serde_yaml`, `sha2`, `shlex`,
-`signal-hook-registry`, `simdutf8`, `siphasher`, `smallvec`, `socket2`,
-`stable_deref_trait`, `string_cache`, `swift-rs`, `syn`, `system-deps`,
-`tempfile`, `tendril`, `thiserror`, `time`, `tokio`, `tokio-rustls`, `toml`,
-`toml_datetime`, `toml_edit`, `tray-icon`, `typeid`, `typenum`,
-`unicode-segmentation`, `url`, `wasm-bindgen*`, `web-sys`, `web-time`,
-`windows`/`windows-*`/`windows-sys`, `winreg`, `x11`, `zbus`, `filetime`,
-`osakit`, `system-configuration`, `system-configuration-sys`, `tar`,
-`typed-path`, `xattr` и др.
+`qrcode`, `quote`, `ref-cast`, `regex`, `regex-automata`, `regex-syntax`,
+`reqwest`, `rustc_version`, `rustls-pki-types`, `rustls-platform-verifier`,
+`rustversion`, `scopeguard`, `security-framework`, `semver`, `serde`,
+`serde-untagged`, `serde_core`, `serde_derive`, `serde_derive_internals`,
+`serde_json`, `serde_repr`, `serde_spanned`, `serde_with`, `serde_yaml`,
+`sha2`, `shlex`, `signal-hook-registry`, `simdutf8`, `siphasher`, `smallvec`,
+`socket2`, `stable_deref_trait`, `string_cache`, `swift-rs`, `syn`,
+`system-deps`, `tempfile`, `tendril`, `thiserror`, `time`, `tokio`,
+`tokio-rustls`, `toml`, `toml_datetime`, `toml_edit`, `tray-icon`, `typeid`,
+`typenum`, `unicode-segmentation`, `url`, `wasm-bindgen*`, `web-sys`,
+`web-time`, `windows`/`windows-*`/`windows-sys`, `winreg`, `x11`, `zbus`,
+`filetime`, `osakit`, `system-configuration`, `system-configuration-sys`,
+`tar`, `typed-path`, `xattr`, `zune-core`, `zune-jpeg` и др.
 
 ### Apache-2.0 OR MIT (Tauri-семейство)
 
@@ -157,7 +157,7 @@ Copyright Tauri Programme within The Commons Conservancy и участники �
 `cargo_metadata`, `cfb`, `cfg_aliases`, `combine`, `darling*`, `derive_more*`,
 `dlopen2*`, `dom_query`, `embed-resource`, `gdk*`, `gio*`, `glib*`, `gtk*`,
 `h2`, `http-body`, `http-body-util`, `hyper`, `hyper-util`, `ico`, `infer`,
-`javascriptcore-rs*`, `libredox`, `memoffset`, `mio`, `nix`, `objc2`,
+`javascriptcore-rs*`, `libredox`, `lru`, `memoffset`, `mio`, `nix`, `objc2`,
 `objc2-encode`, `objc2-foundation`, `os_info`, `pango*`, `phf*`,
 `precomputed-hash`, `quick-xml`, `redox_syscall`, `redox_users`, `schannel`,
 `schemars*`, `simd-adler32`, `slab`, `smappservice-rs`, `soup3*`, `strsim`,
@@ -177,7 +177,8 @@ Copyright Tauri Programme within The Commons Conservancy и участники �
 
 ### ISC
 
-`libloading`, `rustls-webpki`, `untrusted`; `ring` — Apache-2.0 AND ISC.
+`libloading`, `rustls-webpki`, `untrusted`; `ring` — Apache-2.0 AND ISC;
+`rqrr` — (MIT OR Apache-2.0) AND ISC.
 
 ### Apache-2.0 OR ISC OR MIT
 

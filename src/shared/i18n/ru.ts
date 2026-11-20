@@ -162,6 +162,12 @@ export const ru = {
     "0 — выключено. Расписание у каждой подписки своё; обновление идёт в фоне, пока приложение запущено.",
   "subscriptions.save": "Сохранить",
   "subscriptions.delete": "Удалить",
+  "subscriptions.qrImport": "Импорт по QR",
+  "subscriptions.qrTitle": "Импорт подписки по QR",
+  "subscriptions.qrHint":
+    "Перетащите картинку с QR, выберите файл или вставьте скриншот (Cmd+V)",
+  "subscriptions.qrPickFile": "Выбрать файл",
+  "subscriptions.qrDecoding": "Распознаю QR…",
   "settings.device.title": "Устройство",
   "settings.device.hwid": "HWID",
   "settings.device.hwidHint": "16 hex-символов, один для всех подписок. Смена может сбросить привязку подписки.",
@@ -302,6 +308,12 @@ export const ru = {
   "errors.UPDATE_INSTALL_FAILED": "Не удалось установить обновление.",
   "errors.UPDATE_NOT_AVAILABLE":
     "Обновление больше не доступно. Проверьте ещё раз.",
+  "errors.QR_DECODE_FAILED":
+    "Не удалось прочитать QR-код. Убедитесь, что код целиком попал в кадр и картинка не размыта.",
+  "errors.QR_FILE_UNREADABLE": "Не удалось прочитать файл как изображение.",
+  "errors.QR_NODE_LINKS":
+    "В QR ссылки на узлы (vless://). Импорт узлов без подписки пока не поддерживается.",
+  "errors.QR_NO_SUBSCRIPTION": "В QR нет ссылки на подписку.",
   "errors.UNKNOWN": "Неизвестная ошибка.",
 } as const;
 

@@ -190,6 +190,16 @@ export interface LogEntry {
   message: string;
 }
 
+/** Что лежало в распознанном QR-коде (импорт подписки по картинке). */
+export type QrDecodeKind = "url" | "happ" | "node_links" | "unknown";
+
+/** Результат декодирования QR-кода: Rust отдаёт только ссылку, без сырых данных. */
+export interface QrDecodeResult {
+  kind: QrDecodeKind;
+  /** Ссылка на подписку; null, если QR ссылок на подписку не содержит. */
+  url: string | null;
+}
+
 /** Счётчики трафика сессии в байтах (S4-T4). */
 export interface TrafficStats {
   available: boolean;
