@@ -3,13 +3,15 @@
 //! Golden-файлы обновляются командой:
 //!     UPDATE_GOLDEN=1 cargo test -p splitroute --test config_golden
 //! Без `UPDATE_GOLDEN` тест сравнивает с файлом и падает при расхождении.
+//! Поле stack inbound'а tun-in платформозависимо и при сравнении
+//! нормализуется через `tun_stack()` (gvisor на Linux, mixed иначе).
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde_json::Value;
-use splitroute_lib::config::{build_config, ClashApi};
+use splitroute_lib::config::{build_config, tun_stack, ClashApi};
 use splitroute_protocol::{
     AppRule, DnsMode, LogLevel, Platform, Profile, Protocol, Settings, TlsConfig, TlsKind,
     Transport,
@@ -87,6 +89,22 @@ fn check_golden(name: &str, config: &Value) {
             path.display()
         )
     });
+    // Стек TUN платформозависим (tun_stack(): gvisor на Linux, mixed
+    // на macOS/Windows), а golden-файлы записаны на одной платформе.
+    // Нормализуем поле, чтобы фикстура описывала остальную конфигурацию;
+    // сам выбор стека покрывает юнит-тест в src/config/mod.rs.
+    let mut expected: Value = serde_json::from_str(&expected)
+        .unwrap_or_else(|error| panic!("golden {} не парсится: {error}", path.display()));
+    let inbound = expected["inbounds"]
+        .as_array_mut()
+        .and_then(|inbounds| {
+            inbounds
+                .iter_mut()
+                .find(|inbound| inbound["tag"] == "tun-in")
+        })
+        .unwrap_or_else(|| panic!("в golden {} нет inbound tun-in", path.display()));
+    inbound["stack"] = Value::String(tun_stack().to_string());
+    let expected = serde_json::to_string_pretty(&expected).unwrap() + "\n";
     assert_eq!(actual, expected, "golden не совпал: {}", path.display());
 }
 

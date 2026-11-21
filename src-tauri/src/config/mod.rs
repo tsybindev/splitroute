@@ -127,8 +127,9 @@ fn build_dns(settings: &Settings) -> Value {
 /// nftables-redirect и молча умирает в окружениях с docker-бриджами
 /// (CachyOS, 2026-11-21, research §34): TCP из TUN не доходит до outbound,
 /// UDP/DNS при этом работают. gvisor (userspace TCP) работает. На macOS
-/// смешанный стек — норма (live-проверки §31/§32).
-fn tun_stack() -> &'static str {
+/// смешанный стек — норма (live-проверки §31/§32). Публичная, чтобы
+/// golden-тесты нормализовали поле stack при сравнении с фикстурами.
+pub fn tun_stack() -> &'static str {
     if cfg!(target_os = "linux") {
         "gvisor"
     } else {
