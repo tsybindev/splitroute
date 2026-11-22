@@ -935,7 +935,12 @@ pub fn subscriptions_list(state: tauri::State<'_, AppState>) -> Vec<Subscription
 
 /// Добавляет подписку. Загрузку после добавления запускает UI: команда не
 /// должна тянуть сеть под блокировкой стора дольше, чем нужно.
-#[tauri::command]
+///
+/// `rename_all = "snake_case"`: модель данных проекта (и обёртки в
+/// `src/shared/api`) — snake_case, а Tauri 2 по умолчанию ждёт от JS
+/// camelCase (`userAgent`); без атрибута `user_agent` не десериализуется и
+/// invoke отклоняется без кода ошибки (регресс этапа 6, research §35).
+#[tauri::command(rename_all = "snake_case")]
 pub fn subscription_add(
     state: tauri::State<'_, AppState>,
     name: String,
@@ -954,7 +959,8 @@ pub fn subscription_add(
 }
 
 /// Обновляет параметры подписки. Смена URL сбрасывает кэш этой подписки.
-#[tauri::command]
+/// Про `rename_all` — см. комментарий над `subscription_add`.
+#[tauri::command(rename_all = "snake_case")]
 pub fn subscription_update(
     state: tauri::State<'_, AppState>,
     id: String,
