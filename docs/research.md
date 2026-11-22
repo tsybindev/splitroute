@@ -1947,3 +1947,20 @@ copy → `net start`. Пайп службы отвечает протоколо�
   `updateStatus.current_version`.
 - Автопроверки: cargo test --lib 328 (+9), vitest 121 (+5), tsc/lint/clippy
   чисто. Bump 0.1.4, релиз тегом v0.1.4.
+
+#### Грабли релиза v0.1.4: main был красный на Linux CI со времён S10-T1
+
+- **Unix-only тесты helper'а не гонялись нигде**: `#[cfg(all(test, unix))]`
+  в `core.rs` и `#![cfg(unix)]` в `tests/helper.rs` — Windows-машина их не
+  компилирует (локальные прогоны зелёные), Linux-машины нет, CI на Linux
+  был красный с `274fd17` (S10-T1), но замечен только при подготовке
+  v0.1.4 (последний прогон main падал 13 минут, воспринимался как «CI
+  зелёный» по памяти о релизе). Урок: перед тегом смотреть
+  `gh run list --workflow=build.yml --limit 1`, а не память.
+- Три фикса: `ebc1e1c` — `assert_eq!(Value, Cow<str>)` не компилируется
+  (сравнивать через `to_str().unwrap()`); `792c79a` — в `reload_routing`
+  форма payload проверяется раньше «нет сессии» (битый payload — всегда
+  BadRequest, это семантика из теста); `6ea9a71` — интеграционные тесты
+  шлют payload v2 (`{"config":...}`), переведены на v3 (`config` +
+  `rule_set` + `kill_switch`). После фиксов build.yml 7 мин зелёный,
+  release.yml 9m25s, релиз опубликован 12:27 UTC.

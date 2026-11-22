@@ -27,10 +27,17 @@
 - **Автопроверки**: cargo test --lib 328 (+9), vitest 121 (+5), tsc/lint/
   clippy чисто. Live-проверка в GUI (порядок, чекбоксы, автовыбор,
   обновление 0.1.3→0.1.4 из приложения) — за пользователем после релиза.
-- **Релиз v0.1.4 запущен**: main запушен, после зелёного build.yml — тег
-  `v0.1.4` → release.yml (§37, ~9 мин по опыту v0.1.3): NSIS/AppImage с
-  `.sig`, latest.json, публикация. Проверить публикацию и `latest.json`
-  (версия 0.1.4, обе платформы) при следующей сессии, если прогон ещё шёл.
+- **Релиз v0.1.4 опубликован** (12:27 UTC, не draft): 8 ассетов
+  (NSIS/AppImage + `.sig`, deb, rpm, latest.json, beta-latest.json);
+  `latest.json`: `version:0.1.4`, обе платформы, подписи с
+  `version:0.1.4` в trusted comment. Путь к релизу: main был **красный на
+  Linux CI ещё с S10-T1** — unix-only тесты helper'а нигде не гонялись
+  (Windows их не компилирует). Три фикса (`ebc1e1c`, `792c79a`, `6ea9a71`):
+  1) `Value != Cow<str>` в тесте `fill_rule_set_paths`; 2) форма payload
+  проверяется раньше состояния сессии в `reload_routing` (BadRequest при
+  битовом payload независимо от сессии — семантика по тесту); 3)
+  интеграционные тесты переведены на payload v3 (config + rule_set +
+  kill_switch). build.yml зелёный (7 мин), release.yml зелёный (9m25s).
 - **Этап 9–10 закрыты live ранее**: hot-reload per-app правил (Windows PASS),
   Linux-проверка S10-T1 отложена пользователем (сценарий §39/TASKS.md).
 
