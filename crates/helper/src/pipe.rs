@@ -34,7 +34,7 @@ use windows_sys::Win32::{
         GetTokenInformation, TokenUser, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, TOKEN_QUERY,
         TOKEN_USER,
     },
-    Storage::FileSystem::PIPE_ACCESS_DUPLEX,
+    Storage::FileSystem::{FlushFileBuffers, PIPE_ACCESS_DUPLEX},
     System::Pipes::{
         ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, GetNamedPipeClientProcessId,
         PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
@@ -208,6 +208,11 @@ fn handle_connection(
             &mut writer,
             &Response::error("", ErrorCode::Forbidden, "клиент с другим SID"),
         )?;
+        // Ответ уже в буфере ядра: без сброса закрытие handle может выкинуть
+        // незачитанные клиентом данные (та же гонка, что ниже).
+        unsafe {
+            FlushFileBuffers(handle);
+        }
         return Ok(());
     }
 
@@ -218,7 +223,12 @@ fn handle_connection(
     let mut writer = file;
     handler::serve(reader, &mut writer, shared, SHUTDOWN.load(Ordering::SeqCst))?;
 
+    // Ответ записан в буфер ядра, но клиент мог ещё не прочитать его:
+    // DisconnectNamedPipe выбрасывает незачитанные данные, и клиент видит
+    // EOF («пустой ответ»). FlushFileBuffers доталкивает данные до клиента
+    // до отключения — гонка исчезает (проверено live, research §35).
     unsafe {
+        FlushFileBuffers(handle);
         DisconnectNamedPipe(handle);
     }
     Ok(())

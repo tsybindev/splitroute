@@ -224,7 +224,7 @@ fn walk(dir: &Path, report: &mut ScanReport) {
 pub fn collect() -> ScanReport {
     let mut report = collect_from_dirs(&start_menu_dirs());
     for (root, tail) in uninstall_roots() {
-        for app in read_uninstall_key(root, &tail) {
+        for app in read_uninstall_key(root, tail) {
             report.apps.push(app);
         }
     }

@@ -182,50 +182,62 @@ fn close(engine: HANDLE) {
 /// объект нельзя удалить, пока на него ссылаются (WFP Object Management).
 fn delete_objects(engine: HANDLE) -> Result<(), FirewallError> {
     let mut filter_ids = Vec::new();
-    let mut template: FWPM_FILTER_ENUM_TEMPLATE0 = unsafe { std::mem::zeroed() };
-    template.providerKey = &PROVIDER_KEY as *const GUID as *mut GUID;
-    template.enumType = FWP_FILTER_ENUM_FULLY_CONTAINED;
-    template.actionMask = u32::MAX;
 
-    let mut enum_handle: HANDLE = ptr::null_mut();
-    let result = unsafe { FwpmFilterCreateEnumHandle0(engine, &template, &mut enum_handle) };
-    if result != 0 && !is_code(result, FWP_E_NOT_FOUND) {
-        return Err(wfp_error("не удалось перечислить правила WFP", result));
-    }
+    // Перечисление требует конкретный слой: шаблон с GUID_NULL в layerKey
+    // возвращает FWP_E_LAYER_NOT_FOUND (0x80320004) даже при наличии
+    // совпадающих фильтров (проверено live, research §35). Все фильтры
+    // helper'а живут в двух слоях — перечисляем их по очереди; пустой
+    // результат на валидном слое приходит как ОК с нулём фильтров.
+    for layer in [
+        FWPM_LAYER_ALE_AUTH_CONNECT_V4,
+        FWPM_LAYER_ALE_AUTH_CONNECT_V6,
+    ] {
+        let mut template: FWPM_FILTER_ENUM_TEMPLATE0 = unsafe { std::mem::zeroed() };
+        template.providerKey = &PROVIDER_KEY as *const GUID as *mut GUID;
+        template.layerKey = layer;
+        template.enumType = FWP_FILTER_ENUM_FULLY_CONTAINED;
+        template.actionMask = u32::MAX;
 
-    if result == 0 {
-        let enumerated = (|| -> Result<(), FirewallError> {
-            loop {
-                let mut entries: *mut *mut FWPM_FILTER0 = ptr::null_mut();
-                let mut count: u32 = 0;
-                let result = unsafe {
-                    FwpmFilterEnum0(engine, enum_handle, ENUM_PAGE, &mut entries, &mut count)
-                };
-                if result != 0 {
-                    return Err(wfp_error("не удалось прочитать правила WFP", result));
-                }
-                if count == 0 || entries.is_null() {
-                    if !entries.is_null() {
-                        let mut raw = entries as *mut c_void;
-                        unsafe { FwpmFreeMemory0(&mut raw) };
+        let mut enum_handle: HANDLE = ptr::null_mut();
+        let result = unsafe { FwpmFilterCreateEnumHandle0(engine, &template, &mut enum_handle) };
+        if result != 0 && !is_code(result, FWP_E_NOT_FOUND) {
+            return Err(wfp_error("не удалось перечислить правила WFP", result));
+        }
+
+        if result == 0 {
+            let enumerated = (|| -> Result<(), FirewallError> {
+                loop {
+                    let mut entries: *mut *mut FWPM_FILTER0 = ptr::null_mut();
+                    let mut count: u32 = 0;
+                    let result = unsafe {
+                        FwpmFilterEnum0(engine, enum_handle, ENUM_PAGE, &mut entries, &mut count)
+                    };
+                    if result != 0 {
+                        return Err(wfp_error("не удалось прочитать правила WFP", result));
                     }
-                    return Ok(());
-                }
-                for index in 0..count as usize {
-                    let filter = unsafe { *entries.add(index) };
-                    if !filter.is_null() {
-                        filter_ids.push(unsafe { (*filter).filterId });
+                    if count == 0 || entries.is_null() {
+                        if !entries.is_null() {
+                            let mut raw = entries as *mut c_void;
+                            unsafe { FwpmFreeMemory0(&mut raw) };
+                        }
+                        return Ok(());
+                    }
+                    for index in 0..count as usize {
+                        let filter = unsafe { *entries.add(index) };
+                        if !filter.is_null() {
+                            filter_ids.push(unsafe { (*filter).filterId });
+                        }
+                    }
+                    let mut raw = entries as *mut c_void;
+                    unsafe { FwpmFreeMemory0(&mut raw) };
+                    if count < ENUM_PAGE {
+                        return Ok(());
                     }
                 }
-                let mut raw = entries as *mut c_void;
-                unsafe { FwpmFreeMemory0(&mut raw) };
-                if count < ENUM_PAGE {
-                    return Ok(());
-                }
-            }
-        })();
-        unsafe { FwpmFilterDestroyEnumHandle0(engine, enum_handle) };
-        enumerated?;
+            })();
+            unsafe { FwpmFilterDestroyEnumHandle0(engine, enum_handle) };
+            enumerated?;
+        }
     }
 
     for id in filter_ids {
