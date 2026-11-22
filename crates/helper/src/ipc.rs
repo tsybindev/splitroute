@@ -143,11 +143,12 @@ pub fn write_response<W: Write>(mut writer: W, response: &Response) -> io::Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+    use splitroute_protocol::StartPayload;
     use std::io::Cursor;
 
     #[test]
     fn valid_request_is_decoded() {
-        let raw = br#"{"protocol":3,"id":"abc","command":"status"}"#;
+        let raw = br#"{"protocol":4,"id":"abc","command":"status"}"#;
         let request = decode(raw).unwrap();
         assert_eq!(request.id, "abc");
         assert_eq!(request.command, Command::Status);
@@ -156,7 +157,7 @@ mod tests {
 
     #[test]
     fn start_payload_is_preserved() {
-        let raw = br#"{"protocol":3,"id":"abc","command":"start","payload":{"config":{"log":{}},"rule_set":{"version":2,"rules":[]}}}"#;
+        let raw = br#"{"protocol":4,"id":"abc","command":"start","payload":{"config":{"log":{}},"rule_set":{"version":2,"rules":[]}}}"#;
         let request = decode(raw).unwrap();
         assert_eq!(request.command, Command::Start);
         assert_eq!(request.payload["config"]["log"], serde_json::json!({}));
@@ -172,7 +173,7 @@ mod tests {
 
     #[test]
     fn unknown_command_is_reported_with_id() {
-        let raw = br#"{"protocol":3,"id":"u1","command":"exec"}"#;
+        let raw = br#"{"protocol":4,"id":"u1","command":"exec"}"#;
         let error = decode(raw).unwrap_err();
         assert_eq!(error.code, ErrorCode::UnknownCommand);
         assert_eq!(error.id, "u1");
@@ -192,10 +193,31 @@ mod tests {
             ("install", Command::Install),
             ("uninstall", Command::Uninstall),
             ("reload_routing", Command::ReloadRouting),
+            ("restart", Command::Restart),
         ] {
-            let raw = format!(r#"{{"protocol":3,"id":"x","command":"{wire}"}}"#);
+            let raw = format!(r#"{{"protocol":4,"id":"x","command":"{wire}"}}"#);
             assert_eq!(decode(raw.as_bytes()).unwrap().command, expected);
         }
+    }
+
+    #[test]
+    fn restart_payload_is_preserved() {
+        let raw = br#"{"protocol":4,"id":"abc","command":"restart","payload":{"config":{"log":{}},"rule_set":{"version":2,"rules":[]},"kill_switch":true}}"#;
+        let request = decode(raw).unwrap();
+        assert_eq!(request.command, Command::Restart);
+        let payload: StartPayload = serde_json::from_value(request.payload).unwrap();
+        assert!(payload.kill_switch);
+        assert_eq!(payload.rule_set["version"], 2);
+    }
+
+    #[test]
+    fn protocol_v3_request_is_rejected() {
+        // v3 helper не знает restart: старое приложение обязано обновиться
+        // вместе с helper'ом, иначе переключение локации вернуло бы окно.
+        let raw = br#"{"protocol":3,"id":"old","command":"restart"}"#;
+        let error = decode(raw).unwrap_err();
+        assert_eq!(error.code, ErrorCode::ProtocolMismatch);
+        assert_eq!(error.id, "old");
     }
 
     #[test]

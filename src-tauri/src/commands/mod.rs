@@ -421,8 +421,29 @@ fn sanitize_profile(mut profile: Profile) -> Profile {
     profile
 }
 
+/// Режим запуска ядра: свежий старт или рестарт активной сессии (S12-T1).
+///
+/// `Restart` идёт через команду `restart` helper'а: старое ядро останавливается
+/// без снятия правил kill switch, поэтому переключение локации не открывает
+/// окно fail-open (research §21). Свежий старт (кнопка «Подключить»,
+/// автоподключение, автореконнект) ведёт себя как раньше; при остановленном
+/// ядре обе команды эквивалентны.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CoreStartMode {
+    Fresh,
+    Restart,
+}
+
 /// Собирает конфиг и запускает ядро через helper.
 pub(crate) fn connect_inner(state: &AppState) -> Result<HelperStatus, CommandError> {
+    connect_inner_with(state, CoreStartMode::Fresh)
+}
+
+/// То же с явным режимом запуска ядра.
+pub(crate) fn connect_inner_with(
+    state: &AppState,
+    mode: CoreStartMode,
+) -> Result<HelperStatus, CommandError> {
     let data = state.store.data();
     let selected = data.selected_profile_id.as_deref().ok_or_else(|| {
         CommandError::new(
@@ -486,7 +507,17 @@ pub(crate) fn connect_inner(state: &AppState) -> Result<HelperStatus, CommandErr
             "Kill switch: включён, прямой выход блокируется helper'ом",
         );
     }
-    let status = state.helper.start(config, rule_set, kill_switch)?;
+    let status = match mode {
+        CoreStartMode::Fresh => state.helper.start(config, rule_set, kill_switch)?,
+        CoreStartMode::Restart => match state.helper.restart(config, rule_set, kill_switch) {
+            Ok(status) => status,
+            Err(error) => {
+                // Рестарт упал: туннеля больше нет, статистика недоступна.
+                state.set_traffic_endpoint(None);
+                return Err(error.into());
+            }
+        },
+    };
     // Новая сессия начинается с нулевых счётчиков: порт и secret новые.
     state.set_traffic_endpoint(traffic);
     // Успешное подключение закрывает ошибку автоподключения при запуске (B2).
@@ -605,10 +636,12 @@ pub(crate) fn profiles_ping_inner(state: &AppState) -> LatencyResponse {
 
 /// Переключает локацию с переподключением (PRD §6.1).
 ///
-/// Подключённое состояние меняется только через `stop` → выбор → `start` с тем
-/// же флагом kill switch. Если новый старт не удался, приложение возвращается к
-/// прежней локации: сеть не остаётся без туннеля, а правила kill switch — в
-/// неожиданном состоянии.
+/// Подключённое состояние меняется командой `restart` helper'а (S12-T1): старое
+/// ядро останавливается без снятия правил kill switch, новое стартует с тем же
+/// флагом — окно fail-open между stop и start не открывается (research §21).
+/// Если рестарт не удался, приложение возвращается к прежней локации свежим
+/// стартом: helper после неудачного рестарта оставляет состояние как после
+/// `stop`, так что откат ничем не отличается от прежнего пути.
 pub(crate) fn switch_profile_inner(
     state: &AppState,
     id: &str,
@@ -639,15 +672,14 @@ pub(crate) fn switch_profile_inner(
         return Ok(status);
     }
 
-    // Переключение — это ручное отключение старой сессии: серия автореконнекта
-    // не должна вмешаться, пока ядро кратковременно остановлено.
+    // Переключение — ручное действие: серия автореконнекта не должна
+    // вмешаться, пока ядро заменяется.
     state.reconnect_disarm();
-    state.helper.stop()?;
     state.set_traffic_endpoint(None);
     state.store.select_profile(id)?;
     state.reset_latency();
 
-    match connect_inner(state) {
+    match connect_inner_with(state, CoreStartMode::Restart) {
         Ok(status) => {
             if let Some(previous_name) = previous_name {
                 state.logs.push(
@@ -1075,9 +1107,10 @@ pub fn profile_select(
 /// Включает/выключает локации одной подписки (одну или массово).
 ///
 /// Выключение выбранной локации при активной сессии переносит выбор на
-/// первую включённую (fallback в сторе) и переподключает туннель — как
-/// ручная смена локации. Отката к выключенной локации нет: если новый старт
-/// не удался, туннель остаётся остановленным, ошибка видна в UI.
+/// первую включённую (fallback в сторе) и рестартует туннель без снятия
+/// правил kill switch (S12-T1) — как ручная смена локации. Отката к
+/// выключенной локации нет: если рестарт не удался, туннель остаётся
+/// остановленным, ошибка видна в UI.
 ///
 /// `rename_all = "snake_case"`: фронту отправляет `subscription_id`/`profile_ids`
 /// (см. комментарий к `subscription_add` — без атрибута invoke отклоняется).
@@ -1088,12 +1121,7 @@ pub fn profiles_set_enabled(
     profile_ids: Vec<String>,
     enabled: bool,
 ) -> Result<ProfilesResponse, CommandError> {
-    profiles_set_enabled_inner(
-        &state,
-        &subscription_id,
-        &profile_ids,
-        enabled,
-    )
+    profiles_set_enabled_inner(&state, &subscription_id, &profile_ids, enabled)
 }
 
 pub(crate) fn profiles_set_enabled_inner(
@@ -1114,10 +1142,9 @@ pub(crate) fn profiles_set_enabled_inner(
         .map(|status| status.state == CoreState::Running)
         .unwrap_or(false);
     if running && selection_moved {
-        // Ручная смена локации: серия автореконнекта не должна вмешаться,
-        // пока ядро кратковременно остановлено.
+        // Ручное действие: серия автореконнекта не должна вмешаться, пока
+        // ядро заменяется. Рестарт (S12-T1) не снимает правила kill switch.
         state.reconnect_disarm();
-        state.helper.stop()?;
         state.set_traffic_endpoint(None);
         state.reset_latency();
         let data = state.store.data();
@@ -1131,7 +1158,7 @@ pub(crate) fn profiles_set_enabled_inner(
             LogLevel::Info,
             format!("Выбранная локация выключена — переключение на {target}"),
         );
-        if let Err(error) = connect_inner(state) {
+        if let Err(error) = connect_inner_with(state, CoreStartMode::Restart) {
             state.logs.push(
                 LogLevel::Warn,
                 format!("Не удалось подключиться к {target}: туннель остановлен"),
@@ -1930,7 +1957,8 @@ mod tests {
         fetch_sub(&state).unwrap();
         let entry = state.store.data().subscriptions[0].clone();
         let disabled_id = entry.profiles[0].id.clone();
-        profiles_set_enabled_inner(&state, &entry.id, &[disabled_id.clone()], false).unwrap();
+        profiles_set_enabled_inner(&state, &entry.id, std::slice::from_ref(&disabled_id), false)
+            .unwrap();
 
         let response = profiles_ping_inner(&state);
         assert_eq!(
@@ -1966,22 +1994,21 @@ mod tests {
         let entry = state.store.data().subscriptions[0].clone();
         let selected = state.store.data().selected_profile_id.clone().unwrap();
         let response =
-            profiles_set_enabled_inner(&state, &entry.id, &[selected.clone()], false).unwrap();
+            profiles_set_enabled_inner(&state, &entry.id, std::slice::from_ref(&selected), false)
+                .unwrap();
 
         let new_selected = state.store.data().selected_profile_id.clone().unwrap();
-        assert_ne!(
-            new_selected, selected,
-            "выбор перешёл на первую включённую"
-        );
+        assert_ne!(new_selected, selected, "выбор перешёл на первую включённую");
         assert_eq!(
             response.selected_profile_id.as_deref(),
             Some(new_selected.as_str())
         );
-        assert_eq!(helper.stop_calls(), 1);
+        assert_eq!(helper.stop_calls(), 0);
+        assert_eq!(helper.start_calls(), 1);
         assert_eq!(
-            helper.start_calls(),
-            2,
-            "туннель переподключён на новую локацию"
+            helper.restart_calls(),
+            1,
+            "туннель перезапущен на новую локацию без снятия правил (S12-T1)"
         );
         let fallback_server = state
             .store
@@ -1995,6 +2022,53 @@ mod tests {
             fallback_server,
             "конфиг собран из fallback-локации"
         );
+    }
+
+    /// Неудачный рестарт при выключении выбранной локации: отката к выключенной
+    /// нет (решение пользователя, Этап 11) — туннель остановлен, ошибка в UI.
+    #[test]
+    fn disabling_selected_profile_failure_leaves_tunnel_stopped() {
+        let helper = Arc::new(MockHelperClient::new());
+        let state = AppState::new(
+            helper.clone(),
+            Arc::new(UnsupportedInstaller),
+            Store::load(temp_path("disable-fail")),
+            Arc::new(MockFetcher {
+                body: Ok(fixture()),
+            }),
+        );
+        fetch_sub(&state).unwrap();
+        connect_inner(&state).unwrap();
+        assert_eq!(helper.start_calls(), 1);
+
+        let entry = state.store.data().subscriptions[0].clone();
+        let selected = state.store.data().selected_profile_id.clone().unwrap();
+        helper.set_restart_failure(Some(HelperClientError::Helper {
+            code: ErrorCode::StartFailed,
+            message: "синтетическая ошибка рестарта".to_string(),
+        }));
+
+        let error =
+            profiles_set_enabled_inner(&state, &entry.id, std::slice::from_ref(&selected), false)
+                .unwrap_err();
+        assert_eq!(error.code, "HELPER_ERROR");
+        assert_eq!(helper.restart_calls(), 1);
+        assert_eq!(helper.stop_calls(), 0);
+        assert_eq!(
+            helper.status().unwrap().state,
+            CoreState::Stopped,
+            "туннель остановлен без отката"
+        );
+        assert_ne!(
+            state.store.data().selected_profile_id.as_deref(),
+            Some(selected.as_str()),
+            "выбор перенесён на включённую локацию"
+        );
+        assert!(state
+            .logs
+            .list(Some(LogLevel::Warn), 20)
+            .iter()
+            .any(|entry| entry.message.contains("туннель остановлен")));
     }
 
     /// Выключение локации при остановленном туннеле не трогает helper:
@@ -2054,8 +2128,13 @@ mod tests {
 
         let status = switch_profile_inner(&state, &target).unwrap();
         assert_eq!(status.state, CoreState::Running);
-        assert_eq!(helper.stop_calls(), 1);
-        assert_eq!(helper.start_calls(), 2);
+        assert_eq!(helper.stop_calls(), 0);
+        assert_eq!(helper.start_calls(), 1);
+        assert_eq!(
+            helper.restart_calls(),
+            1,
+            "автопереключение рестартует ядро без снятия правил (S12-T1)"
+        );
         assert_eq!(
             helper.last_config().unwrap()["outbounds"][0]["server"],
             "203.0.113.20"
@@ -2098,60 +2177,12 @@ mod tests {
         );
     }
 
-    /// Второй `start` (новая локация) падает, восстановление прежней проходит.
-    struct FailSecondStartHelper {
-        inner: MockHelperClient,
-        starts: std::sync::atomic::AtomicU32,
-    }
-
-    impl FailSecondStartHelper {
-        fn new() -> Self {
-            Self {
-                inner: MockHelperClient::new(),
-                starts: std::sync::atomic::AtomicU32::new(0),
-            }
-        }
-    }
-
-    impl HelperClient for FailSecondStartHelper {
-        fn status(&self) -> Result<HelperStatus, HelperClientError> {
-            self.inner.status()
-        }
-
-        fn start(
-            &self,
-            config: serde_json::Value,
-            rule_set: serde_json::Value,
-            kill_switch: bool,
-        ) -> Result<HelperStatus, HelperClientError> {
-            if self
-                .starts
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-                == 1
-            {
-                return Err(HelperClientError::Helper {
-                    code: ErrorCode::StartFailed,
-                    message: "синтетическая ошибка старта".to_string(),
-                });
-            }
-            self.inner.start(config, rule_set, kill_switch)
-        }
-
-        fn reload_routing(
-            &self,
-            rule_set: serde_json::Value,
-        ) -> Result<HelperStatus, HelperClientError> {
-            self.inner.reload_routing(rule_set)
-        }
-
-        fn stop(&self) -> Result<HelperStatus, HelperClientError> {
-            self.inner.stop()
-        }
-    }
-
+    /// Рестарт новой локации падает, восстановление прежней проходит (S12-T1).
+    /// Helper при неудачном restart оставляет состояние как после `stop` —
+    /// это имитирует и инжекция неудачи в mock.
     #[test]
     fn failed_switch_restores_previous_location_and_kill_switch() {
-        let helper = Arc::new(FailSecondStartHelper::new());
+        let helper = Arc::new(MockHelperClient::new());
         let state = AppState::new(
             helper.clone(),
             Arc::new(UnsupportedInstaller),
@@ -2165,11 +2196,29 @@ mod tests {
         settings.network.kill_switch = true;
         settings_update_inner(&state, settings).unwrap();
         let first = state.store.data().selected_profile_id.clone().unwrap();
+        let first_server = state
+            .store
+            .data()
+            .find_profile(&first)
+            .unwrap()
+            .server
+            .clone();
         let second = state.store.data().all_profiles()[1].id.clone();
         connect_inner(&state).unwrap();
 
+        helper.set_restart_failure(Some(HelperClientError::Helper {
+            code: ErrorCode::StartFailed,
+            message: "синтетическая ошибка рестарта".to_string(),
+        }));
+
         let error = switch_profile_inner(&state, &second).unwrap_err();
         assert_eq!(error.code, "HELPER_ERROR");
+        assert_eq!(helper.restart_calls(), 1);
+        assert_eq!(
+            helper.stop_calls(),
+            0,
+            "переключение не останавливает туннель само"
+        );
         assert_eq!(
             state.store.data().selected_profile_id.as_deref(),
             Some(first.as_str()),
@@ -2180,8 +2229,13 @@ mod tests {
             CoreState::Running,
             "прежняя локация восстановлена, сеть не осталась без туннеля"
         );
+        assert_eq!(
+            helper.last_config().unwrap()["outbounds"][0]["server"],
+            first_server,
+            "откат поднял прежнюю локацию свежим стартом"
+        );
         assert!(
-            helper.inner.last_kill_switch(),
+            helper.last_kill_switch(),
             "kill switch не снимается при переключении"
         );
         assert!(state

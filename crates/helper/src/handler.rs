@@ -89,6 +89,24 @@ pub fn dispatch(
             let mut core = lock(shared);
             Ok(status_payload(core.stop()))
         }
+        Command::Restart => {
+            let mut core = lock(shared);
+            if shutting_down {
+                return Response::error(id, ErrorCode::Internal, "helper завершается");
+            }
+            let restart: StartPayload = match serde_json::from_value(request.payload.clone()) {
+                Ok(restart) => restart,
+                Err(_) => {
+                    return Response::error(
+                        id,
+                        ErrorCode::BadRequest,
+                        "payload: ожидались config, rule_set и kill_switch",
+                    );
+                }
+            };
+            core.restart(restart.config, restart.rule_set, restart.kill_switch)
+                .map(status_payload)
+        }
         // Установка и удаление сервиса требуют прав администратора и делаются
         // установщиком; по сокету/пайпу эти команды запрещены.
         Command::Install | Command::Uninstall => Err(HelperError::new(

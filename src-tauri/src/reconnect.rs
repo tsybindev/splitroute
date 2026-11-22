@@ -405,6 +405,15 @@ mod tests {
             self.inner.reload_routing(rule_set)
         }
 
+        fn restart(
+            &self,
+            config: serde_json::Value,
+            rule_set: serde_json::Value,
+            kill_switch: bool,
+        ) -> Result<HelperStatus, HelperClientError> {
+            self.inner.restart(config, rule_set, kill_switch)
+        }
+
         fn stop(&self) -> Result<HelperStatus, HelperClientError> {
             self.inner.stop()
         }
@@ -448,6 +457,19 @@ mod tests {
             rule_set: serde_json::Value,
         ) -> Result<HelperStatus, HelperClientError> {
             self.inner.reload_routing(rule_set)
+        }
+
+        fn restart(
+            &self,
+            _config: serde_json::Value,
+            _rule_set: serde_json::Value,
+            _kill_switch: bool,
+        ) -> Result<HelperStatus, HelperClientError> {
+            self.starts.fetch_add(1, Ordering::SeqCst);
+            Err(HelperClientError::Helper {
+                code: ErrorCode::StartFailed,
+                message: "синтетическая ошибка старта".to_string(),
+            })
         }
 
         fn stop(&self) -> Result<HelperStatus, HelperClientError> {

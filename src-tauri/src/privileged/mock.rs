@@ -13,6 +13,7 @@ struct MockState {
     started_at: Option<u64>,
     start_calls: u32,
     reload_calls: u32,
+    restart_calls: u32,
     stop_calls: u32,
     last_config: Option<Value>,
     last_rule_set: Option<Value>,
@@ -24,6 +25,8 @@ struct MockState {
 #[derive(Debug, Default)]
 pub struct MockHelperClient {
     state: Mutex<MockState>,
+    /// Неудача, которую вернёт следующий `restart` (инжекция для тестов отката).
+    restart_failure: Mutex<Option<HelperClientError>>,
 }
 
 impl MockHelperClient {
@@ -34,6 +37,16 @@ impl MockHelperClient {
     /// Сколько раз вызывали `start` (для тестов).
     pub fn start_calls(&self) -> u32 {
         self.state.lock().unwrap().start_calls
+    }
+
+    /// Сколько раз вызывали `restart` (для тестов).
+    pub fn restart_calls(&self) -> u32 {
+        self.state.lock().unwrap().restart_calls
+    }
+
+    /// Назначает ошибку следующему вызову `restart` (для тестов).
+    pub fn set_restart_failure(&self, failure: Option<HelperClientError>) {
+        *self.restart_failure.lock().unwrap() = failure;
     }
 
     /// Сколько раз вызывали `stop` (для тестов).
@@ -113,6 +126,33 @@ impl HelperClient for MockHelperClient {
         }
         state.reload_calls += 1;
         state.last_rule_set = Some(rule_set);
+        Ok(Self::status_of(&state))
+    }
+
+    fn restart(
+        &self,
+        config: Value,
+        rule_set: Value,
+        kill_switch: bool,
+    ) -> Result<HelperStatus, HelperClientError> {
+        let mut state = self.state.lock().unwrap();
+        // Счётчик считает попытки, включая инжектированную неудачу.
+        state.restart_calls += 1;
+        // Инжектированная неудача имитирует helper: рестарт упал — туннель
+        // остановлен, правила сняты (S12-T1).
+        if let Some(error) = self.restart_failure.lock().unwrap().take() {
+            state.running = false;
+            state.started_at = None;
+            state.kill_switch = false;
+            return Err(error);
+        }
+        state.last_config = Some(config);
+        state.last_rule_set = Some(rule_set);
+        state.kill_switch = kill_switch;
+        // Рестарт живой сессии сохраняет состояние «Подключено», но ядро —
+        // новый процесс: сессия статистики начинается заново.
+        state.started_at = Some(crate::store::now_secs());
+        state.running = true;
         Ok(Self::status_of(&state))
     }
 
@@ -199,5 +239,42 @@ mod tests {
 
         client.stop().unwrap();
         assert!(client.reload_routing(Value::Null).is_err());
+    }
+
+    #[test]
+    fn restart_keeps_running_session_without_stop() {
+        let client = MockHelperClient::new();
+        client.start(Value::Null, Value::Null, true).unwrap();
+
+        let status = client
+            .restart(serde_json::json!({ "log": {} }), Value::Null, true)
+            .unwrap();
+        assert_eq!(status.state, CoreState::Running);
+        assert!(status.kill_switch.enabled);
+        assert_eq!(client.restart_calls(), 1);
+        assert_eq!(client.stop_calls(), 0, "restart не останавливает сессию");
+    }
+
+    #[test]
+    fn injected_restart_failure_stops_session() {
+        // Имитация helper'а: неудачный рестарт останавливает туннель и снимает
+        // правила (S12-T1) — на этот конец в приложении есть откат.
+        let client = MockHelperClient::new();
+        client.start(Value::Null, Value::Null, true).unwrap();
+        client.set_restart_failure(Some(HelperClientError::Helper {
+            code: ErrorCode::StartFailed,
+            message: "не удалось запустить ядро".to_string(),
+        }));
+
+        let error = client.restart(Value::Null, Value::Null, true).unwrap_err();
+        assert!(matches!(
+            error,
+            HelperClientError::Helper {
+                code: ErrorCode::StartFailed,
+                ..
+            }
+        ));
+        assert_eq!(client.status().unwrap().state, CoreState::Stopped);
+        assert!(!client.status().unwrap().kill_switch.enabled);
     }
 }

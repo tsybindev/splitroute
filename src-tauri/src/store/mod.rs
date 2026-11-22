@@ -212,10 +212,12 @@ pub fn default_user_agent() -> String {
 /// Пользовательский UA (любая другая строка) — не трогаем.
 fn is_app_managed_user_agent(value: &str) -> bool {
     match value.strip_prefix("SplitRoute/") {
-        Some(rest) => !rest.is_empty()
-            && rest
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || byte == b'.'),
+        Some(rest) => {
+            !rest.is_empty()
+                && rest
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || byte == b'.')
+        }
         None => value.is_empty(),
     }
 }
@@ -624,10 +626,7 @@ impl Store {
             // Выключенные локации, пропавшие из нового ответа провайдера,
             // больше не нужны: идентификатор стабильный, вернувшийся профиль
             // снова будет выключен.
-            let new_ids: Vec<&str> = profiles
-                .iter()
-                .map(|profile| profile.id.as_str())
-                .collect();
+            let new_ids: Vec<&str> = profiles.iter().map(|profile| profile.id.as_str()).collect();
             {
                 let entry = &mut data.subscriptions[index];
                 entry
@@ -705,7 +704,9 @@ impl Store {
                     }
                 }
                 if enabled {
-                    entry.disabled_profiles.retain(|id| !profile_ids.contains(id));
+                    entry
+                        .disabled_profiles
+                        .retain(|id| !profile_ids.contains(id));
                 } else {
                     for id in profile_ids {
                         if !entry.disabled_profiles.contains(id) {
@@ -721,7 +722,8 @@ impl Store {
                 None => data.first_enabled_profile().is_some(),
             };
             if selection_invalid {
-                data.selected_profile_id = data.subscriptions
+                data.selected_profile_id = data
+                    .subscriptions
                     .iter()
                     .find(|subscription| subscription.id == subscription_id)
                     .and_then(|subscription| {
@@ -1194,11 +1196,7 @@ mod tests {
             .unwrap();
         assert_eq!(entry.name, "Главная", "имя обрезается");
         assert_eq!(entry.url, "url");
-        assert_eq!(
-            entry.user_agent,
-            default_user_agent(),
-            "пустой UA — свой"
-        );
+        assert_eq!(entry.user_agent, default_user_agent(), "пустой UA — свой");
         assert_eq!(entry.auto_update_hours, 0);
         assert!(entry.profiles.is_empty());
         assert_eq!(entry.fetched_at, None);
@@ -1360,7 +1358,10 @@ mod tests {
             .set_profiles_enabled(&entry.id, &["p2".to_string(), "p3".to_string()], false)
             .unwrap();
         let disabled = &store.data().subscriptions[0].disabled_profiles;
-        assert_eq!(disabled, &["p1".to_string(), "p2".to_string(), "p3".to_string()]);
+        assert_eq!(
+            disabled,
+            &["p1".to_string(), "p2".to_string(), "p3".to_string()]
+        );
         assert!(store.data().enabled_profiles().is_empty());
 
         let reloaded = Store::load(&path);
@@ -1481,20 +1482,12 @@ mod tests {
             .unwrap();
 
         store
-            .set_profiles_enabled(
-                &entry.id,
-                &["p1".to_string(), "p2".to_string()],
-                false,
-            )
+            .set_profiles_enabled(&entry.id, &["p1".to_string(), "p2".to_string()], false)
             .unwrap();
         assert_eq!(store.data().selected_profile_id, None, "включённых нет");
 
         store
-            .set_profiles_enabled(
-                &entry.id,
-                &["p1".to_string(), "p2".to_string()],
-                true,
-            )
+            .set_profiles_enabled(&entry.id, &["p1".to_string(), "p2".to_string()], true)
             .unwrap();
         assert_eq!(
             store.data().selected_profile_id.as_deref(),

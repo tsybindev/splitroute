@@ -492,3 +492,121 @@ fn sigterm_stops_core_and_removes_socket() {
         "сокет удаляется при завершении helper'а"
     );
 }
+
+#[test]
+fn restart_swaps_core_without_stopping_session() {
+    let dir = TempDir::new("restart");
+    let core = script(&dir.path, "sing-box", OK_CORE);
+    let helper = HelperProcess::spawn(&core, &[]);
+
+    let started = helper.call(&request(
+        "start",
+        "start",
+        json!({
+            "config": { "log": { "level": "info" } },
+            "rule_set": { "version": 2, "rules": [] },
+            "kill_switch": false,
+        }),
+    ));
+    assert_eq!(started["ok"], true, "{started}");
+    let old_pid = started["payload"]["pid"].as_u64().unwrap() as u32;
+
+    // Протокол v4: restart несёт тот же payload, что и start.
+    let restarted = helper.call(&request(
+        "restart",
+        "restart",
+        json!({
+            "config": { "log": { "level": "debug" } },
+            "rule_set": { "version": 2, "rules": [] },
+            "kill_switch": false,
+        }),
+    ));
+    assert_eq!(restarted["ok"], true, "{restarted}");
+    assert_eq!(restarted["payload"]["state"], "running");
+    let new_pid = restarted["payload"]["pid"].as_u64().unwrap() as u32;
+    assert_ne!(new_pid, old_pid, "ядро перезапущено с новым процессом");
+
+    wait_until(|| !process_alive(old_pid));
+    let config_path = helper.runtime().join("config.json");
+    let written: Value = serde_json::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
+    assert_eq!(written["log"]["level"], "debug", "конфиг заменён");
+
+    let stopped = helper.call(&request("stop", "stop", Value::Null));
+    assert_eq!(stopped["ok"], true);
+    wait_until(|| !process_alive(new_pid));
+}
+
+#[test]
+fn restart_without_session_behaves_like_start() {
+    let dir = TempDir::new("restart-idle");
+    let core = script(&dir.path, "sing-box", OK_CORE);
+    let helper = HelperProcess::spawn(&core, &[]);
+
+    let restarted = helper.call(&request(
+        "restart",
+        "restart",
+        json!({
+            "config": { "log": { "level": "info" } },
+            "rule_set": { "version": 2, "rules": [] },
+            "kill_switch": false,
+        }),
+    ));
+    assert_eq!(restarted["ok"], true, "{restarted}");
+    assert_eq!(restarted["payload"]["state"], "running");
+
+    let stopped = helper.call(&request("stop", "stop", Value::Null));
+    assert_eq!(stopped["ok"], true);
+}
+
+#[test]
+fn restart_with_failing_core_reports_error_and_helper_stays_usable() {
+    let dir = TempDir::new("restart-fail");
+    let core = script(&dir.path, "sing-box", OK_CORE);
+    let helper = HelperProcess::spawn(&core, &[]);
+
+    let started = helper.call(&request(
+        "start",
+        "start",
+        json!({
+            "config": { "log": { "level": "info" } },
+            "rule_set": { "version": 2, "rules": [] },
+            "kill_switch": false,
+        }),
+    ));
+    assert_eq!(started["ok"], true, "{started}");
+
+    // Ломаем «ядро»: проверка конфига падает на рестарте.
+    fs::write(&core, FAILING_CORE).unwrap();
+
+    let failed = helper.call(&request(
+        "restart",
+        "restart",
+        json!({
+            "config": { "log": { "level": "debug" } },
+            "rule_set": { "version": 2, "rules": [] },
+            "kill_switch": false,
+        }),
+    ));
+    assert_eq!(failed["ok"], false, "{failed}");
+    assert_eq!(failed["error"]["code"], "CONFIG_INVALID");
+
+    let status = helper.call(&status_request("status"));
+    assert_eq!(status["payload"]["state"], "stopped");
+
+    // Возвращаем ядро: свежий start проходит.
+    fs::write(&core, OK_CORE).unwrap();
+    let again = helper.call(&request(
+        "again",
+        "start",
+        json!({
+            "config": { "log": { "level": "info" } },
+            "rule_set": { "version": 2, "rules": [] },
+            "kill_switch": false,
+        }),
+    ));
+    assert_eq!(again["ok"], true, "{again}");
+    assert_eq!(again["payload"]["state"], "running");
+
+    let stopped = helper.call(&request("stop", "stop", Value::Null));
+    assert_eq!(stopped["ok"], true);
+}

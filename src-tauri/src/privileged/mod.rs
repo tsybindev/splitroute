@@ -74,5 +74,14 @@ pub trait HelperClient: Send + Sync {
     /// Правки per-app правил к активной сессии: helper заменяет файл rule-set,
     /// ядро перечитывает его без рестарта (S10-T1).
     fn reload_routing(&self, rule_set: Value) -> Result<HelperStatus, HelperClientError>;
+    /// Рестарт ядра с новым конфигом без снятия правил kill switch (S12-T1):
+    /// переключение локации не открывает окно fail-open. Payload тот же, что
+    /// у `start`; при неудаче helper оставляет состояние как после `stop`.
+    fn restart(
+        &self,
+        config: Value,
+        rule_set: Value,
+        kill_switch: bool,
+    ) -> Result<HelperStatus, HelperClientError>;
     fn stop(&self) -> Result<HelperStatus, HelperClientError>;
 }

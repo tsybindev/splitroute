@@ -19,9 +19,11 @@ pub use model::{
 /// Версия 2 добавила `kill_switch` в `start` и состояние kill switch в `status`.
 /// Версия 3 добавила `rule_set` в `start` и команду `reload_routing`: per-app
 /// правила применяются к работающему ядру через локальный rule-set без
-/// рестарта. Старый helper не знал бы новых полей и команд, поэтому
-/// совместимость не сохраняется.
-pub const PROTOCOL_VERSION: u16 = 3;
+/// рестарта. Версия 4 добавила команду `restart`: рестарт ядра с новым конфигом
+/// без снятия правил kill switch — переключение локации больше не открывает
+/// короткое окно fail-open (research §21/§41). Старый helper не знал бы новых
+/// полей и команд, поэтому совместимость не сохраняется.
+pub const PROTOCOL_VERSION: u16 = 4;
 
 /// Максимальный размер одного сообщения протокола, байт.
 pub const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
@@ -40,6 +42,7 @@ pub enum Command {
     Stop,
     Status,
     ReloadRouting,
+    Restart,
 }
 
 /// Запрос к helper'у.
@@ -84,12 +87,17 @@ impl Request {
     }
 }
 
-/// Payload команды `start`: конфиг ядра, rule-set per-app правил и kill switch.
+/// Payload команд `start` и `restart`: конфиг ядра, rule-set per-app правил и
+/// kill switch.
 ///
 /// `rule_set` — содержимое локального rule-set (`route.rule_set` в конфиге
 /// ссылается на файл по тегу `splitroute-apps`); helper записывает его в
 /// runtime-каталог и подставляет путь в конфиг, чтобы приложение не знало
 /// файловых путей privileged-каталога.
+///
+/// `restart` (протокол 4) использует тот же payload: helper останавливает
+/// работающее ядро, не снимая правил kill switch, подставляет новый конфиг и
+/// стартует ядро заново (S12-T1).
 ///
 /// `kill_switch` передаётся отдельно от конфига: правила ставит helper, а не
 /// sing-box, и они должны оставаться в силе, если ядро упадёт.
@@ -285,6 +293,7 @@ mod tests {
             (Command::Stop, "stop"),
             (Command::Status, "status"),
             (Command::ReloadRouting, "reload_routing"),
+            (Command::Restart, "restart"),
         ] {
             assert_eq!(serde_json::to_value(command).unwrap(), expected);
         }
@@ -459,6 +468,20 @@ mod tests {
             Err(ProtocolError::VersionMismatch {
                 expected: PROTOCOL_VERSION,
                 got: 2
+            })
+        );
+    }
+
+    #[test]
+    fn parse_response_rejects_protocol_v3() {
+        // v3 helper не знает restart: совместимость нельзя сохранять, иначе
+        // переключение локации молча вернуло бы окно fail-open (S12-T1).
+        let raw = r#"{"protocol":3,"id":"x","ok":true,"payload":{}}"#;
+        assert_eq!(
+            parse_response(raw),
+            Err(ProtocolError::VersionMismatch {
+                expected: PROTOCOL_VERSION,
+                got: 3
             })
         );
     }

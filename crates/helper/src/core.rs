@@ -189,6 +189,59 @@ impl HelperCore {
         start_result
     }
 
+    /// Рестарт ядра с новым конфигом без снятия правил kill switch (S12-T1).
+    ///
+    /// Переключение локации при активном kill switch не должно открывать окно
+    /// fail-open: `stop` снимает правила, и между `stop` и следующим `start`
+    /// прямой выход не защищён (research §21). `restart` останавливает старое
+    /// ядро, не трогая правила, подставляет новый конфиг и запускает новое ядро
+    /// — защита действует непрерывно.
+    ///
+    /// Payload проверяется до остановки старого ядра: битый запрос не должен
+    /// убивать работающую сессию. Флаг kill switch синхронизируется
+    /// идемпотентным `sync`: неизменившийся флаг правил не трогает, изменившийся
+    /// применяется до старта нового ядра. Если ядро не работало, restart ведёт
+    /// себя как `start`. При неудаче старта итог совпадает с `stop` +
+    /// неудачным `start`: правила сняты, конфиги удалены, ошибка уходит
+    /// приложению — его откат ставит правила заново свежим `start`.
+    pub fn restart(
+        &mut self,
+        config: Value,
+        rule_set: Value,
+        kill_switch: bool,
+    ) -> Result<HelperStatus, HelperError> {
+        self.reap();
+        if !config.is_object() {
+            return Err(HelperError::new(
+                ErrorCode::ConfigInvalid,
+                "payload.config должен быть объектом",
+            ));
+        }
+        if !rule_set.is_object() {
+            return Err(HelperError::new(
+                ErrorCode::ConfigInvalid,
+                "payload.rule_set должен быть объектом",
+            ));
+        }
+        if self.child.is_some() {
+            // Стоп без release: правила нужны новому ядру сразу после замены.
+            self.stop_process();
+            self.discard_config();
+        }
+        if let Err(error) = self.kill_switch.sync(kill_switch) {
+            return Err(HelperError::new(
+                ErrorCode::KillSwitchFailed,
+                format!("не удалось применить kill switch: {error}"),
+            ));
+        }
+        let start_result = self.start_with_files(config, rule_set);
+        if start_result.is_err() {
+            // Паритет с `stop` + неудачным `start`: туннеля нет — правила сняты.
+            self.kill_switch.release();
+        }
+        start_result
+    }
+
     /// Запись файлов и запуск ядра без rollback'а kill switch.
     ///
     /// Выделено, чтобы `start` откатывал правила при любой ошибке, а
@@ -534,6 +587,45 @@ mod tests {
         .unwrap()
     }
 
+    /// Скриптовое «ядро», которое проходит `check` и живёт после `run`:
+    /// позволяет тестировать успешный старт и рестарт без настоящего sing-box.
+    const OK_CORE_SH: &str = r#"#!/bin/sh
+case "$1" in
+  version) echo "sing-box version 1.14.4-test" ;;
+  check) exit 0 ;;
+  run) trap 'exit 0' TERM; while :; do sleep 0.1; done ;;
+  *) exit 1 ;;
+esac
+"#;
+
+    /// «Ядро», падающее на любой вызов, кроме `version`: check не проходит.
+    const FAILING_CORE_SH: &str = r#"#!/bin/sh
+case "$1" in
+  version) echo "sing-box version 1.14.4-test" ;;
+  *) exit 1 ;;
+esac
+"#;
+
+    fn write_script(dir: &Path, body: &str) -> PathBuf {
+        let path = dir.join("fake-sing-box.sh");
+        fs::write(&path, body).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    fn startable_core(dir: &Path, counters: Arc<FakeCounters>) -> HelperCore {
+        let script = write_script(dir, OK_CORE_SH);
+        HelperCore::with_firewall(
+            script,
+            dir,
+            Box::new(FakeFirewall {
+                counters,
+                fail_enable: false,
+            }),
+        )
+        .unwrap()
+    }
+
     fn temp_dir(tag: &str) -> PathBuf {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -760,6 +852,143 @@ mod tests {
         let _ = core.start(json!({}), json!({}), false);
         core.stop();
         assert!(!core.rule_set_path.exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn restart_swaps_core_and_keeps_kill_switch_rules() {
+        let dir = temp_dir("restart-keep");
+        let counters = Arc::new(FakeCounters::default());
+        let mut core = startable_core(&dir, counters.clone());
+
+        let first = core
+            .start(json!({ "log": { "level": "info" } }), json!({}), true)
+            .unwrap();
+        assert_eq!(counters.enable.load(Ordering::SeqCst), 1);
+        let first_pid = first.pid.unwrap();
+
+        let second = core
+            .restart(json!({ "log": { "level": "debug" } }), json!({}), true)
+            .unwrap();
+        assert_eq!(second.state, CoreState::Running);
+        assert_ne!(
+            second.pid,
+            Some(first_pid),
+            "ядро перезапущено с новым процессом"
+        );
+        assert!(
+            second.kill_switch.enabled,
+            "правила действуют после рестарта"
+        );
+        assert_eq!(
+            counters.enable.load(Ordering::SeqCst),
+            1,
+            "неизменившийся флаг правил не трогает firewall"
+        );
+        assert_eq!(
+            counters.disable.load(Ordering::SeqCst),
+            0,
+            "между остановкой старого и запуском нового ядра правила не снимаются"
+        );
+
+        let written: Value =
+            serde_json::from_str(&fs::read_to_string(&core.config_path).unwrap()).unwrap();
+        assert_eq!(written["log"]["level"], "debug", "конфиг заменён");
+
+        core.stop();
+        assert_eq!(counters.disable.load(Ordering::SeqCst), 1);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn restart_reconciles_changed_kill_switch_flag() {
+        let dir = temp_dir("restart-flag");
+        let counters = Arc::new(FakeCounters::default());
+        let mut core = startable_core(&dir, counters.clone());
+
+        core.start(json!({}), json!({}), true).unwrap();
+        assert_eq!(counters.enable.load(Ordering::SeqCst), 1);
+
+        let off = core.restart(json!({}), json!({}), false).unwrap();
+        assert!(!off.kill_switch.enabled);
+        assert_eq!(
+            counters.disable.load(Ordering::SeqCst),
+            1,
+            "sync(false) снимает правила до старта нового ядра"
+        );
+
+        let on = core.restart(json!({}), json!({}), true).unwrap();
+        assert!(on.kill_switch.enabled);
+        assert_eq!(counters.enable.load(Ordering::SeqCst), 2);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn failed_restart_releases_rules_and_core_can_start_again() {
+        let dir = temp_dir("restart-fail");
+        let counters = Arc::new(FakeCounters::default());
+        let mut core = startable_core(&dir, counters.clone());
+        let script_path = core.sing_box.clone();
+
+        core.start(json!({}), json!({}), true).unwrap();
+
+        // Ломаем «ядро»: проверка конфига падает на неудачном рестарте.
+        write_script(&dir, FAILING_CORE_SH);
+        let error = core.restart(json!({}), json!({}), true).unwrap_err();
+        assert_eq!(error.code, ErrorCode::ConfigInvalid);
+        assert_eq!(
+            counters.disable.load(Ordering::SeqCst),
+            1,
+            "неудачный рестарт снимает правила — паритет со stop + неудачным start"
+        );
+        let status = core.status();
+        assert_eq!(status.state, CoreState::Stopped);
+        assert!(!status.kill_switch.enabled);
+
+        // Возвращаем ядро: helper остаётся юзабельным, свежий start
+        // ставит правила заново.
+        write_script(&dir, OK_CORE_SH);
+        core.start(json!({}), json!({}), true).unwrap();
+        assert_eq!(counters.enable.load(Ordering::SeqCst), 2);
+        assert!(core.status().kill_switch.enabled);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn restart_on_stopped_core_behaves_like_start() {
+        let dir = temp_dir("restart-idle");
+        let counters = Arc::new(FakeCounters::default());
+        let mut core = startable_core(&dir, counters.clone());
+
+        let status = core
+            .restart(json!({ "log": { "level": "info" } }), json!({}), false)
+            .unwrap();
+        assert_eq!(status.state, CoreState::Running);
+        assert_eq!(
+            counters.enable.load(Ordering::SeqCst),
+            0,
+            "kill_switch=false — правил нет"
+        );
+        core.stop();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn restart_with_bad_payload_does_not_stop_running_core() {
+        let dir = temp_dir("restart-bad");
+        let counters = Arc::new(FakeCounters::default());
+        let mut core = startable_core(&dir, counters.clone());
+
+        let first = core.start(json!({}), json!({}), false).unwrap();
+        let error = core.restart(Value::Null, json!({}), false).unwrap_err();
+        assert_eq!(error.code, ErrorCode::ConfigInvalid);
+        let status = core.status();
+        assert_eq!(status.state, CoreState::Running);
+        assert_eq!(
+            status.pid, first.pid,
+            "битый payload не убивает работающую сессию"
+        );
+        core.stop();
         let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -302,6 +302,15 @@ mod tests {
             self.inner.reload_routing(rule_set)
         }
 
+        fn restart(
+            &self,
+            config: serde_json::Value,
+            rule_set: serde_json::Value,
+            kill_switch: bool,
+        ) -> Result<HelperStatus, HelperClientError> {
+            self.inner.restart(config, rule_set, kill_switch)
+        }
+
         fn stop(&self) -> Result<HelperStatus, HelperClientError> {
             self.inner.stop()
         }

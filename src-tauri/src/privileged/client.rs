@@ -130,6 +130,23 @@ pub fn stop<S: Read + Write>(stream: &mut S) -> Result<HelperStatus, HelperClien
     parse_status(call(stream, Command::Stop, Value::Null)?)
 }
 
+/// `restart` поверх открытого потока: рестарт ядра с новым конфигом без снятия
+/// правил kill switch (S12-T1). Payload тот же, что у `start`.
+pub fn restart<S: Read + Write>(
+    stream: &mut S,
+    config: Value,
+    rule_set: Value,
+    kill_switch: bool,
+) -> Result<HelperStatus, HelperClientError> {
+    let payload = serde_json::to_value(StartPayload {
+        config,
+        rule_set,
+        kill_switch,
+    })
+    .map_err(|error| HelperClientError::InvalidPayload(error.to_string()))?;
+    parse_status(call(stream, Command::Restart, payload)?)
+}
+
 fn parse_status(payload: Value) -> Result<HelperStatus, HelperClientError> {
     serde_json::from_value(payload)
         .map_err(|error| HelperClientError::InvalidPayload(error.to_string()))
@@ -230,6 +247,15 @@ mod unix {
             super::reload_routing(&mut self.connect()?, rule_set)
         }
 
+        fn restart(
+            &self,
+            config: Value,
+            rule_set: Value,
+            kill_switch: bool,
+        ) -> Result<HelperStatus, HelperClientError> {
+            super::restart(&mut self.connect()?, config, rule_set, kill_switch)
+        }
+
         fn stop(&self) -> Result<HelperStatus, HelperClientError> {
             super::stop(&mut self.connect()?)
         }
@@ -304,6 +330,15 @@ mod windows_pipe {
 
         fn reload_routing(&self, rule_set: Value) -> Result<HelperStatus, HelperClientError> {
             super::reload_routing(&mut self.connect()?, rule_set)
+        }
+
+        fn restart(
+            &self,
+            config: Value,
+            rule_set: Value,
+            kill_switch: bool,
+        ) -> Result<HelperStatus, HelperClientError> {
+            super::restart(&mut self.connect()?, config, rule_set, kill_switch)
         }
 
         fn stop(&self) -> Result<HelperStatus, HelperClientError> {
