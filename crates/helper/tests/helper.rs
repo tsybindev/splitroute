@@ -240,7 +240,12 @@ fn start_stop_lifecycle_is_idempotent() {
     let started = helper.call(&request(
         "start",
         "start",
-        json!({ "config": { "log": { "level": "info" } } }),
+        // Протокол v3: start несёт config, rule_set и kill_switch.
+        json!({
+            "config": { "log": { "level": "info" } },
+            "rule_set": { "version": 2, "rules": [] },
+            "kill_switch": false,
+        }),
     ));
     assert_eq!(started["ok"], true, "{started}");
     assert_eq!(started["payload"]["state"], "running");
@@ -263,7 +268,12 @@ fn start_stop_lifecycle_is_idempotent() {
     let again = helper.call(&request(
         "again",
         "start",
-        json!({ "config": { "log": { "level": "info" } } }),
+        // Протокол v3: start несёт config, rule_set и kill_switch.
+        json!({
+            "config": { "log": { "level": "info" } },
+            "rule_set": { "version": 2, "rules": [] },
+            "kill_switch": false,
+        }),
     ));
     assert_eq!(again["ok"], false);
     assert_eq!(again["error"]["code"], "ALREADY_RUNNING");
@@ -292,7 +302,12 @@ fn invalid_config_is_not_started() {
     let response = helper.call(&request(
         "start",
         "start",
-        json!({ "config": { "log": { "level": "info" } } }),
+        // Протокол v3: start несёт config, rule_set и kill_switch.
+        json!({
+            "config": { "log": { "level": "info" } },
+            "rule_set": { "version": 2, "rules": [] },
+            "kill_switch": false,
+        }),
     ));
     assert_eq!(response["ok"], false);
     assert_eq!(response["error"]["code"], "CONFIG_INVALID");
@@ -401,7 +416,12 @@ fn second_instance_does_not_disturb_running_helper() {
     let started = helper.call(&request(
         "start",
         "start",
-        json!({ "config": { "log": { "level": "info" } } }),
+        // Протокол v3: start несёт config, rule_set и kill_switch.
+        json!({
+            "config": { "log": { "level": "info" } },
+            "rule_set": { "version": 2, "rules": [] },
+            "kill_switch": false,
+        }),
     ));
     assert_eq!(started["ok"], true, "{started}");
     let config_path = helper.runtime().join("config.json");
@@ -454,7 +474,12 @@ fn sigterm_stops_core_and_removes_socket() {
     let started = helper.call(&request(
         "start",
         "start",
-        json!({ "config": { "log": { "level": "info" } } }),
+        // Протокол v3: start несёт config, rule_set и kill_switch.
+        json!({
+            "config": { "log": { "level": "info" } },
+            "rule_set": { "version": 2, "rules": [] },
+            "kill_switch": false,
+        }),
     ));
     assert_eq!(started["ok"], true, "{started}");
     let core_pid = started["payload"]["pid"].as_u64().unwrap() as u32;
