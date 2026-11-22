@@ -3,83 +3,69 @@
 > Файл перезаписывается в конце каждой подцели. Ниже — состояние, аудит
 > реализованного, что осталось и готовый промпт следующей сессии.
 
-## Состояние (2026-11-22, вечер)
+## Состояние (2026-11-22, поздний вечер)
 
-- Этапы 0–8 закрыты; Windows-функционал live PASS (research §36), Linux §34.
-- **Этап 9 закрыт почти полностью** (research §37/§38): релизный конвейер
-  работает, **v0.1.0 опубликована и принята пользователем** — переустановка
-  из релиза (новый pubkey) прошла, `update_check` live отвечает, автозапуск
-  подтверждён. Остатки: полная цепочка обновления — **тест при v0.1.1**,
-  S9-T3 (connect_on_start, автовыбор).
-- **S9-T4 done** (`0768e36`): кнопка (i) «Как писать шаблон» в форме
-  добавления правила — только для типа «Regex по пути» (самообновляющиеся
-  приложения меняют каталог версии: Discord `app-1.0.9269` → `app-1.0.9270`);
-  шпаргалка — удвоение `\`, экранирование точки, якоря, `app-[0-9.]+`,
-  пример Discord. Строки ru/en, тест (115 frontend).
-- **S9-T5 done** (`3bd7fc7`): обновление до 0.1.1 падало с «Error opening
-  file for writing: splitroute-helper.exe» — файл залочен запущенной
-  службой. Фикс: NSIS-хуки (`installerHooks`, `installer-hooks.nsh`) —
-  PREINSTALL `net stop` службы, POSTINSTALL `net start`, PREUNINSTALL
-  `net stop`. Live-проверка — обновление 0.1.1 → 0.1.2 без ошибки лока.
-- **Этап 10 открыт (ближайший план)**: S10-T1 hot-reload per-app правил —
-  правки правил применяются к активной сессии без переподключения.
-- **v0.1.2 выпущена** (см. ниже): тег → release.yml → опубликована. Это
-  релиз для полной live-проверки обновления + проверки фикса хуков.
-- Ключ подписи: `~/.commandcode/splitroute-updater.key` + `.key.pass`,
-  GitHub Secrets записаны. main запушен, проверки зелёные (Rust + frontend 115).
+- **S10-T1 hot-reload реализован** (`274fd17`, bump 0.1.3, research §39):
+  per-app правила ушли из статичного конфига в локальный rule-set
+  (`rule-apps.json`), sing-box перечитывает его при изменении файла (с 1.10.0,
+  watcher fswatch следит за каталогом — rename-подмена безопасна, ошибка
+  парсинга оставляет старые правила). Правки правил при активной сессии
+  применяются без разрыва: helper (протокол **v3**, команда `reload_routing`)
+  атомарно заменяет файл. Kill switch и DNS не затрагиваются. Валидация regex
+  до записи в store (`RULES_INVALID`), ошибка применения — `RELOAD_FAILED`
+  «сохранено, применится при переподключении». Все проверки зелёные:
+  fmt/clippy -D warnings/test (316+39+33+golden 4 c `sing-box check`),
+  pnpm typecheck/lint/test (117)/build.
+- **Live-блок от пользователя ещё НЕ подтверждён** (жду отчёт):
+  1а) обновление 0.1.1→0.1.2 — по косвенным признакам уже прошло (файлы
+  Program Files от 22.11 ~14:42, версия exe 0.1.2) — нужно подтверждение:
+  шло ли через «Проверить обновления», была ли ошибка лока helper.exe
+  (проверка S9-T5); 1б) S9-T3 остатки (connect_on_start, автовыбор);
+  1в) regex-правило Discord (первая live-проверка `process_path_regex`).
+- main запушен? **НЕТ — коммит `274fd17` ещё локальный** (пуш и релиз v0.1.3
+  — после подтверждения live-блока, по решению пользователя).
+- Этап 9: релизный конвейер работает, v0.1.2 опубликована (09:51 UTC).
+  Ключ подписи `~/.commandcode/splitroute-updater.key` + `.key.pass`,
+  GitHub Secrets записаны.
 
 ## Аудит: что осталось
 
 | Задача | Статус |
 |---|---|
-| Полная цепочка обновления в приложении (S9-T2 финал + проверка S9-T5) | в установленном приложении (v0.1.1): «Проверить обновления» → доступна 0.1.2 → «Установить» → **ошибки лока helper.exe быть не должно** (хуки останавливают службу) → перезапуск → версия 0.1.2. Ядро на момент установки остановлено (before_install), сессию после перезапуска подключить вручную |
-| S9-T3 остатки | connect_on_start (перезапуск приложения → «Подключено» без клика), автовыбор локации («Проверить задержки», рекомендация «Лучшая» = мин. пинг); настройки вернуть |
-| Regex-правило живым приложением | `process_path_regex` на Windows в рантайме не проверялся (§36 — process_path/process_name): добавить regex-правило Discord по шпаргалке, переподключение, exit-IP целевого приложения |
-| S10-T1 hot-reload per-app правил | следующая подцель РЕАЛИЗАЦИИ: правки правил применяются к активной сессии без переподключения (критерий в TASKS.md) |
+| Отчёт live-блока (S9-T2 финал/S9-T5/S9-T3/regex Discord) | **ожидается от пользователя** — результат в research §38/§39 и TASKS.md; см. список выше |
+| Push + релиз v0.1.3 | после подтверждения live-блока: `git push`, тег `v0.1.3` → release.yml → проверка обновления 0.1.2→0.1.3 из приложения (helper получит протокол v3 через хуки установщика); **протокол v3 несовместим с helper v0.1.2 — dev-приложение против установленной службы работать не будет** (dev — через dev-helper на `splitroute-dev`) |
+| Live-проверка S10-T1 | включение правила при активном подключении меняет exit-IP целевого приложения без переподключения: Windows (dev-запуск с dev-helper или после релиза), Linux — машина `denis@192.168.0.49` (§34, fish → `bash -lc`) |
+| S9-T3 остатки | connect_on_start, автовыбор — из live-блока |
 | blocked извне | S3-T2 (сертификат Apple), PRD-бэклог (IPv6, статичные подписки) |
 
 ## Промпт следующей подцели
-
-По умолчанию — сначала короткий live-блок с пользователем (тест обновления
-v0.1.1 → v0.1.2 + остатки S9-T3 + regex-правило Discord), затем —
-S10-T1 hot-reload.
 
 ```text
 Ты — оркестратор разработки SplitRoute (per-app VPN на Tauri 2 + React 19 + TS + Rust + sing-box).
 Рабочий каталог: C:\Users\Denis\Documents\DEV\SplitRoute\splitroute (Windows, Git Bash).
 Перед командами: export PATH="$USERPROFILE/.cargo/bin:$PATH".
 
-ЧАСТЬ 1 — live с пользователем (~15 мин, результат в research §38/TASKS):
-  а) Полная цепочка обновления (S9-T2 финал): в установленном приложении
-     v0.1.1 «Проверить обновления» → найдена 0.1.2 → «Установить» →
-     остановка ядра → прогресс → перезапуск → проверить версию 0.1.2.
-     Ошибки «Error opening file for writing: splitroute-helper.exe»
-     быть не должно (S9-T5 хуки останавливают службу).
-     Если апдейтер показывает ошибку подписи — сверить pubkey в
-     tauri.conf.json с ~/.commandcode/splitroute-updater.key.pub.
-  б) S9-T3 остатки: connect_on_start (включить → перезапуск приложения →
-     «Подключено» без клика → выключить), автовыбор («Проверить задержки»,
-     «Лучшая» = минимальный пинг → включить автовыбор → выключить).
-  в) Regex-правило: добавить правило Discord типа «Regex по пути» по
-     подсказке (i), переподключиться, проверить exit-IP целевого приложения.
+ЧАСТЬ 1 — собрать отчёт live-блока (S10-T1 уже реализована, см. §39):
+  а) Подтвердить обновление 0.1.1→0.1.2 (шло ли из приложения, ошибка лока
+     helper.exe была или нет — закрывает S9-T5) — см. NEXT_SESSION от 22.11.
+  б) S9-T3: connect_on_start (перезапуск приложения → «Подключено» без
+     клика), автовыбор («Проверить задержки» → «Лучшая»).
+  в) Regex-правило Discord по подсказке (i), exit-IP целевого приложения.
      Настройки пользователя вернуть как были.
-ЧАСТЬ 2 — S10-T1 hot-reload per-app правил (TASKS.md Этап 10): правки
-  правил (upsert/delete/toggle) при активной сессии применяются к
-  работающему sing-box без разрыва: пересборка routing-части конфига и
-  атомарная подмена ядру; ошибки — типизированная ошибка UI с пометкой
-  «применится при переподключении»; вне сессии поведение прежнее.
-  Изучить: как sing-box принимает изменения (пересоздание инстанса ядра
-  с сохранением TUN vs restart), что происходит с kill switch-правилами
-  (не рвать их), протокол с helper'ом.
-  Проверки: fmt/clippy -D warnings/test, pnpm typecheck/lint/test,
-  live-проверка пользователем на Windows.
+ЧАСТЬ 2 — push main + тег v0.1.3 → release.yml → подтвердить публикацию
+  (beta-latest/latest.json, ассеты с .sig) → пользователю: обновление
+  0.1.2→0.1.3 из приложения (ошибки лока быть не должно) → live-проверка
+  S10-T1: активная сессия, toggle правила → exit-IP целевого приложения
+  меняется без переподключения; kill switch не рвать (многоуровневый откат,
+  см. память). Затем live на Linux (машина §34).
 
-КОНТЕКСТ WINDOWS (не трогать): установлены приложение (v0.1.1 после части 1)
-и helper-служба splitroute-helper-service (Running, auto). Для dev-запуска
-закрывать установленное приложение (single-instance). Грабли: MSYS искажает
-env с `\\.\pipe\` — dev-app только через cmd-обёртку (sr-gui-launch.cmd в
-%TEMP%, туда же PATH на %USERPROFILE%\.cargo\bin); taskkill //F //PID
-(двойные слэши); HWID привязан к стору установленного приложения.
+КОНТЕКСТ WINDOWS (не трогать): установлены приложение v0.1.2 и
+helper-служба splitroute-helper-service (Running, auto, протокол 2).
+Грабли: MSYS искажает env с `\\.\pipe\` — dev-app только через cmd-обёртку
+(sr-gui-launch.cmd в %TEMP%, туда же PATH на %USERPROFILE%\.cargo\bin);
+taskkill //F //PID (двойные слэши); HWID привязан к стору установленного
+приложения. Второй splitroute-helper.exe в пользовательской сессии (session 1)
+наблюдался 22.11 — если воспроизведётся, разобраться, чей процесс.
 
 ПРОТОКОЛ РАБОТЫ
 - Одна подцель за сессию: правки кода + тесты одним коммитом (нативные
@@ -89,41 +75,41 @@ env с `\\.\pipe\` — dev-app только через cmd-обёртку (sr-gu
   задачи/логи/коммиты не попадают.
 
 ЛИЦЕНЗИИ: при смене крейтов обновлять THIRD_PARTY_NOTICES (тест
-packaging_config следит).
+packaging_config следит). `regex` уже в инвентаре (идёт через tauri/image).
 ```
 
 ---
 
 ## Заметки
 
-- **Релизный конвейер (research §37):** `release.yml` — тег `v*` → матрица
-  windows/ubuntu → `package.sh` с ключом из Secrets → артефакты с `.sig` →
-  make-latest-json.sh (`--require-platform`) → draft → upload `--clobber` →
-  публикация. Beta-тег `*-beta*` — prerelease + `beta-latest.json`, также
-  кладётся на последний стабильный. Тесты в release.yml не повторяются.
-  workflow_dispatch принимает input tag для re-run. Грабля: новый `.sh` без
-  exec-бита (Write на Windows) → Permission denied в CI; фикс
-  `git update-index --chmod=+x`.
-- **Updater:** `signature` в манифесте = содержимое `.sig` как есть (v2 CLI
-  пишет base64(minisign-текст)); `requireSignedVersion` сверяет версию
-  манифеста с `version:` trusted comment; канал — в имени файла
-  (`latest.json`/`beta-latest.json`). Debug-override
+- **S10-T1 механика (research §39):** rule-set `{"version":2,"rules":[...]}`,
+  тег `splitroute-apps`, файл `rule-apps.json` пишет helper (tmp+rename,
+  0600), путь подставляет в пустые `path` (`fill_rule_set_paths`); watcher
+  sing-box — fswatch по каталогу, дебаунс 100 мс, parse-error → старые
+  правила, ядро живёт. Протокол v3: `StartPayload{config,rule_set,
+  kill_switch}` + `reload_routing` + `RELOAD_FAILED`. Грабля serde:
+  `rename_all="lowercase"` не разделяет слова — нужен `snake_case`.
+  Валидация `rules::validate_rule`: regex-компиляция (крейт `regex`, RE2 ≈
+  Go-regexp), лимиты 200/20/1024.
+- **Релизный конвейер (research §37):** тег `v*` → release.yml → `package.sh`
+  с ключом из Secrets → артефакты с `.sig` → latest.json. Beta-тег `*-beta*`.
+  Грабля: новый `.sh` без exec-бита → `git update-index --chmod=+x`.
+- **Updater:** `signature` = содержимое `.sig` как есть; `requireSignedVersion`
+  сверяет версию с trusted comment; debug-override
   `SPLITROUTE_UPDATE_ENDPOINT`.
 - **Regex-правила:** каждый `\` пути удваивается, точка экранируется, якоря
-  `^…$`, каталог версии — `app-[0-9.]+`; применяется при следующем
-  подключении (hot-reload — Этап 10).
-- **Windows WFP (research §35):** перечисление по слоям (GUID_NULL =
-  FWP_E_LAYER_NOT_FOUND), `FlushFileBuffers` перед `DisconnectNamedPipe`;
-  статические WFP-объекты не персистентны — `Restart-Service BFE` снимает
-  (аварийный откат, mpssvc поднять следом). Фиксы не откатывать.
+  `^…$`, каталог версии — `app-[0-9.]+`; теперь применяется к активной
+  сессии сразу (S10-T1).
+- **Windows WFP (research §35):** статические WFP-объекты не персистентны —
+  `Restart-Service BFE` снимает (аварийный откат, mpssvc поднять следом).
+  Фиксы не откатывать. Kill switch: протокол 2; после обновления helper'а
+  переустановка службы.
 - **Linux-рантайм (research §34):** gvisor обязателен (`stack: mixed` ломает
   TCP через TUN с docker — фикс `3810437`); машина `denis@192.168.0.49`
   (fish → `bash -lc`) — не снимать без спроса.
 - **S4-T15:** надзор в Rust (`reconnect.rs`), серия до 3 через
   `connect_inner`; `SPLITROUTE_STATE` для изолированного стора, `HOME` не
   переопределять.
-- **Kill switch:** протокол 2; после обновления helper'а переустановка
-  службы.
 - **Локализация:** новые строки — в `ru.ts` и `en.ts` (тест следит за
   парностью).
 - **Упаковка:** `externalBin` только в платформенных конфигах; перед
@@ -145,6 +131,7 @@ tasklist | grep -i "splitroute.exe" || echo "приложение закрыто
 # dev-app: env только через cmd-обёртку (MSYS искажает \\.\pipe\ в env):
 #   sr-gui-launch.cmd: set SPLITROUTE_HELPER_PIPE=\\.\pipe\splitroute-dev
 #                      set SPLITROUTE_STATE=<tmp>
+# dev-helper (console, протокол v3): cargo run -p splitroute-helper -- console ...
 # ключ подписи updater: ~/.commandcode/splitroute-updater.key (+ .key.pass)
 # GitHub Secrets: TAURI_SIGNING_PRIVATE_KEY / ..._PASSWORD — записаны
 ```
