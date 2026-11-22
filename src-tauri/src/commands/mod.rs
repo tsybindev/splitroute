@@ -1078,7 +1078,10 @@ pub fn profile_select(
 /// первую включённую (fallback в сторе) и переподключает туннель — как
 /// ручная смена локации. Отката к выключенной локации нет: если новый старт
 /// не удался, туннель остаётся остановленным, ошибка видна в UI.
-#[tauri::command]
+///
+/// `rename_all = "snake_case"`: фронту отправляет `subscription_id`/`profile_ids`
+/// (см. комментарий к `subscription_add` — без атрибута invoke отклоняется).
+#[tauri::command(rename_all = "snake_case")]
 pub fn profiles_set_enabled(
     state: tauri::State<'_, AppState>,
     subscription_id: String,

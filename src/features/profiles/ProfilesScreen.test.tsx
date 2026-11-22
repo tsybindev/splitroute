@@ -372,4 +372,36 @@ describe("ProfilesScreen", () => {
       ),
     );
   });
+
+  it("показывает ошибку на экране, если команда вкл/выкл не удалась", async () => {
+    const user = userEvent.setup();
+    const first = makeProfile({ id: "p1", name: "Локация A" });
+    const entry = makeSubscription({ id: "s1", profiles: [first] });
+    apiMock.profilesSetEnabled.mockRejectedValue({
+      code: "COMMAND_UNREACHABLE_TEST",
+      message: "invoke отклонён",
+    });
+    useAppStore.setState({
+      subscriptions: [entry],
+      profiles: [first],
+      selectedProfileId: "p1",
+    });
+
+    render(<ProfilesScreen />);
+    await user.click(
+      screen.getByRole("checkbox", {
+        name: "Включить или выключить локацию: Локация A",
+      }),
+    );
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("invoke отклонён");
+    // Ошибка не должна молча проглатываться: чекбокс остаётся в прежнем
+    // состоянии, но пользователь видит причину.
+    expect(
+      screen.getByRole("checkbox", {
+        name: "Включить или выключить локацию: Локация A",
+      }),
+    ).toBeChecked();
+  });
 });

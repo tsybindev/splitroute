@@ -28,6 +28,7 @@ function latencyTone(milliseconds: number): Tone {
 export function ProfilesScreen() {
   const subscriptions = useAppStore((state) => state.subscriptions);
   const busy = useAppStore((state) => state.busy);
+  const actionError = useAppStore((state) => state.actionError);
   const pingProfiles = useAppStore((state) => state.pingProfiles);
   const setActiveTab = useAppStore((state) => state.setActiveTab);
 
@@ -53,6 +54,8 @@ export function ProfilesScreen() {
           </div>
         ) : null}
       </Card>
+
+      {actionError ? <ErrorBox error={actionError} /> : null}
 
       {hasSubscriptions ? (
         subscriptions.map((entry, index) => (
