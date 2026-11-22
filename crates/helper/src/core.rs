@@ -312,16 +312,18 @@ impl HelperCore {
     /// версией правил (ошибка попадает в sing-box.log).
     pub fn reload_routing(&mut self, rule_set: Value) -> Result<HelperStatus, HelperError> {
         self.reap();
-        if self.child.is_none() {
-            return Err(HelperError::new(
-                ErrorCode::ReloadFailed,
-                "нет активной сессии: правило применится при следующем подключении",
-            ));
-        }
+        // Форма запроса проверяется раньше состояния: битый payload — всегда
+        // BadRequest, независимо от того, есть ли активная сессия.
         if !rule_set.is_object() {
             return Err(HelperError::new(
                 ErrorCode::BadRequest,
                 "payload.rule_set должен быть объектом",
+            ));
+        }
+        if self.child.is_none() {
+            return Err(HelperError::new(
+                ErrorCode::ReloadFailed,
+                "нет активной сессии: правило применится при следующем подключении",
             ));
         }
         self.write_rule_set(&rule_set)?;
