@@ -737,7 +737,7 @@ mod tests {
         });
         fill_rule_set_paths(&mut config, path);
         let entries = config["route"]["rule_set"].as_array().unwrap();
-        assert_eq!(entries[0]["path"], path.to_string_lossy());
+        assert_eq!(entries[0]["path"], path.to_str().unwrap());
         assert_eq!(entries[1]["url"], "https://example.test/rules.srs");
         assert_eq!(entries[2]["path"], "/custom/path.json");
     }
