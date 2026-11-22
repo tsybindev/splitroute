@@ -202,6 +202,23 @@ Live-проверка в GUI — done (2026-11-22, пользователь, v0.
 
 ---
 
+## Этап 12 — техдолг: переключение локации без окна fail-open (S12-T1, 2026-11-22)
+
+При переключении локации на активной сессии приложение делало `stop` →
+выбор → `start`; helper на `stop` снимает правила kill switch, и между
+командами прямой выход выбранных приложений оставался незащищённым —
+короткое окно fail-open (research §21; в TASKS.md окно ошибочно
+цитировалось как «R15» — в PRD R15 про TCP-пинг). Решение — IPC-команда
+`restart` (протокол 4): helper останавливает старое ядро, не трогая
+правила, и стартует новое с тем же флагом. Механика и проверки —
+research §41, решение — PRD §13 п. 12.
+
+| ID | Задача | Владелец | Критерий приёмки |
+|---|---|---|---|
+| S12-T1 | Команда `restart` в протоколе 4 и helper'е (payload как у `start`, идемпотентный `sync` kill switch, неудача = паритет со `stop`+неудачный `start`); `CoreStartMode` в приложении, `switch_profile_inner`/`profiles_set_enabled_inner` без `stop`; тесты protocol/ipc/core/helper-интеграция/команды/mock-инжекция неудачи; bump 0.1.6 | rust-core + platform-native | done — cargo fmt/clippy/test зелёные (331 lib на Windows), pnpm typecheck/lint/test (122)/build зелёные; Windows-native smoke протокола v4: dev-helper console + named pipe + реальный sing-box — restart сменил pid ядра без остановки сессии, stop чистый; unix-тесты helper'а — на CI ubuntu (перед тегом проверить build.yml); live-проверка переключения под kill switch — за пользователем после релиза 0.1.6 |
+
+---
+
 ## Backlog
 
 - ~~Clash YAML~~ — done в S7-T1…S7-T3 (`ceca190`).
