@@ -106,12 +106,54 @@ Start-Process powershell -Verb RunAs -Wait -ArgumentList '-NoProfile','-Executio
 
 ---
 
+## GUI-функционал Windows — прогнан (2026-11-22, research §36)
+
+Весь функционал закрыт live через Computer Use. Итог: **блоки 1–4 PASS**
+(подписки/QR 6/7 — drag&drop не автоматизируется, остался пользователю;
+подключение+per-app с двумя разными exit-IP; kill switch fail-closed
+BLOCKED на T+0.5; автореконнект ~2 с + исчерпание + сброс). Найден и
+исправлен регресс `subscription_add/update` (Tauri camelCase vs snake_case,
+коммит `1c8ae0e`). Остатки:
+
+1. **drag&drop QR** — 10 с вручную: перетащить PNG в диалог «Импорт по QR».
+2. **Блок 5 (по явному «да» пользователя)**: обновить службу
+   `splitroute-helper-service` фиксированным бинарем (записать исходный
+   binPath для отката: `sc qc splitroute-helper-service` → binaryPathName),
+   затем kill switch в установленном приложении. Без этого установленная
+   копия работает на СТАРОМ helper'е с багами из §35 (KILL_SWITCH_FAILED).
+3. Установленное приложение было закрыто для dev-запусков — открыть обратно.
+
+### Проверка перед стартом (Windows)
+
+```bash
+export PATH="$USERPROFILE/.cargo/bin:$PATH"
+cd splitroute
+git status --short && git log --oneline -3
+pnpm install
+cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
+pnpm typecheck && pnpm lint && pnpm test
+tasklist | grep -i "sing-box" || echo "ядра нет"
+tasklist | grep -i "splitroute.exe" || echo "приложение закрыто"
+# dev-запуск: закрыть установленное приложение (single-instance)
+# dev-app: env только через cmd-обёртку (MSYS искажает \\.\pipe\ в env):
+#   sr-gui-launch.cmd: set SPLITROUTE_HELPER_PIPE=\\.\pipe\splitroute-dev
+#                      set SPLITROUTE_STATE=<tmp>
+```
+
+WFP live-отчёт (elevated, UAC, ~90 с с кратковременной блокировкой сети):
+```powershell
+Start-Process powershell -Verb RunAs -Wait -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','scripts\windows\wfp-report.ps1'
+```
+
+---
+
 ## Промпт следующей подцели
 
-Кандидаты по приоритету: **live-QR с WebView2** (за пользователем, 10 мин),
-**Windows kill switch через GUI + TUN** (helper-протокол уже закрыт), 
+Кандидаты по приоритету: **блок 5 Windows** (обновление helper-службы
+установленной копии — нужен явный «да»), **drag&drop QR** (10 с, вручную),
 **установка `.rpm` на CachyOS** (SSH: `sudo rpm -i` + инспекция deb),
-IPv6/статичные подписки (нужны решения PRD).
+IPv6/статичные подписки (нужны решения PRD). Linux/macOS — в бэклоге до
+закрытия Windows.
 
 ```text
 Ты — оркестратор разработки SplitRoute (per-app VPN на Tauri 2 + React 19 + TS + Rust + sing-box).
