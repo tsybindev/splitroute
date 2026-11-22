@@ -5,79 +5,72 @@
 
 ## Состояние (2026-11-22, вечер)
 
-- Этапы 0–8 закрыты; **Windows-функционал прогнан live через GUI, блоки 1–5
-  PASS** (research §36). Linux-рантайм CachyOS закрыт live 2026-11-21 (§34).
-- **Этап 9 реализован (S9-T1 done, S9-T2 done частично)**, research §37:
-  `release.yml` (тег `v*` → подписанные артефакты → draft → `latest.json` →
-  публикация), `scripts/make-latest-json.sh`, `updates.rs` на реальном
-  endpoint GitHub Releases (канал в имени файла: `latest.json` /
-  `beta-latest.json`), pubkey заменён. Локально: `package.sh` с ключом
-  подписал NSIS, манифест проверен на реальной подписи (trusted comment
-  `version:0.1.0`).
-- **Keychain: приватный ключ updater перегенерирован** —
-  `~/.commandcode/splitroute-updater.key` + `.key.pass` (пароль не печатался),
-  GitHub Secrets `TAURI_SIGNING_PRIVATE_KEY`/`..._PASSWORD` записаны через
-  `gh secret set` из файлов. **Старый pubkey был с другой машины** —
-  установленное приложение 0.1.0 его не знает: после публикации релиза
-  приложение ОДИН РАЗ переустановить из релиза.
-- **РЕЛИЗ v0.1.0 ОПУБЛИКОВАН**: тег запушен, release.yml run 45005423792 —
-  success (первый прогон упал на exec-бите make-latest-json.sh — см. §37).
-  https://github.com/tsybindev/splitroute/releases/tag/v0.1.0 — все 8 ассетов
-  (NSIS exe+sig, AppImage+sig, deb, rpm, latest.json, beta-latest.json).
-  Проверено: `releases/latest/download/latest.json` отдаёт манифест
-  (version 0.1.0, signature — base64 minisign, совпадает с `.sig`-ассетом,
-  url на ассеты), NSIS-ассет скачивается (200). main запушен (0 не
-  отправленных), автопроверки зелёные (Rust + frontend 114).
-- Формат signature в latest.json (важно!): содержимое `.sig` **как есть** —
-  CLI v2 пишет `.sig` одной строкой base64(minisign-текст), плагин декодирует
-  поле и парсит minisign; двойное кодирование даёт UPDATE_SIGNATURE.
+- Этапы 0–8 закрыты; Windows-функционал live PASS (research §36), Linux §34.
+- **Этап 9 закрыт почти полностью** (research §37/§38): релизный конвейер
+  работает, **v0.1.0 опубликована и принята пользователем** — переустановка
+  из релиза (новый pubkey) прошла, `update_check` live отвечает, автозапуск
+  подтверждён. Остатки: полная цепочка обновления — **тест при v0.1.1**,
+  S9-T3 (connect_on_start, автовыбор).
+- **S9-T4 done** (`0768e36`): кнопка (i) «Как писать шаблон» в форме
+  добавления правила — только для типа «Regex по пути» (самообновляющиеся
+  приложения меняют каталог версии: Discord `app-1.0.9269` → `app-1.0.9270`);
+  шпаргалка — удвоение `\`, экранирование точки, якоря, `app-[0-9.]+`,
+  пример Discord. Строки ru/en, тест (115 frontend).
+- **Этап 10 открыт (ближайший план)**: S10-T1 hot-reload per-app правил —
+  правки правил применяются к активной сессии без переподключения.
+- **v0.1.1 выпущена** (см. ниже): версия поднята в
+  tauri.conf.json/package.json/Cargo.toml, тег → release.yml → опубликована.
+  Это релиз для полной live-проверки обновления.
+- Ключ подписи: `~/.commandcode/splitroute-updater.key` + `.key.pass`,
+  GitHub Secrets записаны. main запушен, проверки зелёные (Rust + frontend 115).
 
 ## Аудит: что осталось
 
 | Задача | Статус |
 |---|---|
-| Переустановка приложения из релиза v0.1.0 (новый pubkey) | скачать `SplitRoute_0.1.0_x64-setup.exe` из релиза, закрыть приложение, установить, проверить «Подключено» с реальным helper'ом |
-| `update_check` в переустановленном приложении | S9-T2 остаток: в приложении «Проверить обновления» → «У вас последняя версия» (версии равны — сеть/подпись манифеста не задействованы) |
-| Полная проверка обновления (скачать → подпись → установка → перезапуск) | при следующем релизе: bump-коммит 0.1.1 (tauri.conf.json/package.json/Cargo.toml), тег, прогон конвейера, обновление приложения по кнопке |
-| S9-T3 live-проверки Windows (~30 мин) | чек-лист ниже |
-| blocked извне | S3-T2 (сертификат Apple), PRD-бэклог (IPv6, статичные подписки, hot-reload per-app) |
+| Полная цепочка обновления в приложении (S9-T2 финал) | в установленном приложении (v0.1.0): «Проверить обновления» → доступна 0.1.1 → «Установить» → прогресс → перезапуск → версия 0.1.1 на «Главной»/в настройках. Ядро на момент установки остановлено (before_install), сессию после перезапуска подключить вручную |
+| S9-T3 остатки | connect_on_start (перезапуск приложения → «Подключено» без клика), автовыбор локации («Проверить задержки», рекомендация «Лучшая» = мин. пинг); настройки вернуть |
+| Regex-правило живым приложением | `process_path_regex` на Windows в рантайме не проверялся (§36 — process_path/process_name): добавить regex-правило Discord по шпаргалке, переподключение, exit-IP целевого приложения |
+| S10-T1 hot-reload per-app правил | следующая подцель РЕАЛИЗАЦИИ: правки правил применяются к активной сессии без переподключения (критерий в TASKS.md) |
+| blocked извне | S3-T2 (сертификат Apple), PRD-бэклог (IPv6, статичные подписки) |
 
 ## Промпт следующей подцели
 
-По умолчанию — переустановка из релиза + S9-T3. Вторая по запросу — v0.1.1
-для полной проверки обновления.
+По умолчанию — сначала короткий live-блок с пользователем (тест обновления
+v0.1.0 → v0.1.1 + остатки S9-T3 + regex-правило Discord), затем —
+S10-T1 hot-reload.
 
 ```text
 Ты — оркестратор разработки SplitRoute (per-app VPN на Tauri 2 + React 19 + TS + Rust + sing-box).
 Рабочий каталог: C:\Users\Denis\Documents\DEV\SplitRoute\splitroute (Windows, Git Bash).
 Перед командами: export PATH="$USERPROFILE/.cargo/bin:$PATH".
 
-ЦЕЛЬ: переустановить приложение из релиза v0.1.0 (новый pubkey updater),
-live-проверки S9-T3.
+ЧАСТЬ 1 — live с пользователем (~15 мин, результат в research §38/TASKS):
+  а) Полная цепочка обновления (S9-T2 финал): в установленном приложении
+     v0.1.0 «Проверить обновления» → найдена 0.1.1 → «Установить» →
+     остановка ядра → прогресс → перезапуск → проверить версию 0.1.1.
+     Если апдейтер показывает ошибку подписи — сверить pubkey в
+     tauri.conf.json с ~/.commandcode/splitroute-updater.key.pub.
+  б) S9-T3 остатки: connect_on_start (включить → перезапуск приложения →
+     «Подключено» без клика → выключить), автовыбор («Проверить задержки»,
+     «Лучшая» = минимальный пинг → включить автовыбор → выключить).
+  в) Regex-правило: добавить правило Discord типа «Regex по пути» по
+     подсказке (i), переподключиться, проверить exit-IP целевого приложения.
+     Настройки пользователя вернуть как были.
+ЧАСТЬ 2 — S10-T1 hot-reload per-app правил (TASKS.md Этап 10): правки
+  правил (upsert/delete/toggle) при активной сессии применяются к
+  работающему sing-box без разрыва: пересборка routing-части конфига и
+  атомарная подмена ядру; ошибки — типизированная ошибка UI с пометкой
+  «применится при переподключении»; вне сессии поведение прежнее.
+  Изучить: как sing-box принимает изменения (пересоздание инстанса ядра
+  с сохранением TUN vs restart), что происходит с kill switch-правилами
+  (не рвать их), протокол с helper'ом.
+  Проверки: fmt/clippy -D warnings/test, pnpm typecheck/lint/test,
+  live-проверка пользователем на Windows.
 
-ШАГ 1 — переустановка приложения из релиза (обязательно: старый pubkey):
-  закрыть установленное приложение (tasklist | grep -i splitroute),
-  скачать SplitRoute_0.1.0_x64-setup.exe из релиза
-  (https://github.com/tsybindev/splitroute/releases/tag/v0.1.0), установить
-  поверх, запустить: сессия должна подняться с установленным helper'ом
-  (splitroute-helper-service), локации/профили пользователя сохранены
-  (HWID тот же — стор тот же). Затем «Проверить обновления» → ожидается
-  «последняя версия» (S9-T2 остаток).
-
-ШАГ 2 — S9-T3 (live, настройки вернуть как были):
-  а) Автозапуск: включить «Запускать при входе в систему» →
-     reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Run"
-     (запись splitroute с --hidden); выключить → записи нет.
-  б) Подключение при старте: включить connect_on_start при сохранённой
-     локации → перезапуск приложения → «Подключено» без клика; выключить.
-  в) Автовыбор: «Локации» → «Проверить задержки» с реальной подпиской,
-     рекомендация «Лучшая» = минимальный пинг; включить автовыбор, отключить.
-  Результаты — в docs/research.md (§38), TASKS.md S9-T3 → done.
-
-КОНТЕКСТ WINDOWS (не трогать): установлены приложение
-(C:\Program Files\SplitRoute\) и helper-служба splitroute-helper-service
-(Running, auto). Для dev-запуска закрывать установленное приложение
-(single-instance: dev-копия тихо выходит с кодом 0). Грабли: MSYS искажает
+КОНТЕКСТ WINDOWS (не трогать): установлены приложение (v0.1.1 после части 1)
+и helper-служба splitroute-helper-service (Running, auto). Для dev-запуска
+закрывать установленное приложение (single-instance). Грабли: MSYS искажает
 env с `\\.\pipe\` — dev-app только через cmd-обёртку (sr-gui-launch.cmd в
 %TEMP%, туда же PATH на %USERPROFILE%\.cargo\bin); taskkill //F //PID
 (двойные слэши); HWID привязан к стору установленного приложения.
@@ -97,19 +90,22 @@ packaging_config следит).
 
 ## Заметки
 
-- **Релизный конвейер (research §37):** `release.yml` — матрица
-  windows-latest/ubuntu-22.04, package.sh с ключом из Secrets (без
-  SPLITROUTE_ALLOW_UNSIGNED), артефакты с `.sig`; job публикации:
-  make-latest-json.sh (`--require-platform windows-x86_64,linux-x86_64`) →
-  `gh release create --draft --generate-notes` → upload `--clobber` →
-  `--draft=false`. Beta-тег `*-beta*` — prerelease + beta-latest.json,
-  дополнительно кладётся на последний стабильный (prerelease через
-  latest/download недостижим). Тесты в release.yml не повторяются (build.yml
-  гоняет их на main). workflow_dispatch принимает input tag для re-run.
+- **Релизный конвейер (research §37):** `release.yml` — тег `v*` → матрица
+  windows/ubuntu → `package.sh` с ключом из Secrets → артефакты с `.sig` →
+  make-latest-json.sh (`--require-platform`) → draft → upload `--clobber` →
+  публикация. Beta-тег `*-beta*` — prerelease + `beta-latest.json`, также
+  кладётся на последний стабильный. Тесты в release.yml не повторяются.
+  workflow_dispatch принимает input tag для re-run. Грабля: новый `.sh` без
+  exec-бита (Write на Windows) → Permission denied в CI; фикс
+  `git update-index --chmod=+x`.
 - **Updater:** `signature` в манифесте = содержимое `.sig` как есть (v2 CLI
   пишет base64(minisign-текст)); `requireSignedVersion` сверяет версию
   манифеста с `version:` trusted comment; канал — в имени файла
-  (`latest.json`/`beta-latest.json`). Debug-override `SPLITROUTE_UPDATE_ENDPOINT`.
+  (`latest.json`/`beta-latest.json`). Debug-override
+  `SPLITROUTE_UPDATE_ENDPOINT`.
+- **Regex-правила:** каждый `\` пути удваивается, точка экранируется, якоря
+  `^…$`, каталог версии — `app-[0-9.]+`; применяется при следующем
+  подключении (hot-reload — Этап 10).
 - **Windows WFP (research §35):** перечисление по слоям (GUID_NULL =
   FWP_E_LAYER_NOT_FOUND), `FlushFileBuffers` перед `DisconnectNamedPipe`;
   статические WFP-объекты не персистентны — `Restart-Service BFE` снимает
