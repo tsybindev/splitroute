@@ -5,123 +5,130 @@
 
 ## Состояние
 
-- Этапы 0–7 закрыты; **S4-T15 (автореконнект) — done (`57158a3`)**; этап 8
-  (QR-импорт) — код и автопроверки done (`cf385dc`), live-QR — за пользователем.
-- **S2-T9/S3-T7 (Linux-рантайм на CachyOS) — закрыты live 2026-11-21** по
-  runbook `docs/linux-runbook.md` (§2–§7). Найден и исправлен баг: TCP через
-  TUN на Linux умирал со `stack: mixed` в окружении с docker — **фикс
-  `3810437`** (`tun_stack()`: Linux → gvisor; тест на обеих ОС), подтверждён
-  end-to-end конфигом приложения. Факты и грабли — **research §34**.
-- Ветка `main`, локальные коммиты не запушены (origin отстаёт — push за
-  пользователем, если нужен).
-- Секретов в задачах/логах/коммитах нет: state.json с реальной подпиской
-  удалён с CachyOS в §8, конфиги с сервером не печатались.
+- Этапы 0–7 закрыты; S4-T15 (автореконнект) — done; этап 8 (QR-импорт) — код
+  и автопроверки done, live-QR — за пользователем.
+- **S2-T9/S3-T7 (Linux-рантайм CachyOS) — закрыты live 2026-11-21** (research §34).
+- **S4-T5c Windows — закрыт live 2026-11-22** (research §35): WFP kill switch
+  проверен под управлением агента на Windows 11, **ALL PASS 21/21**. Найдены
+  и исправлены два бага helper'а:
+  1. перечисление WFP с `layerKey=GUID_NULL` всегда падало
+     `FWP_E_LAYER_NOT_FOUND` (0x80320004) — фикс: перечисление по слоям
+     ALE_AUTH_CONNECT_V4/V6 (`delete_objects`), регресс-тест
+     `crates/helper/tests/wfp_live.rs` (`#[ignore]`, нужен elevation);
+  2. гонка named pipe — `DisconnectNamedPipe` выбрасывал незачитанный ответ
+     («пустой ответ») — фикс: `FlushFileBuffers` перед disconnect (`pipe.rs`).
+  Попутно: latent-линт в `catalog/windows.rs` — Windows-only код впервые
+  прошёл нативный clippy.
+- Ветка `main`, локальные коммиты не запушены (push — за пользователем).
 
-### Что работает / проверено (CachyOS, 2026-11-21)
+### Что работает / проверено (Windows 11 10.0.26100, 2026-11-22)
 
-- Сборка и тесты: 427 Rust (1 ignored, разница с macOS — `cfg(target_os)`)
-  + 114 frontend; typecheck/lint; sing-box 1.14.4 по sha256.
-- Пакеты: `.deb` 34.4 МиБ / `.rpm` 34.4 МиБ / AppImage 137.8 МиБ.
-- Headless-smoke helper'а 10/10 (сокет 0600, status/start/stop/restart,
-  runtime config.json 0600 + sing-box.log, outbound HTTP 200).
-- TUN+per-app+DNS: TUN `tun0` (генератор не задаёт `interface_name`),
-  ip-правила 9000–9010/таблица 2022; curl из TUN → прокси, wget → напрямую;
-  DNS-hijack systemd-resolved → vless DoT; из GUI Telegram через VPN
-  (подтверждено пользователем), удаление правила → домашний IP.
-- Kill switch nftables fail-closed (§6b: kill ядра по PID → правила живы,
-  egress заблокирован; stop снимает; ALREADY_RUNNING при двойном start).
-- GUI: окно не белое (`WEBKIT_DISABLE_DMABUF_RENDERER=1`), статистика,
-  каталог, «Проверить задержки» (~15 с — медленно); установка helper'а из
-  приложения (pkexec → unit active, сокет `/run/splitroute` достижим uid
-  1000, RuntimeDirectoryMode 0711).
-- SSH из LAN переживает kill switch — §0 runbook подтверждён живьём.
+- Сборка/тесты нативно: 393 Rust (2 ignored: macOS/Linux-разница +
+  `wfp_live`), 114 frontend; fmt/clippy -D warnings/typecheck/lint/build.
+- Пакеты: sing-box 1.14.4 + wintun 0.14.1 (sha256), helper-сайдкар
+  `binaries/splitroute-helper-x86_64-pc-windows-msvc.exe`.
+- WFP kill switch: `start` c `kill_switch:true` → 18 объектов WFP
+  (17 фильтров + подслой + провайдер); loopback/LAN живы, обычный egress
+  **refused** (WFP-блок мгновенный, не таймаут!), трафик через ядро → 204;
+  kill ядра → fail-closed (правила остаются); `stop` → всё снято до нуля.
+- Скрипты проверки и отката: `scripts/windows/wfp-report.ps1` +
+  `wfp-watchdog.ps1` (дедлайн 240 с → stop по пайпу → kill helper по
+  PID-файлу → `Restart-Service BFE`). Отчёт — `%TEMP%\sr-wfp\report.md`.
+- GUI smoke: `pnpm tauri dev` (MockHelper, изолированный стор) — окно
+  открывается, webview грузит UI.
 
 ### Не проверено / осталось
 
-- **Live-проверка QR-импорта с реальным QR** — за пользователем, ~10 минут
-  (запуск: `SPLITROUTE_STATE=/tmp/sr-qr-state/state.json pnpm tauri dev`,
-  helper не нужен). Сценарий: Настройки → Подписки → «Импорт по QR» → (a)
-  файл → форма с префиллом → добавить; (b) drag&drop; (c) скриншот Cmd+V
-  (первый живой тест paste в WKWebView — mime зафиксировать в §33);
-  негатив: `vless://`-QR → ошибка узлов, не-QR картинка → `QR_DECODE_FAILED`,
-  «Отмена» ничего не открывает.
-- Установка пакета (`.rpm` через `rpm -i` / распаковка `.deb`) на CachyOS —
-  не делалась (runbook §7 п. 6); инспекция `/usr/share/doc/splitroute/`.
-- DNS `.local`/mDNS через туннель (Avahi не разворачивался).
-- Сон/смена сети на Linux; kill switch вместе с серией автореконнекта
-  (юнит-тесты + §6b по отдельности есть).
-- Windows-часть S4-T5c: детальный WFP-отчёт — за будущей сессией/пользователем.
-- Клик-проверки UI Clash-подписки — Vitest, не автоматизировались.
-- Backlog: статичные подписки без URL (QR с голыми vless://), IPv6-
-  маршрутизация (решения PRD); hot-reload правил per-app (сейчас — только
-  при переподключении; UX-заметка §34).
+- Windows kill switch с реальным профилем через GUI + TUN-трафик (в отчёте —
+  loopback-инбаунд вместо туннеля); поведение при падении helper'а-службы.
+- **Live-QR** (~10 мин, за пользователем): `SPLITROUTE_STATE=<путь>
+  pnpm tauri dev`, Настройки → Подписки → «Импорт по QR»; на Windows —
+  WebView2 (не WKWebView): mime paste зафиксировать в §33. Негатив:
+  `vless://`-QR → ошибка узлов, не-QR → `QR_DECODE_FAILED`.
+- Установка пакета `.rpm`/`.deb` на CachyOS (runbook §7 п. 6) — через SSH.
+- DNS `.local`/mDNS; сон/смена сети; kill switch + серия автореконнекта
+  вместе.
+- Клик-проверки UI Clash-подписки (Vitest есть, live — нет).
+- Backlog: статичные подписки без URL, IPv6-маршрутизация (решения PRD),
+  hot-reload правил per-app.
 - Blocked: S3-T2 (сертификат Apple), S4-T8 (домен манифеста обновлений).
 
 ### Важные факты окружения
 
-- `export PATH="$HOME/.cargo/bin:$PATH"`; для live-проверок
-  `RUSTUP_HOME`/`CARGO_HOME` задавать явно, если `HOME` переопределяется.
-- **`HOME` для приложения НЕЛЬЗЯ переопределять** (research §32) — белый
-  webview; изолированный стор — `SPLITROUTE_STATE=/tmp/…/state.json`.
-- **CachyOS**: `denis@192.168.0.49` (key-auth работает; IP может смениться —
-  уточнять), fish — команды через `bash -lc`/`bash -s`. Дерево
-  `~/Dev/splitroute` (rsync, origin отстаёт — после push обновлять rsync'ом
-  или git pull), target 8.5 ГБ. Системный helper **оставлен установленным**
-  (unit active, `--allow-uid 1000`). socat/jq/patchelf поставлены.
-- **Скрипты под sudo**: `$HOME=/root` → пути пользователя через
-  `getent passwd`; `sudo a; b; c` — sudo только к первому слову; пробы
-  протокола — `runuser -u <user> -- socat …` (под root helper отвечает
-  `FORBIDDEN «клиент с другим uid»` — это норма peer-credentials).
-- **Ядро убивать по PID из `status`**: `pkill -x sing-box` не матчится
-  (comm `sing-box-x86_64`); после kill `ps -p` может показывать зомби —
-  факт смерти по `pgrep -f 'binaries/sing-box'` (research §34).
-- **single-instance**: живой AppImage/установленное приложение мешает
-  dev-запуску (exit 143) — закрыть все копии (research §34).
-- **Kill switch + автоподключение при мёртвом туннеле блокирует машину**
-  (fail-closed) — агентная сессия в LAN выживает, но live-проверки делать
-  с kill switch выключенным в изолированном сторе.
-- **stack gvisor на Linux** — критично на машинах с docker (§34); не
-  откатывать.
-- macOS-хвост прошлой сессии: чисто (helper'ов и sing-box нет);
-  staging-скрипты `/tmp/sr-linux-staging` удалены.
-- Порт фикстур — свой (18081); фоновые `&`-процессы не обслуживают TCP.
-- macOS 15.8.2 arm64, Rust 1.99.1, Tauri 2.12.5 / CLI 2.12.4, sing-box
-  1.14.4, reqwest 0.13.5, tokio 1.54.1.
-- Таймаут подписки 45 с не уменьшать; `Accept` подписки не менять.
-- После проверок: `pgrep -x sing-box`, `pgrep -fl splitroute-helper`,
-  `lsof -nP -iTCP:1420 -sTCP:LISTEN`, `ls -d /tmp/sr-*`.
-- Секреты (URL подписки, HWID, UUID, содержимое QR) в задачи, фикстуры,
-  логи и коммиты не попадают.
+**Windows-машина (эта сессия; Deno — пользователь Denis):**
+- Rust rustup 1.29.3 (stable-x86_64-pc-windows-msvc), pnpm 11.24.0
+  (`npm i -g pnpm`; corepack в Node 26 нет), MSVC Build Tools 2022,
+  Node 26.13.1.
+- **Установлены приложение** (`C:\Program Files\SplitRoute\`) **и helper-служба**
+  `splitroute-helper-service` (Running, auto) — их не снимать. Для dev-запуска
+  **закрывать установленное приложение** (single-instance: dev-копия тихо
+  выходит с кодом 0, окна нет — research §34/§35).
+- Pipe helper'а: `\\.\pipe\splitroute-helper`, переопределение —
+  `SPLITROUTE_HELPER_PIPE`. Dev-helper: `console --pipe <имя> --runtime-dir
+  <каталог> --sing-box <путь> --allow-sid <SID>` (SID —
+  `[WindowsIdentity]::GetCurrent().User.Value`), только elevated.
+- Пробный конфиг ядра без TUN (для WFP-проверок): `mixed` inbound на
+  `127.0.0.1:18999` — см. скрипт отчёта.
+- Git Bash грабли: `taskkill //F //PID` (двойные слэши); `whoami` —
+  GNU-версия, SID брать в PowerShell; вывод `Out-File` — UTF-16, читать
+  `Get-Content`.
+- WFP: `netsh wfp show filters file=<path>` (XML, grep по GUID
+  `6a4c2f9e-1b7d-4c3e-9f2a-5d8b7e6c1a20`); `Restart-Service BFE` снимает все
+  не персистентные объекты (аварийный откат; mpssvc поднять следом).
+- Cleanup-лист: `tasklist | grep -i "sing-box\|splitroute"`,
+  `netstat -ano | grep ":1420"`, `netsh wfp show providers` (0 объектов
+  SplitRoute), `%TEMP%\sr-wfp` (raw-отчёты; можно удалять).
 
-### Проверка перед стартом
+**CachyOS (см. §34):** `denis@192.168.0.49` (fish → `bash -lc`), дерево
+`~/Dev/splitroute` (rsync — origin отстаёт), системный helper установлен.
+`HOME` приложения не переопределять; изолированный стор — `SPLITROUTE_STATE`.
+Kill switch + автоподключение при мёртвом туннеле блокирует машину (LAN
+выживает).
+
+### Проверка перед стартом (Windows)
 
 ```bash
-cd app
-export PATH="$HOME/.cargo/bin:$PATH"
+export PATH="$USERPROFILE/.cargo/bin:$PATH"
+cd splitroute
 git status --short && git log --oneline -3
 pnpm install
 cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
 pnpm typecheck && pnpm lint && pnpm test
-pgrep -x sing-box || echo "ядра нет"
+tasklist | grep -i "sing-box" || echo "ядра нет"
+tasklist | grep -i "splitroute.exe" || echo "приложение закрыто"
+# перед dev-запуском закрыть установленное приложение (single-instance)
+```
+
+WFP live-отчёт (elevated, UAC, ~90 с с кратковременной блокировкой сети):
+```powershell
+Start-Process powershell -Verb RunAs -Wait -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','scripts\windows\wfp-report.ps1'
 ```
 
 ---
 
 ## Промпт следующей подцели
 
-Кандидаты по приоритету: **live-проверка QR** (за пользователем, 10 минут),
-**Windows WFP-отчёт** (нужна машина пользователя), **установка `.rpm` на
-CachyOS** (SSH есть: `sudo rpm -i …` + инспекция deb), IPv6/статичные
-подписки (нужны решения PRD).
+Кандидаты по приоритету: **live-QR с WebView2** (за пользователем, 10 мин),
+**Windows kill switch через GUI + TUN** (helper-протокол уже закрыт), 
+**установка `.rpm` на CachyOS** (SSH: `sudo rpm -i` + инспекция deb),
+IPv6/статичные подписки (нужны решения PRD).
 
 ```text
 Ты — оркестратор разработки SplitRoute (per-app VPN на Tauri 2 + React 19 + TS + Rust + sing-box).
-Рабочий каталог: /Users/tsybin_d/Documents/Dev/Backend/vpn_client/app
-Перед командами: export PATH="$HOME/.cargo/bin:$PATH"
+Рабочий каталог: <путь к репо> (Windows: C:\Users\Denis\Documents\DEV\SplitRoute\splitroute).
+Перед командами: export PATH="$USERPROFILE/.cargo/bin:$PATH" (Git Bash).
 
 ЦЕЛЬ: выбирается из «Не проверено / осталось» выше. По умолчанию — помочь
-пользователю с live-проверкой QR-импорта (чек-лист в этой же секции) или
-закрыть Windows WFP-отчёт S4-T5c, если пользователь дал машину.
+пользователю с live-проверкой QR-импорта (чек-лист выше; на Windows —
+WebView2, mime paste зафиксировать в §33) или Windows kill switch через GUI
++ TUN (скрипты в scripts/windows/, протокол helper'а уже закрыт).
+
+КОНТЕКСТ WINDOWS (закрыто 2026-11-22, research §35): WFP kill switch
+проверен live, фиксы не откатывать: перечисление по слоям (layerKey GUID_NULL
+падает FWP_E_LAYER_NOT_FOUND) и FlushFileBuffers перед DisconnectNamedPipe
+(гонка «пустого ответа»). Установленные приложение и helper-служба на машине
+не трогать; для dev закрывать установленное приложение (single-instance).
+Пробный конфиг ядра — mixed loopback-инбаунд, не TUN.
 
 КОНТЕКСТ LINUX (закрыто 2026-11-21): CachyOS `denis@192.168.0.49` (LAN,
 fish — оборачивать в bash), дерево ~/Dev/splitroute, системный helper
@@ -130,10 +137,10 @@ single-instance — research §34. Машина и helper остаются у п
 не снимать без спроса.
 
 ПРОТОКОЛ РАБОТЫ
-- Одна подцель за сессию: правки кода + тесты одним коммитом (fmt/clippy/
-  test, pnpm typecheck/lint/test/build, cargo check -p splitroute-helper
-  --target x86_64-pc-windows-msvc), отдельный docs: коммит, NEXT_SESSION.md
-  перезаписать.
+- Одна подцель за сессию: правки кода + тесты одним коммитом (на Windows
+  обязательны нативные fmt/clippy -D warnings/test, pnpm typecheck/lint/
+  test/build; Windows-only код больше не проверяется кросс-таргетом),
+  отдельный docs: коммит, NEXT_SESSION.md перезаписать.
 - Секреты (URL подписки, HWID, UUID, QR) в задачи/логи/коммиты не попадают.
 
 ЛИЦЕНЗИИ: при смене крейтов обновлять THIRD_PARTY_NOTICES (тест
@@ -144,20 +151,22 @@ packaging_config следит).
 
 ## Заметки
 
+- **Windows WFP (research §35):** `FwpmFilterCreateEnumHandle0` требует
+  конкретный layerKey (GUID_NULL = `FWP_E_LAYER_NOT_FOUND`, не wildcard);
+  пустой результат на валидном слое — ОК с нулём; WFP-блок = мгновенный
+  refused (не таймаут, как pf); `FlushFileBuffers` перед
+  `DisconnectNamedPipe` обязателен; статические WFP-объекты не персистентны
+  — `Restart-Service BFE`/перезагрузка их снимает.
 - **Linux-рантайм (research §34):** TCP через TUN умирает со `stack: mixed`
-  на Linux в окружении с docker (system-стек) — gvisor обязателен; comm у
-  dev-ядра `sing-box-x86_64` (`pkill -x sing-box` не матчится — PID из
-  `status`); зомби-окно после kill; exit-IP ≠ entry-IP провайдера;
-  ALREADY_RUNNING при двойном start; правила per-app — только при
-  переподключении; протокол 2: аргументы команды в `payload`.
-- **Этап 8 (QR, research §33):** rqrr 0.11; скоуз «только URL»;
-  drag-drop через событие Tauri; hermetic-тесты на dev-`qrcode 0.14`;
-  paste в WKWebView не проверен живьём.
+  на Linux с docker — gvisor обязателен; comm у dev-ядра `sing-box-x86_64`;
+  зомби-окно после kill; ALREADY_RUNNING при двойном start; правила per-app
+  — только при переподключении; протокол 2: аргументы команды в `payload`.
+- **Этап 8 (QR, research §33):** rqrr 0.11; скоуз «только URL»; drag-drop
+  через событие Tauri; hermetic-тесты на dev-`qrcode 0.14`; paste в
+  WKWebView не проверен живьём; WebView2 — новый кейс.
 - **S4-T15 (research §32):** детект в Rust (`reconnect.rs`), серия через
   `connect_inner`; `SPLITROUTE_STATE` для изолированного стора; `HOME` не
   переопределять; stop ядра — через сокет helper'а.
-- **S4-T5c (research §31):** dev-helper под sudo + `SPLITROUTE_HELPER_SOCKET`;
-  порядок pf-опций: `hosts` до `user`; статистика первые ~2 с недоступна.
 - **Этап 7 (Clash YAML):** порядок веток детекта (JSON → vless → Clash →
   base64); `clash::try_parse` → `Ok(None)` для «не Clash»; `proxy-providers`
   не поддерживаются.
@@ -168,4 +177,5 @@ packaging_config следит).
 - **Локализация:** новые строки — в `ru.ts` и `en.ts` (тест следит за
   парностью и кириллицей).
 - **Упаковка:** `externalBin` только в платформенных конфигах; перед
-  `tauri build` — `fetch-core.sh` и `build-helper-sidecar.sh`.
+  `tauri build` — `fetch-core.sh`, `fetch-wintun.sh` и
+  `build-helper-sidecar.sh`.

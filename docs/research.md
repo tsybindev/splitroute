@@ -1480,3 +1480,104 @@ Live-проверка Linux-части по `docs/linux-runbook.md`: CachyOS п�
   пользователя) и дерево `~/Dev/splitroute` (13 МБ код + 5.9 ГБ target).
   Временные артефакты (`/tmp/sr-linux` с state.json реальной подписки)
   удалены в §8.
+
+## 35. Windows WFP-отчёт — S4-T5c закрыт (проверено 2026-11-22)
+
+Первая живая проверка WFP kill switch'а на реальной Windows 11 (10.0.26100),
+полностью под управлением агента: скрипты проверки и отката в
+`scripts/windows/`, среда собрана на пустой машине (rustup, pnpm, MSVC Build
+Tools уже стояли). Найдены и исправлены **два реальных бага helper'а**,
+оба не ловились юнит-тестами (план фильтров тестировался, реальные вызовы
+WFP — нет). Коммиты фиксов см. TASKS S4-T5c.
+
+### Как проверялось
+
+- Скрипты `scripts/windows/wfp-report.ps1` (основной) +
+  `wfp-watchdog.ps1` (аварийный откат). Основной самодостаточен: baseline
+  (`netsh wfp show filters` в XML), dev-helper `console` на пайпе
+  `splitroute-dev` (`--allow-sid <SID>`), `start` с `kill_switch:true`,
+  пробы, kill ядра, fail-closed, `stop`, верификация; отчёт пишется на диск
+  по ходу. Запуск — elevated PowerShell (UAC), `Start-Process -Verb RunAs`.
+- Минимальный конфиг ядра без TUN: только `mixed` inbound на
+  `127.0.0.1:18999` — для WFP-отчёта туннель не нужен, достаточно живого
+  процесса ядра (helper health-check — только «процесс жив»).
+- Сторож: отдельный скрытый elevated-процесс с дедлайном 240 с; по дедлайну —
+  `stop` по пайпу, kill dev-helper по PID-файлу, `Restart-Service BFE`
+  (не персистентные объекты умирают с BFE; mpssvc поднимается следом).
+  В нормальном прогоне выходит чисто по done-файлу.
+- Отчётная машина: установленное приложение `C:\Program Files\SplitRoute\`
+  и системный helper-служба `splitroute-helper-service` (Running, auto) —
+  **не тронуты**; dev-helper работал параллельно на отдельном пайпе.
+- Пробы при включённом kill switch: loopback OK, LAN (шлюз) OK,
+  `1.1.1.1:443` **refused** (не timeout!), трафик через ядро
+  (`curl --proxy 127.0.0.1:18999 https://www.gstatic.com/generate_204`) → 204.
+
+### Найдено и исправлено
+
+1. **Перечисление фильтров WFP с `layerKey = GUID_NULL` всегда падает —
+   `FWP_E_LAYER_NOT_FOUND` (0x80320004), даже когда совпадающие фильтры
+   существуют.** Первый прогон: `KILL_SWITCH_FAILED` на чистой машине.
+   Изначальная гипотеза «пустой матч → терпимый код» была опасной: если бы
+   шаблон был битым, `stop` никогда не удалял бы фильтры (машина осталась бы
+   заблокированной). Изолированная лабораторная проба (`%TEMP%`, не в репо)
+   перебрала варианты шаблона: **конкретный слой** (`ALE_AUTH_CONNECT_V4`/`_V6`)
+   + `providerKey` + `FULLY_CONTAINED` + `actionMask=0xFFFFFFFF` работает,
+   пустой результат на валидном слое приходит как ОК с нулём фильтров;
+   `GUID_NULL` в layerKey падает всегда (с фильтрами и без). Фикс
+   `delete_objects`: перечисление по обоим слоям по очереди. По SDK-заголовку
+   (`winerror.h` 10.0.26100) 0x80320004 = `FWP_E_LAYER_NOT_FOUND`;
+   `FWP_E_FILTER_MATCH_NOT_FOUND` в этом SDK не существует.
+2. **Гонка named pipe: ответ терялся («пустой ответ» у клиента).** Сервер
+   пишет ответ и сразу `DisconnectNamedPipe`, который выбрасывает
+   незачитанные клиентом данные из буфера — клиент видит EOF. Мгновенные
+   ответы (`status`, `ALREADY_RUNNING`) проигрывали гонку случайно —
+   до половины таких вызовов. Фикс `pipe.rs`: `FlushFileBuffers` перед
+   disconnect'ом (доктор MSDN для этого случая) и в SID-ветке отказа.
+3. **Latent-линт в Windows-only коде каталога**
+   (`catalog/windows.rs` needless_borrow): никогда не проверялся clippy —
+   до этого дня кросс-проверки были только `cargo check/clippy
+   --target x86_64-pc-windows-msvc` на macOS/Linux, которые этот код не
+   компилировали (feature-unification). Нативный `cargo clippy --workspace`
+   на Windows — обязательная часть проверок отсюда.
+
+### Подтверждено в рантайме (финальный прогон — ALL PASS, 21/21)
+
+- `start` c `kill_switch:true`: правила встают (18 ссылок на объекты
+  SplitRoute в XML-дампе WFP: 17 фильтров + подслой + провайдер), ядро
+  стартует, `ALREADY_RUNNING` при повторном `start`.
+- При активном kill switch: loopback и LAN живы, обычные приложения
+  блокируются (TCP `1.1.1.1:443` — refused), трафик через ядро работает
+  (HTTPS через `mixed`-инбаунд → 204) — дизайн «разрешить только ядро и
+  локальные сети» подтверждён.
+- Kill ядра по PID: `state: stopped`, `kill_switch.enabled: true`, правила
+  остаются, egress по-прежнему refused — fail-closed.
+- `stop`: kill_switch off, все объекты WFP удалены (0), интернет возвращён.
+- Два фикса подтверждены повторными прогонами: перечисление — первый
+  фикс (прогон с `KILL_SWITCH_FAILED` → прогон с включённым kill switch),
+  FlushFileBuffers — «пустой ответ» исчез полностью.
+
+### Грабли и ограничения
+
+- **WFP-блок на Windows = мгновенный refused, а не таймаут** (pf на macOS
+  молча дропает). Пробам блокировки не хватает условия «не open»:
+  `refused` от внешнего адреса возможен только от локального фильтра.
+- **UAC**: скрипты запускаются `Start-Process -Verb RunAs -Wait` — каждый
+  прогон требует клика; фоновые elevated-процессы наследуют elevation.
+- **Vite dev слушает `[::1]:1420`** (IPv6) — grep по netstat должен
+  учитывать обе семьи.
+- **`Start-Process -RedirectStandardOutput/Error`** обязательные параметры
+  передавать явно — объявленные переменные без передачи ничего не пишут
+  (потерянные логи первой пробы).
+- **UTF-16 вывод PowerShell `Out-File`** — читать через
+  `Get-Content`/`iconv`; `cat` в Git Bash показывает mojibake.
+- `taskkill //F //PID` в Git Bash — двойные слэши (MSYS конвертит `/PID`).
+- `corepack` в Node 26 нет — pnpm ставить `npm i -g pnpm`.
+- Статистика: `netsh wfp show filters file=<path>` пишет XML ~МБ; счётчик
+  объектов — grep по GUID провайдера; baseline до и после = 0.
+- Регресс-тест фикса перечисления: `crates/helper/tests/wfp_live.rs`
+  (`#[ignore]`, нужен elevation:
+  `cargo test -p splitroute-helper --test wfp_live -- --ignored`).
+- Осталось: kill switch на Windows с реальным профилем и GUI (проверено
+  только через протокол helper'а), TUN-трафик на Windows (в отчёте —
+  loopback-инбаунд вместо туннеля), wintun-драйвер в бандле — при
+  `tauri build`.
