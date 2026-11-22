@@ -1786,3 +1786,20 @@ copy → `net start`. Пайп службы отвечает протоколо�
   проверки обновления из приложения.
 - **Этап 10 (ближайший план)**: hot-reload per-app правил — правки правил
   применяются к активной сессии без переподключения (S10-T1 в TASKS.md).
+- **Ошибка при обновлении до 0.1.1 (пользователь):** NSIS-установщик —
+  «Error opening file for writing: C:\Program Files\SplitRoute\splitroute-helper.exe».
+  Причина: тихий установщик в режиме обновления убивает только процесс
+  приложения; `splitroute-helper.exe` залочен запущенной службой
+  `splitroute-helper-service` (Running/auto). Обходы в момент ошибки:
+  «Повтор» после `net stop splitroute-helper-service` (поднимается
+  POSTINSTALL-ом, пока нет — руками `net start`), либо «Пропустить» —
+  безопасно именно для 0.1.1 (helper функционально не менялся, протокол 2
+  тот же), но в общем случае неверен.
+- **Фикс (S9-T5, v0.1.2):** хуки `bundle.windows.nsis.installerHooks`
+  (`src-tauri/installer-hooks.nsh`): PREINSTALL `net stop
+  splitroute-helper-service` (синхронно дожидается остановки), POSTINSTALL
+  `net start`, PREUNINSTALL `net stop` (замена файлов при удалении — та же
+  блокировка). Коды ошибок отбрасываются (`nsExec::ExecToLog` + `Pop`): на
+  чистой установке службы ещё нет. `DetailPrint` латиницей — без
+  зависимости от кодировки nsh. Внутри установщика (UAC, perMachine) права
+  есть — из приложения службу останавливать не нужно.
