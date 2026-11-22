@@ -148,6 +148,21 @@
 
 ---
 
+## Этап 9 — релизы и автообновление (S9-T1/T2 done 2026-11-22, S9-T3 todo)
+
+Конвейер реализован и локально подписан; прогон workflow целиком — после push
+и тега v0.1.0. Путь «тег → подписанные артефакты → GitHub Release →
+latest.json → обновление установленного приложения» закрыт кодом,
+live-проверка — после переустановки приложения из релиза (новый pubkey).
+
+| ID | Задача | Владелец | Критерий приёмки |
+|---|---|---|---|
+| S9-T1 | Release-конвейер: `.github/workflows/release.yml` (триггер тег `v*` + workflow_dispatch) — Windows (NSIS) и Linux (deb/rpm/AppImage) с updater-подписью из GitHub Secrets (`TAURI_SIGNING_PRIVATE_KEY`/`..._PASSWORD`), черновик GitHub Release с артефактами и `.sig`, генерация `latest.json` (platforms `windows-x86_64`/`linux-x86_64`, signature — содержимое `.sig`, url — ассет релиза), публикация после успеха | оркестратор | done — `release.yml` + `scripts/make-latest-json.sh` (research §37); локальный `package.sh` с новым ключом подписал NSIS (`SplitRoute_0.1.0_x64-setup.exe` + `.sig`), манифест проверен на реальной подписи (signature pass-through, trusted comment `version:0.1.0`). Прогон workflow на GitHub — после push и тега v0.1.0 |
+| S9-T2 | Реальный endpoint обновлений: хостинг `latest.json` (GitHub Releases, PRD §13 п. 11), правка `UPDATE_BASE`/`is_configured()` в `updates.rs` и `endpoints` в `tauri.conf.json`, обновление тестов заглушки | rust-core + оркестратор | done частично — `UPDATE_BASE` на `releases/latest/download`, канал в имени файла (`latest.json`/`beta-latest.json`), заглушка `.invalid` удалена (публичный ключ заменён — старый был с другой машины). **Осталось:** live `update_check` в переустановленном из релиза приложении; полная проверка «скачал → подпись → установка → перезапуск» — при следующем релизе (v0.1.1+) |
+| S9-T3 | Windows live-проверка фоновых фич: автозапуск при входе (`launch_at_login` → реестр Run, вкл/выкл), подключение при старте с установленным helper'ом (`connect_on_start`), автовыбор локации с реальной подпиской (пинги, рекомендация) | verifier | каждая фича подтверждена в реальном окружении, настройки пользователя возвращены |
+
+---
+
 ## Backlog
 
 - ~~Clash YAML~~ — done в S7-T1…S7-T3 (`ceca190`).

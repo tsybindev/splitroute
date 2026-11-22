@@ -1677,3 +1677,83 @@ copy → `net start`. Пайп службы отвечает протоколо�
 значение при «слепом» клике — проверять скриншотом карточки после клика;
 двойные тогглы из прерванных скриптов дают чётное число переключений —
 проверять по state.json после каждого сохранения.
+
+### 37. Релизный конвейер и реальный endpoint обновлений (S9-T1/T2, 2026-11-22)
+
+#### Решения и форматы (из исходника tauri-plugin-updater 2.14.1)
+
+- **Поле `signature` манифеста — содержимое `.sig` как есть.** CLI v2 пишет
+  `.sig` одной строкой base64 от minisign-текста; плагин декодирует поле
+  (`base64_to_string` → `Signature::decode`, `updater.rs` плагина:1901-1903)
+  и парсит minisign. Двойное кодирование (base64 от base64-файла) и сырой
+  minisign-текст в поле одинаково дают `UPDATE_SIGNATURE`; формулировка
+  handoff «содержимое .sig одной строкой» точна. make-latest-json.sh
+  принимает оба формата `.sig` (v2 base64 — pass-through, сырой текст v1 —
+  кодирует в base64), проверяет заголовок minisign и сверяет `version:` из
+  trusted comment с версией релиза.
+- **`requireSignedVersion: true`** сверяет `version` манифеста с `version:`
+  из trusted comment подписи (Tauri CLI пишет его при подписи артефакта);
+  несовпадение → `SignedVersionMismatch`, отсутствие поля в комментарии →
+  `MissingSignedVersion`. Защита от подмены пары «новая версия + старый
+  артефакт» в неподписанном манифесте.
+- **Каналы на GitHub Releases**: ассеты релиза плоские (подпапок нет), поэтому
+  канал кодируется именем файла манифеста — `latest.json` (stable) и
+  `beta-latest.json` (beta); схема обновлена в `updates.rs`
+  (`manifest_name`) вместо прежней `{channel}/latest.json` для собственного
+  домена. `releases/latest/download/<file>` отдаёт последний **опубликованный
+  не-prerelease** релиз и следует редиректам.
+- **Beta-канал**: beta-тег (`*-beta*`) создаёт prerelease, чьи ассеты через
+  `latest/download` недостижимы — release.yml дополнительно кладёт
+  `beta-latest.json` (--clobber) на последний стабильный релиз. До первой
+  beta-сборки beta-манифест стабильного релиза ведёт на тот же релиз.
+
+#### Что сделано
+
+- `.github/workflows/release.yml`: тег `v*` (+ workflow_dispatch с вводом
+  тега) → матрица windows-latest/ubuntu-22.04 → `package.sh` с
+  `TAURI_SIGNING_PRIVATE_KEY`/`..._PASSWORD` из Secrets (без
+  `SPLITROUTE_ALLOW_UNSIGNED`) → артефакты (NSIS exe+sig; deb/rpm — пакеты
+  без подписи; AppImage+sig) → job публикации: `make-latest-json.sh` с
+  `--require-platform windows-x86_64,linux-x86_64`, `gh release create
+  --draft --generate-notes`, загрузка артефактов `--clobber`, публикация
+  (снятие draft) после загрузки. Тесты в релизе не повторяются — их прогоняет
+  build.yml на main.
+- `scripts/make-latest-json.sh`: манифест из артефактов версии
+  (`*_<version>_*-setup.exe.sig` / `*_<version>_*.AppImage.sig`), JSON
+  собирается node (jq нет ни на windows-runner, ни локально); валидации:
+  minisign-заголовок .sig, непустой, ровно один артефакт версии,
+  `--require-platform` проверяет наличие обеих платформ. Грабля первого
+  прогона: скрипт был закоммичен без exec-бита (Write на Windows не ставит
+  +x, git пишет 100644) → release job упал с Permission denied; фикс —
+  `git update-index --chmod=+x`, тег передвинут на фикс-коммит и
+  перепушен (force) — прогон перезапустился с нуля.
+- `updates.rs`: `UPDATE_BASE = https://github.com/tsybindev/splitroute/releases/latest/download`,
+  `manifest_name(channel)`; заглушка `.invalid` и `is_configured()` удалены —
+  канал всегда настроен (`status.configured: true`), ветка
+  `UPDATE_NOT_CONFIGURED` осталась в API, но недостижима (тест
+  `endpoint_defaults_to_github_releases` проверяет реальные URL обоих
+  каналов). `tauri.conf.json`: endpoints на реальный URL, публичный ключ
+  updater заменён (см. ниже).
+- **Ключ подписи перегенерирован**: прежняя пара (pubkey F82F4E91…) была
+  создана на другой машине (`~/.commandcode/` здесь не существовал, S4-T8
+  верифицировался на macOS-артефакте), Linux-машина 192.168.0.49 недоступна.
+  Новая пара minisign — `~/.commandcode/splitroute-updater.key` (+`.key.pass`
+  с паролем, право 600), публичный ключ в `tauri.conf.json`. Пароль не
+  печатался в вывод: `pnpm` эхом показывает argv, поэтому CLI звали напрямую
+  через `node …/tauri.js`, пароль — через файл. Работоспособность пары
+  подтверждена подписью/проверкой тестового файла. **Следствие: установленное
+  приложение 0.1.0 со старым pubkey один раз переустанавливается из релиза.**
+- `gh secret set` (контент из файлов, без печати): `TAURI_SIGNING_PRIVATE_KEY`,
+  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+
+#### Проверено локально (Windows)
+
+- make-latest-json.sh на реальных артефактах: `signature` = `.sig` как есть
+  (pass-through), декод даёт minisign-текст с `version:0.1.0` в trusted
+  comment, url — прямая ссылка на ассет тега, `pub_date` ISO 8601; ветка
+  сырого текста (v1) проверена на синтетике; ошибка при отсутствии
+  требуемой платформы — понятная.
+- Локальный `package.sh` с ключом: NSIS `SplitRoute_0.1.0_x64-setup.exe`
+  (24 МБ) + `.sig` (440 Б, base64 minisign), подпись новым ключом.
+- Автопроверки: fmt/clippy -D warnings/test (Rust), typecheck/lint/test
+  (frontend 114).
