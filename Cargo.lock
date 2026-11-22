@@ -3776,7 +3776,7 @@ dependencies = [
 
 [[package]]
 name = "splitroute"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "dirs 7.0.0",
  "image",
@@ -3801,7 +3801,7 @@ dependencies = [
 
 [[package]]
 name = "splitroute-helper"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "libc",
@@ -3812,7 +3812,7 @@ dependencies = [
 
 [[package]]
 name = "splitroute-protocol"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",

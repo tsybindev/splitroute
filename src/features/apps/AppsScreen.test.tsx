@@ -395,6 +395,30 @@ describe("AppsScreen", () => {
     );
   });
 
+  it("показывает шпаргалку regex по кнопке (i) только для типа regex", async () => {
+    const user = await openRulesTab();
+    const toggle = () =>
+      screen.queryByRole("button", { name: "Как писать шаблон" });
+
+    // Для имени процесса и пути кнопки нет.
+    expect(toggle()).not.toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText("Тип правила"), "regex");
+    expect(toggle()).toBeInTheDocument();
+    // Подсказка закрыта до нажатия.
+    expect(screen.queryByText(/удвоенным/)).not.toBeInTheDocument();
+
+    await user.click(toggle()!);
+    expect(screen.getByText(/удвоенным/)).toBeInTheDocument();
+    expect(screen.getByText(/Discord\\\.exe/)).toBeInTheDocument();
+    expect(toggle()).toHaveAttribute("aria-expanded", "true");
+
+    // Смена типа прячет кнопку вместе с открытой подсказкой.
+    await user.selectOptions(screen.getByLabelText("Тип правила"), "path");
+    expect(toggle()).not.toBeInTheDocument();
+    expect(screen.queryByText(/удвоенным/)).not.toBeInTheDocument();
+  });
+
   it("не отправляет пустое правило", async () => {
     const user = await openRulesTab();
     await user.click(screen.getByRole("button", { name: "Добавить правило" }));

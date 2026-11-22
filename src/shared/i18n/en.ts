@@ -104,6 +104,11 @@ export const en: Record<MessageKey, string> = {
   "apps.add.type.process": "Process name",
   "apps.add.type.path": "Process path",
   "apps.add.type.regex": "Path regex",
+  "apps.add.regex_hint.toggle": "How to write the pattern",
+  "apps.add.regex_hint.body":
+    "The pattern matches the full process path.\nDouble every backslash in the path (\\\\), escape the dot in the file name (\\\\.).\nAnchors ^ and $ pin the match to the full path.\nReplace the version directory the app changes on update (Discord: app-1.0.9269) with app-[0-9.]+:\nThe rule applies on the next connect.",
+  "apps.add.regex_hint.example":
+    "^C:\\\\Users\\\\Name\\\\AppData\\\\Local\\\\Discord\\\\app-[0-9.]+\\\\Discord\\.exe$",
   "apps.add.value": "Value",
   "apps.add.submit": "Add rule",
   "apps.empty": "No rules yet. Add an application whose traffic should go through the proxy.",

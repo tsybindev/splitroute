@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import { Info, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import type { InstalledApp, RunningApp } from "../../shared/api/types";
 import { t, type MessageKey } from "../../shared/i18n";
 import { useAppStore, type NewRuleInput } from "../../shared/state/appStore";
@@ -348,6 +348,7 @@ function RulesTab() {
   const deleteRule = useAppStore((state) => state.deleteRule);
   const [input, setInput] = useState<NewRuleInput>(emptyInput);
   const [invalid, setInvalid] = useState(false);
+  const [hintOpen, setHintOpen] = useState(false);
 
   const submit = async () => {
     if (!input.name.trim() || !input.value.trim()) {
@@ -384,12 +385,13 @@ function RulesTab() {
               id="rule-kind"
               className={inputClass}
               value={input.kind}
-              onChange={(event) =>
+              onChange={(event) => {
                 setInput({
                   ...input,
                   kind: event.target.value as NewRuleInput["kind"],
-                })
-              }
+                });
+                setHintOpen(false);
+              }}
             >
               <option value="process">{t("apps.add.type.process")}</option>
               <option value="path">{t("apps.add.type.path")}</option>
@@ -407,6 +409,31 @@ function RulesTab() {
             />
           </Field>
         </div>
+        {/* Приложение может менять каталог при обновлении (Discord: app-*),
+            поэтому для regex показываем шпаргалку по кнопке (S9-T4). */}
+        {input.kind === "regex" ? (
+          <div>
+            <button
+              type="button"
+              aria-expanded={hintOpen}
+              onClick={() => setHintOpen((open) => !open)}
+              className="mt-1 flex cursor-pointer items-center gap-1.5 text-xs text-neutral-400 hover:text-neutral-200"
+            >
+              <Info className="size-3.5" />
+              {t("apps.add.regex_hint.toggle")}
+            </button>
+            {hintOpen ? (
+              <div className="mt-2 rounded-lg border border-neutral-800 bg-neutral-900/60 p-3 text-xs leading-relaxed text-neutral-300">
+                <p className="whitespace-pre-line">
+                  {t("apps.add.regex_hint.body")}
+                </p>
+                <p className="mt-2 break-all font-mono text-neutral-100">
+                  {t("apps.add.regex_hint.example")}
+                </p>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         <div className="mt-3 flex items-center gap-3">
           <Button
             variant="primary"
