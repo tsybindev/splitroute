@@ -92,6 +92,12 @@ export const ru = {
   "profiles.pinging": "Проверка…",
   "profiles.latencyMs": "{ms} мс",
   "profiles.best": "Лучшая",
+  "profiles.enableAll": "Включить все",
+  "profiles.disableAll": "Выключить все",
+  "profiles.enableToggle": "Включить или выключить локацию",
+  "profiles.disabledBadge": "Выключена",
+  "profiles.disabledHint":
+    "Выключенные локации не участвуют в автовыборе и автопереключении.",
 
   "apps.title": "Приложения",
   "apps.explanation":
@@ -162,6 +168,7 @@ export const ru = {
   "subscriptions.url": "URL подписки",
   "subscriptions.urlHint": "Ссылка на подписку провайдера (Happ-JSON, base64 или vless://).",
   "subscriptions.userAgent": "User-Agent",
+  "subscriptions.userAgentHint": "Пусто — подставится User-Agent приложения текущей версии.",
   "subscriptions.autoUpdate": "Автообновление, ч",
   "subscriptions.autoUpdateHint":
     "0 — выключено. Расписание у каждой подписки своё; обновление идёт в фоне, пока приложение запущено.",

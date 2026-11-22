@@ -76,6 +76,14 @@ export const api = {
   profilesPing: () => invoke<LatencyResponse>("profiles_ping"),
   profileSelect: (id: string) =>
     invoke<ProfilesResponse>("profile_select", { id }),
+  // Включение/выключение локаций подписки (одной или массово). Выключение
+  // выбранной при активной сессии переподключает туннель внутри команды.
+  profilesSetEnabled: (subscriptionId: string, profileIds: string[], enabled: boolean) =>
+    invoke<ProfilesResponse>("profiles_set_enabled", {
+      subscription_id: subscriptionId,
+      profile_ids: profileIds,
+      enabled,
+    }),
   // Переключение с переподключением: stop → выбор → start.
   profileSwitch: (id: string) =>
     invoke<ProfilesResponse>("profile_switch", { id }),

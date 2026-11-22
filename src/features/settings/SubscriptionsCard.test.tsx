@@ -41,6 +41,25 @@ describe("SubscriptionsCard", () => {
     expect(screen.getByLabelText(/URL подписки/)).toBeInTheDocument();
   });
 
+  it("подставляет User-Agent текущей версии в форму добавления", async () => {
+    const user = userEvent.setup();
+    useAppStore.setState({
+      updateStatus: {
+        current_version: "0.1.3",
+        channel: "stable",
+        configured: true,
+      },
+    });
+
+    render(<SubscriptionsCard />);
+    await user.click(screen.getByRole("button", { name: "Новая подписка" }));
+
+    const agent = screen.getByLabelText(
+      /User-Agent/,
+    ) as HTMLInputElement;
+    expect(agent.value).toBe("SplitRoute/0.1.3");
+  });
+
   it("кнопка «Импорт по QR» открывает диалог импорта", async () => {
     const user = userEvent.setup();
     render(<SubscriptionsCard />);

@@ -339,6 +339,9 @@ pub struct SubscriptionView {
     /// Когда произойдёт следующее автообновление (M1); `null` — не запланировано.
     pub next_update_at: Option<u64>,
     pub profiles: Vec<Profile>,
+    /// Выключенные пользователем локации (profile_id): в автовыбор не
+    /// попадают, выбрать вручную их нельзя.
+    pub disabled_profiles: Vec<String>,
 }
 
 /// Профили и выбранная локация для экрана «Локации».
@@ -391,6 +394,7 @@ fn subscription_view(state: &AppState, subscription: &SubscriptionState) -> Subs
             .cloned()
             .map(sanitize_profile)
             .collect(),
+        disabled_profiles: subscription.disabled_profiles.clone(),
     }
 }
 
@@ -432,6 +436,12 @@ pub(crate) fn connect_inner(state: &AppState) -> Result<HelperStatus, CommandErr
             "Выбранная локация отсутствует в подписке.",
         )
     })?;
+    if data.profile_is_disabled(selected) {
+        return Err(CommandError::new(
+            "PROFILE_DISABLED",
+            "Выбранная локация выключена. Выберите другую.",
+        ));
+    }
 
     // Статистика не должна быть условием подключения: без свободного порта
     // туннель всё равно поднимается, а UI показывает «—».
@@ -509,7 +519,9 @@ pub(crate) fn disconnect_inner(state: &AppState) -> Result<HelperStatus, Command
 pub(crate) fn profiles_ping_inner(state: &AppState) -> LatencyResponse {
     let data = state.store.data();
     let auto = data.settings.preferences.auto_select.clone();
-    let profiles = data.all_profiles();
+    // Выключенные локации не пингуются: они не попадают ни в «лучшую», ни
+    // в кандидатов автовыбора и автопереключения.
+    let profiles = data.enabled_profiles();
     let results = latency::measure(state.probe.as_ref(), &profiles, latency::PROBE_TIMEOUT);
     let best = latency::best_profile(&results).cloned();
 
@@ -1058,6 +1070,73 @@ pub fn profile_select(
 ) -> Result<ProfilesResponse, CommandError> {
     state.store.select_profile(&id)?;
     Ok(profiles_response(&state))
+}
+
+/// Включает/выключает локации одной подписки (одну или массово).
+///
+/// Выключение выбранной локации при активной сессии переносит выбор на
+/// первую включённую (fallback в сторе) и переподключает туннель — как
+/// ручная смена локации. Отката к выключенной локации нет: если новый старт
+/// не удался, туннель остаётся остановленным, ошибка видна в UI.
+#[tauri::command]
+pub fn profiles_set_enabled(
+    state: tauri::State<'_, AppState>,
+    subscription_id: String,
+    profile_ids: Vec<String>,
+    enabled: bool,
+) -> Result<ProfilesResponse, CommandError> {
+    profiles_set_enabled_inner(
+        &state,
+        &subscription_id,
+        &profile_ids,
+        enabled,
+    )
+}
+
+pub(crate) fn profiles_set_enabled_inner(
+    state: &AppState,
+    subscription_id: &str,
+    profile_ids: &[String],
+    enabled: bool,
+) -> Result<ProfilesResponse, CommandError> {
+    let selected_before = state.store.data().selected_profile_id;
+    state
+        .store
+        .set_profiles_enabled(subscription_id, profile_ids, enabled)?;
+    let selection_moved = state.store.data().selected_profile_id != selected_before;
+
+    let running = state
+        .helper
+        .status()
+        .map(|status| status.state == CoreState::Running)
+        .unwrap_or(false);
+    if running && selection_moved {
+        // Ручная смена локации: серия автореконнекта не должна вмешаться,
+        // пока ядро кратковременно остановлено.
+        state.reconnect_disarm();
+        state.helper.stop()?;
+        state.set_traffic_endpoint(None);
+        state.reset_latency();
+        let data = state.store.data();
+        let target = data
+            .selected_profile_id
+            .as_deref()
+            .and_then(|id| data.find_profile(id))
+            .map(|profile| profile.name.clone())
+            .unwrap_or_else(|| "—".to_string());
+        state.logs.push(
+            LogLevel::Info,
+            format!("Выбранная локация выключена — переключение на {target}"),
+        );
+        if let Err(error) = connect_inner(state) {
+            state.logs.push(
+                LogLevel::Warn,
+                format!("Не удалось подключиться к {target}: туннель остановлен"),
+            );
+            return Err(error);
+        }
+    }
+    Ok(profiles_response(state))
 }
 
 /// Проверка задержек не должна блокировать окно: TCP-connect с таймаутом и
@@ -1838,6 +1917,108 @@ mod tests {
             logs.iter()
                 .all(|entry| !entry.message.contains("203.0.113")),
             "адрес сервера не должен попадать в лог"
+        );
+    }
+
+    /// Выключенная локация не пингуется и не становится «лучшей».
+    #[test]
+    fn profiles_ping_skips_disabled_profiles() {
+        let state = state_with(Ok(fixture())).with_test_probe(Arc::new(FixedProbe));
+        fetch_sub(&state).unwrap();
+        let entry = state.store.data().subscriptions[0].clone();
+        let disabled_id = entry.profiles[0].id.clone();
+        profiles_set_enabled_inner(&state, &entry.id, &[disabled_id.clone()], false).unwrap();
+
+        let response = profiles_ping_inner(&state);
+        assert_eq!(
+            response.results.len(),
+            1,
+            "выключенная локация не пингуется"
+        );
+        assert_ne!(response.results[0].profile_id, disabled_id);
+        assert_ne!(
+            response.best_profile_id.as_deref(),
+            Some(disabled_id.as_str()),
+            "выключенная локация не становится «лучшей»"
+        );
+    }
+
+    /// Выключение выбранной локации при активной сессии: выбор переносится на
+    /// первую включённую, туннель переподключается на неё.
+    #[test]
+    fn disabling_selected_profile_while_running_reconnects_to_fallback() {
+        let helper = Arc::new(MockHelperClient::new());
+        let state = AppState::new(
+            helper.clone(),
+            Arc::new(UnsupportedInstaller),
+            Store::load(temp_path("disable-running")),
+            Arc::new(MockFetcher {
+                body: Ok(fixture()),
+            }),
+        );
+        fetch_sub(&state).unwrap();
+        connect_inner(&state).unwrap();
+        assert_eq!(helper.start_calls(), 1);
+
+        let entry = state.store.data().subscriptions[0].clone();
+        let selected = state.store.data().selected_profile_id.clone().unwrap();
+        let response =
+            profiles_set_enabled_inner(&state, &entry.id, &[selected.clone()], false).unwrap();
+
+        let new_selected = state.store.data().selected_profile_id.clone().unwrap();
+        assert_ne!(
+            new_selected, selected,
+            "выбор перешёл на первую включённую"
+        );
+        assert_eq!(
+            response.selected_profile_id.as_deref(),
+            Some(new_selected.as_str())
+        );
+        assert_eq!(helper.stop_calls(), 1);
+        assert_eq!(
+            helper.start_calls(),
+            2,
+            "туннель переподключён на новую локацию"
+        );
+        let fallback_server = state
+            .store
+            .data()
+            .find_profile(&new_selected)
+            .unwrap()
+            .server
+            .clone();
+        assert_eq!(
+            helper.last_config().unwrap()["outbounds"][0]["server"],
+            fallback_server,
+            "конфиг собран из fallback-локации"
+        );
+    }
+
+    /// Выключение локации при остановленном туннеле не трогает helper:
+    /// меняется только сохранённый выбор.
+    #[test]
+    fn disabling_profile_while_stopped_does_not_touch_helper() {
+        let helper = Arc::new(MockHelperClient::new());
+        let state = AppState::new(
+            helper.clone(),
+            Arc::new(UnsupportedInstaller),
+            Store::load(temp_path("disable-stopped")),
+            Arc::new(MockFetcher {
+                body: Ok(fixture()),
+            }),
+        );
+        fetch_sub(&state).unwrap();
+        let entry = state.store.data().subscriptions[0].clone();
+        let selected = state.store.data().selected_profile_id.clone().unwrap();
+
+        profiles_set_enabled_inner(&state, &entry.id, &[selected], false).unwrap();
+
+        assert_eq!(helper.stop_calls(), 0);
+        assert_eq!(helper.start_calls(), 0);
+        assert_ne!(
+            state.store.data().selected_profile_id,
+            None,
+            "выбор перенесён на включённую локацию"
         );
     }
 

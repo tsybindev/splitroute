@@ -93,6 +93,11 @@ interface AppState {
   addSubscription: (input: SubscriptionInput) => Promise<void>;
   updateSubscription: (id: string, input: SubscriptionInput) => Promise<void>;
   deleteSubscription: (id: string) => Promise<void>;
+  setProfilesEnabled: (
+    subscriptionId: string,
+    profileIds: string[],
+    enabled: boolean,
+  ) => Promise<void>;
   pingProfiles: () => Promise<void>;
   autoSwitchCheck: () => Promise<void>;
   switchProfile: (id: string) => Promise<void>;
@@ -418,6 +423,29 @@ export const useAppStore = create<AppState>((set, get) => {
       await withBusy(`subscription-delete-${id}`, async () => {
         try {
           const response = await api.subscriptionDelete(id);
+          set({
+            subscriptions: response.subscriptions,
+            profiles: response.profiles,
+            selectedProfileId: response.selected_profile_id,
+            actionError: null,
+          });
+        } catch (error) {
+          set({ actionError: toCommandError(error) });
+        }
+      });
+    },
+
+    /// Включает/выключает локации подписки. Выключение выбранной при
+    /// активной сессии переподключает туннель внутри команды: новый статус
+    /// придёт событием подключения, здесь меняется только список.
+    setProfilesEnabled: async (subscriptionId, profileIds, enabled) => {
+      await withBusy(`profiles-enabled-${subscriptionId}`, async () => {
+        try {
+          const response = await api.profilesSetEnabled(
+            subscriptionId,
+            profileIds,
+            enabled,
+          );
           set({
             subscriptions: response.subscriptions,
             profiles: response.profiles,

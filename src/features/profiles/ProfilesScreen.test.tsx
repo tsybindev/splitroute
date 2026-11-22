@@ -8,6 +8,7 @@ import { makeProfile, makeSubscription } from "../../test/fixtures";
 const apiMock = vi.hoisted(() => ({
   profileSelect: vi.fn(),
   profilesPing: vi.fn(),
+  profilesSetEnabled: vi.fn(),
   subscriptionFetch: vi.fn(),
 }));
 
@@ -127,7 +128,7 @@ describe("ProfilesScreen", () => {
     }
   });
 
-  it("проверяет задержки, сортирует и помечает лучшую", async () => {
+  it("проверяет задержки, сохраняет порядок подписки и помечает лучшую", async () => {
     const user = userEvent.setup();
     const slow = makeProfile({ id: "slow", name: "Медленная" });
     const fast = makeProfile({ id: "fast", name: "Быстрая" });
@@ -156,8 +157,8 @@ describe("ProfilesScreen", () => {
     expect(screen.getByText("40 мс")).toBeInTheDocument();
     expect(screen.getByText("Лучшая")).toBeInTheDocument();
     const items = screen.getAllByRole("listitem");
-    expect(items[0]).toHaveTextContent("Быстрая");
-    expect(items[1]).toHaveTextContent("Медленная");
+    expect(items[0]).toHaveTextContent("Медленная");
+    expect(items[1]).toHaveTextContent("Быстрая");
   });
 
   it("показывает время следующего автообновления у подписки", () => {
@@ -239,6 +240,136 @@ describe("ProfilesScreen", () => {
     await waitFor(() => expect(apiMock.profileSelect).toHaveBeenCalledWith("p2"));
     await waitFor(() =>
       expect(useAppStore.getState().selectedProfileId).toBe("p2"),
+    );
+  });
+
+  it("переключает локацию чекбоксом и применяет ответ", async () => {
+    const user = userEvent.setup();
+    const first = makeProfile({ id: "p1", name: "Локация A" });
+    const second = makeProfile({ id: "p2", name: "Локация B" });
+    const entry = makeSubscription({ id: "s1", profiles: [first, second] });
+    const updatedEntry = makeSubscription({
+      id: "s1",
+      profiles: [first, second],
+      disabled_profiles: ["p1"],
+    });
+    apiMock.profilesSetEnabled.mockResolvedValue({
+      subscriptions: [updatedEntry],
+      profiles: [first, second],
+      selected_profile_id: "p2",
+    });
+    useAppStore.setState({
+      subscriptions: [entry],
+      profiles: [first, second],
+      selectedProfileId: "p2",
+    });
+
+    render(<ProfilesScreen />);
+    const checkbox = screen.getByRole("checkbox", {
+      name: "Включить или выключить локацию: Локация A",
+    });
+    expect(checkbox).toBeChecked();
+    await user.click(checkbox);
+
+    await waitFor(() =>
+      expect(apiMock.profilesSetEnabled).toHaveBeenCalledWith(
+        "s1",
+        ["p1"],
+        false,
+      ),
+    );
+    await waitFor(() =>
+      expect(useAppStore.getState().subscriptions[0].disabled_profiles).toEqual(
+        ["p1"],
+      ),
+    );
+    expect(screen.getByText("Выключена")).toBeInTheDocument();
+  });
+
+  it("выключенную локацию нельзя выбрать, включённую можно", async () => {
+    const user = userEvent.setup();
+    const first = makeProfile({ id: "p1", name: "Локация A" });
+    const second = makeProfile({ id: "p2", name: "Локация B" });
+    const entry = makeSubscription({
+      id: "s1",
+      profiles: [first, second],
+      disabled_profiles: ["p1"],
+    });
+    apiMock.profileSelect.mockResolvedValue({
+      subscriptions: [entry],
+      profiles: [first, second],
+      selected_profile_id: "p2",
+    });
+    useAppStore.setState({
+      subscriptions: [entry],
+      profiles: [first, second],
+      selectedProfileId: "p2",
+    });
+
+    render(<ProfilesScreen />);
+    expect(screen.getByText("Выключена")).toBeInTheDocument();
+
+    await user.click(screen.getByText("Локация A"));
+    expect(apiMock.profileSelect).not.toHaveBeenCalled();
+
+    await user.click(screen.getByText("Локация B"));
+    await waitFor(() =>
+      expect(apiMock.profileSelect).toHaveBeenCalledWith("p2"),
+    );
+  });
+
+  it("массово выключает и включает локации подписки", async () => {
+    const user = userEvent.setup();
+    const first = makeProfile({ id: "p1", name: "Локация A" });
+    const second = makeProfile({ id: "p2", name: "Локация B" });
+    const entry = makeSubscription({ id: "s1", profiles: [first, second] });
+    useAppStore.setState({
+      subscriptions: [entry],
+      profiles: [first, second],
+    });
+
+    render(<ProfilesScreen />);
+    // Всё включено: «Включить все» нечего делать.
+    expect(
+      screen.getByRole("button", { name: "Включить все" }),
+    ).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "Выключить все" }));
+    await waitFor(() =>
+      expect(apiMock.profilesSetEnabled).toHaveBeenCalledWith(
+        "s1",
+        ["p1", "p2"],
+        false,
+      ),
+    );
+  });
+
+  it("массовое включение доступно, когда есть выключенные", async () => {
+    const user = userEvent.setup();
+    const first = makeProfile({ id: "p1", name: "Локация A" });
+    const second = makeProfile({ id: "p2", name: "Локация B" });
+    const entry = makeSubscription({
+      id: "s1",
+      profiles: [first, second],
+      disabled_profiles: ["p1", "p2"],
+    });
+    useAppStore.setState({
+      subscriptions: [entry],
+      profiles: [first, second],
+    });
+
+    render(<ProfilesScreen />);
+    expect(
+      screen.getByRole("button", { name: "Выключить все" }),
+    ).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "Включить все" }));
+    await waitFor(() =>
+      expect(apiMock.profilesSetEnabled).toHaveBeenCalledWith(
+        "s1",
+        ["p1", "p2"],
+        true,
+      ),
     );
   });
 });

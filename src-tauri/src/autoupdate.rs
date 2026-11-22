@@ -345,6 +345,7 @@ mod tests {
             user_agent: String::new(),
             auto_update_hours: 6,
             profiles: Vec::new(),
+            disabled_profiles: Vec::new(),
             fetched_at: None,
         });
         std::fs::write(&path, serde_json::to_vec(&data).unwrap()).unwrap();

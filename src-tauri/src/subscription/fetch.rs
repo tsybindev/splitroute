@@ -113,18 +113,18 @@ impl SubscriptionFetcher for ReqwestFetcher {
             .build()
             .map_err(|error| FetchError::Network(network_message(&error)))?;
 
+        // Пустой UA — дефолт приложения (следует за версией сборки).
+        let agent = if request.user_agent.trim().is_empty() {
+            crate::store::default_user_agent()
+        } else {
+            request.user_agent.trim().to_string()
+        };
+
         let response = client
             .get(request.url.trim())
             .header("X-HWID", &request.hwid)
             .header("Accept", "application/json")
-            .header(
-                reqwest::header::USER_AGENT,
-                if request.user_agent.trim().is_empty() {
-                    "SplitRoute/0.1.0"
-                } else {
-                    request.user_agent.trim()
-                },
-            )
+            .header(reqwest::header::USER_AGENT, agent)
             .send()
             .map_err(|error| FetchError::Network(network_message(&error)))?;
 
@@ -325,6 +325,40 @@ mod tests {
         let subscription = fetch_and_parse(&ReqwestFetcher::new(), &target).unwrap();
         assert_eq!(subscription.profiles.len(), 2);
         handle.join().unwrap();
+    }
+
+    /// Пустой UA в запросе заменяется дефолтом приложения текущей версии.
+    #[test]
+    fn empty_user_agent_falls_back_to_app_default() {
+        init_tls();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buffer = [0_u8; 2048];
+            let read = stream.read(&mut buffer).unwrap_or(0);
+            let request_text = String::from_utf8_lossy(&buffer[..read]).to_string();
+            let response =
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n[]";
+            let _ = stream.write_all(response.as_bytes());
+            request_text
+        });
+
+        let mut target = request();
+        target.url = format!("http://{address}/subscription.json");
+        target.user_agent = "  ".to_string();
+        let _ = ReqwestFetcher::new().fetch(&target).unwrap();
+
+        let request_text = handle.join().unwrap();
+        let agent_header = request_text
+            .lines()
+            .find(|line| line.to_ascii_lowercase().starts_with("user-agent:"))
+            .expect("User-Agent присутствует в запросе");
+        assert_eq!(
+            agent_header.split_once(':').unwrap().1.trim(),
+            format!("SplitRoute/{}", env!("CARGO_PKG_VERSION")),
+            "пустой UA заменяется дефолтом текущей версии"
+        );
     }
 
     #[test]

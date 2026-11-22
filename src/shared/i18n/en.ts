@@ -94,6 +94,12 @@ export const en: Record<MessageKey, string> = {
   "profiles.pinging": "Checking…",
   "profiles.latencyMs": "{ms} ms",
   "profiles.best": "Best",
+  "profiles.enableAll": "Enable all",
+  "profiles.disableAll": "Disable all",
+  "profiles.enableToggle": "Enable or disable the location",
+  "profiles.disabledBadge": "Off",
+  "profiles.disabledHint":
+    "Disabled locations are excluded from auto-select and auto-switch.",
 
   "apps.title": "Applications",
   "apps.explanation":
@@ -164,6 +170,7 @@ export const en: Record<MessageKey, string> = {
   "subscriptions.url": "Subscription URL",
   "subscriptions.urlHint": "Provider subscription link (Happ JSON, base64 or vless://).",
   "subscriptions.userAgent": "User-Agent",
+  "subscriptions.userAgentHint": "Empty — the app's User-Agent with the current version is filled in.",
   "subscriptions.autoUpdate": "Auto-update, h",
   "subscriptions.autoUpdateHint":
     "0 disables it. Each subscription has its own schedule; refresh runs in the background while the app is open.",

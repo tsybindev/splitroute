@@ -42,8 +42,15 @@ const emptyInput: SubscriptionInput = {
  */
 export function SubscriptionsCard() {
   const subscriptions = useAppStore((state) => state.subscriptions);
+  const updateStatus = useAppStore((state) => state.updateStatus);
   const actionError = useAppStore((state) => state.actionError);
   const busy = useAppStore((state) => state.busy);
+  // Дефолтный UA виден в форме сразу: пользователь понимает, что уйдёт
+  // провайдеру. Пока статус обновлений не загружен, поле остаётся пустым —
+  // бэкенд сам подставит дефолт текущей версии.
+  const appUserAgent = updateStatus
+    ? `SplitRoute/${updateStatus.current_version}`
+    : "";
   // Черновики полей живут отдельно от стора: фоновое обновление профилей
   // не затирает незаконченную правку параметров.
   const [drafts, setDrafts] = useState<Record<string, SubscriptionInput>>({});
@@ -131,6 +138,7 @@ export function SubscriptionsCard() {
             <div className="grid gap-3 sm:grid-cols-2">
               <Field
                 label={t("subscriptions.userAgent")}
+                hint={t("subscriptions.userAgentHint")}
                 htmlFor="subscription-add-agent"
               >
                 <input
@@ -185,7 +193,7 @@ export function SubscriptionsCard() {
         </div>
       ) : (
         <div className="mt-4 flex gap-2">
-          <Button onClick={() => setAdding({ ...emptyInput })}>
+          <Button onClick={() => setAdding({ ...emptyInput, user_agent: appUserAgent })}>
             <Plus className="size-4" />
             {t("subscriptions.addTitle")}
           </Button>
@@ -203,7 +211,7 @@ export function SubscriptionsCard() {
           // QR дал ссылку: открываем обычную форму добавления с префиллом,
           // название и остальные параметры пользователь дозаполняет сам.
           setQrOpen(false);
-          setAdding({ ...emptyInput, url });
+          setAdding({ ...emptyInput, url, user_agent: appUserAgent });
         }}
       />
 

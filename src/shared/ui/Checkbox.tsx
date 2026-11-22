@@ -1,13 +1,16 @@
-// Общий чекбокс с подписью: используется настройками и карточкой обновлений.
+// Общий чекбокс: с подписью (настройки, карточка обновлений) или без неё
+// как переключатель строки — тогда доступность обеспечивает aria-label.
 export function Checkbox({
   checked,
   onChange,
   label,
+  ariaLabel,
   disabled,
 }: {
   checked: boolean;
   onChange: (value: boolean) => void;
-  label: string;
+  label?: string;
+  ariaLabel?: string;
   disabled?: boolean;
 }) {
   return (
@@ -16,6 +19,7 @@ export function Checkbox({
         type="checkbox"
         checked={checked}
         disabled={disabled}
+        aria-label={ariaLabel}
         onChange={(event) => onChange(event.target.checked)}
         className="size-4 accent-emerald-600"
       />

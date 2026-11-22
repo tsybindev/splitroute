@@ -120,6 +120,7 @@ export function makeSubscription(
     fetched_at: null,
     next_update_at: null,
     profiles: [],
+    disabled_profiles: [],
     ...overrides,
   };
 }

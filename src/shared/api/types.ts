@@ -115,6 +115,8 @@ export interface SubscriptionView {
   /** Когда произойдёт следующее автообновление; null — не запланировано. */
   next_update_at: number | null;
   profiles: Profile[];
+  /** Выключенные локации (profile_id): в автовыбор не попадают. */
+  disabled_profiles: string[];
 }
 
 /** Данные формы одной подписки (добавление и изменение). */

@@ -146,6 +146,7 @@ pub fn run() {
             commands::profiles_list,
             commands::profiles_ping,
             commands::profile_select,
+            commands::profiles_set_enabled,
             commands::profile_switch,
             commands::rules_list,
             commands::rules_upsert,

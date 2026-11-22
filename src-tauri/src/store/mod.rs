@@ -34,6 +34,11 @@ pub struct SubscriptionState {
     /// Кэш последнего успешного ответа; при ошибке сети сохраняется.
     #[serde(default)]
     pub profiles: Vec<Profile>,
+    /// Выключенные пользователем локации (profile_id). Идёт в стор отдельно
+    /// от профилей: идентификаторы стабильны, состояние переживает рефетч.
+    /// В автовыбор и пинг попадают только включённые локации.
+    #[serde(default)]
+    pub disabled_profiles: Vec<String>,
     /// Время последнего успешного обновления (unix, секунды).
     #[serde(default)]
     pub fetched_at: Option<u64>,
@@ -190,11 +195,45 @@ pub struct AppSettings {
     pub preferences: AppPreferences,
 }
 
-/// Собственный User-Agent приложения. Провайдеры отдают для него
-/// base64-список `vless://`-ссылок; Happ-JSON тоже поддерживается (см.
-/// `subscription::parse_subscription_report`), поэтому сохранённые значения
-/// не мигрируют и не перезаписываются.
-pub const DEFAULT_USER_AGENT: &str = "SplitRoute/0.1.0";
+/// Собственный User-Agent приложения: `SplitRoute/<версия>`. Провайдеры
+/// отдают для него base64-список `vless://`-ссылок; Happ-JSON тоже
+/// поддерживается (см. `subscription::parse_subscription_report`).
+///
+/// Значение следует за версией приложения: пустое поле или сохранённый
+/// дефолт прошлой версии при загрузке обновляются до текущего
+/// (`normalize_user_agents`). Пользовательские значения не трогаем —
+/// провайдер может отдавать для них другой формат.
+pub fn default_user_agent() -> String {
+    format!("SplitRoute/{}", env!("CARGO_PKG_VERSION"))
+}
+
+/// UA, выданный самим приложением (пустой или `SplitRoute/<semver>`):
+/// он управляется приложением и может обновляться при загрузке.
+/// Пользовательский UA (любая другая строка) — не трогаем.
+fn is_app_managed_user_agent(value: &str) -> bool {
+    match value.strip_prefix("SplitRoute/") {
+        Some(rest) => !rest.is_empty()
+            && rest
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || byte == b'.'),
+        None => value.is_empty(),
+    }
+}
+
+/// Обновляет дефолтные UA подписок до текущей версии. Возвращает `true`,
+/// если что-то изменилось и состояние нужно записать на диск.
+fn normalize_user_agents(data: &mut StoredData) -> bool {
+    let current = default_user_agent();
+    let mut changed = false;
+    for subscription in &mut data.subscriptions {
+        let trimmed = subscription.user_agent.trim();
+        if is_app_managed_user_agent(trimmed) && trimmed != current {
+            subscription.user_agent = current.clone();
+            changed = true;
+        }
+    }
+    changed
+}
 
 /// 16 hex-символов из CSPRNG. Не выводится из аппаратных идентификаторов.
 pub fn generate_hwid() -> String {
@@ -266,6 +305,33 @@ impl StoredData {
         self.find_profile(id).is_some()
     }
 
+    /// Выключена ли локация пользователем. Отсутствие в подписках (и в
+    /// списках выключенных) означает «включена».
+    pub(crate) fn profile_is_disabled(&self, id: &str) -> bool {
+        self.subscriptions
+            .iter()
+            .any(|subscription| subscription.disabled_profiles.iter().any(|item| item == id))
+    }
+
+    /// Все включённые локации в порядке подписок и ответов провайдера.
+    pub fn enabled_profiles(&self) -> Vec<Profile> {
+        self.subscriptions
+            .iter()
+            .flat_map(|subscription| subscription.profiles.iter())
+            .filter(|profile| !self.profile_is_disabled(&profile.id))
+            .cloned()
+            .collect()
+    }
+
+    /// Первая включённая локация (по порядку подписок).
+    fn first_enabled_profile(&self) -> Option<String> {
+        self.subscriptions
+            .iter()
+            .flat_map(|subscription| subscription.profiles.iter())
+            .find(|profile| !self.profile_is_disabled(&profile.id))
+            .map(|profile| profile.id.clone())
+    }
+
     /// Сбрасывает выбор, если выбранного профиля больше нет ни в одной подписке.
     /// Автовыбор здесь не выполняется: он происходит только при успешной
     /// загрузке подписки.
@@ -324,6 +390,7 @@ impl StoredData {
             user_agent,
             auto_update_hours,
             profiles,
+            disabled_profiles: Vec::new(),
             fetched_at,
         });
         true
@@ -453,13 +520,14 @@ impl Store {
             user_agent: {
                 let trimmed = user_agent.trim();
                 if trimmed.is_empty() {
-                    DEFAULT_USER_AGENT.to_string()
+                    default_user_agent()
                 } else {
                     trimmed.to_string()
                 }
             },
             auto_update_hours,
             profiles: Vec::new(),
+            disabled_profiles: Vec::new(),
             fetched_at: None,
         };
         let snapshot = {
@@ -497,7 +565,7 @@ impl Store {
             entry.url = url;
             let trimmed = user_agent.trim();
             entry.user_agent = if trimmed.is_empty() {
-                DEFAULT_USER_AGENT.to_string()
+                default_user_agent()
             } else {
                 trimmed.to_string()
             };
@@ -553,8 +621,18 @@ impl Store {
                 .iter()
                 .position(|subscription| subscription.id == id)
                 .ok_or_else(|| StoreError::NotFound("подписка не найдена".to_string()))?;
+            // Выключенные локации, пропавшие из нового ответа провайдера,
+            // больше не нужны: идентификатор стабильный, вернувшийся профиль
+            // снова будет выключен.
+            let new_ids: Vec<&str> = profiles
+                .iter()
+                .map(|profile| profile.id.as_str())
+                .collect();
             {
                 let entry = &mut data.subscriptions[index];
+                entry
+                    .disabled_profiles
+                    .retain(|id| new_ids.contains(&id.as_str()));
                 entry.profiles = profiles;
                 entry.fetched_at = Some(fetched_at);
             }
@@ -567,8 +645,10 @@ impl Store {
             if selection_missing {
                 data.selected_profile_id = data.subscriptions[index]
                     .profiles
-                    .first()
-                    .map(|profile| profile.id.clone());
+                    .iter()
+                    .find(|profile| !data.profile_is_disabled(&profile.id))
+                    .map(|profile| profile.id.clone())
+                    .or_else(|| data.first_enabled_profile());
             }
             data.clone()
         };
@@ -583,7 +663,76 @@ impl Store {
                     "профиль не найден ни в одной подписке".to_string(),
                 ));
             }
+            if data.profile_is_disabled(id) {
+                return Err(StoreError::Read(
+                    "локация выключена пользователем".to_string(),
+                ));
+            }
             data.selected_profile_id = Some(id.to_string());
+            data.clone()
+        };
+        write_data(&self.path, &snapshot).map_err(|error| StoreError::Write(error.to_string()))
+    }
+
+    /// Включает/выключает локации одной подписки (по одной или массово).
+    /// Все идентификаторы должны принадлежать этой подписке.
+    ///
+    /// Выключение выбранной локации переносит выбор на первую включённую
+    /// (сначала этой подписки, затем любую). Включение при пустом выборе —
+    /// тоже на первую включённую: пользователь снова может подключиться.
+    pub fn set_profiles_enabled(
+        &self,
+        subscription_id: &str,
+        profile_ids: &[String],
+        enabled: bool,
+    ) -> Result<(), StoreError> {
+        if profile_ids.is_empty() {
+            return Ok(());
+        }
+        let snapshot = {
+            let mut data = self.inner.lock().unwrap();
+            {
+                let entry = data
+                    .subscriptions
+                    .iter_mut()
+                    .find(|subscription| subscription.id == subscription_id)
+                    .ok_or_else(|| StoreError::NotFound("подписка не найдена".to_string()))?;
+                for id in profile_ids {
+                    if !entry.profiles.iter().any(|profile| &profile.id == id) {
+                        return Err(StoreError::NotFound(
+                            "локация не найдена в подписке".to_string(),
+                        ));
+                    }
+                }
+                if enabled {
+                    entry.disabled_profiles.retain(|id| !profile_ids.contains(id));
+                } else {
+                    for id in profile_ids {
+                        if !entry.disabled_profiles.contains(id) {
+                            entry.disabled_profiles.push(id.clone());
+                        }
+                    }
+                }
+            }
+            // Выбор недействителен, если выбранная локация выключена, либо
+            // выбор пуст, а включённые локации есть.
+            let selection_invalid = match data.selected_profile_id.as_ref() {
+                Some(selected) => data.profile_is_disabled(selected),
+                None => data.first_enabled_profile().is_some(),
+            };
+            if selection_invalid {
+                data.selected_profile_id = data.subscriptions
+                    .iter()
+                    .find(|subscription| subscription.id == subscription_id)
+                    .and_then(|subscription| {
+                        subscription
+                            .profiles
+                            .iter()
+                            .find(|profile| !data.profile_is_disabled(&profile.id))
+                    })
+                    .map(|profile| profile.id.clone())
+                    .or_else(|| data.first_enabled_profile());
+            }
             data.clone()
         };
         write_data(&self.path, &snapshot).map_err(|error| StoreError::Write(error.to_string()))
@@ -622,7 +771,7 @@ fn read_data(path: &Path) -> Option<StoredData> {
     let raw = fs::read_to_string(path).ok()?;
     let value: serde_json::Value = serde_json::from_str(&raw).ok()?;
     let mut data: StoredData = serde_json::from_value(value.clone()).ok()?;
-    if data.migrate_legacy(&value) {
+    if data.migrate_legacy(&value) || normalize_user_agents(&mut data) {
         // Миграцию сразу пишем на диск: идентификатор записи подписки не
         // должен меняться между запусками. Ошибка записи не критична — при
         // следующем запуске миграция повторится.
@@ -881,6 +1030,70 @@ mod tests {
         let _ = fs::remove_file(&path);
     }
 
+    /// Дефолтный UA прошлой версии (и пустой) при загрузке обновляется до
+    /// текущей версии приложения и записывается на диск.
+    #[test]
+    fn saved_app_default_user_agent_follows_version_on_load() {
+        let path = temp_path("default-ua");
+        let mut data = StoredData::default();
+        data.settings.subscription.hwid = "0123456789abcdef".to_string();
+        data.subscriptions = vec![
+            SubscriptionState {
+                id: new_subscription_id(),
+                name: "Старый дефолт".to_string(),
+                url: "https://example.invalid/sub".to_string(),
+                user_agent: "SplitRoute/0.1.0".to_string(),
+                auto_update_hours: 12,
+                profiles: Vec::new(),
+                disabled_profiles: Vec::new(),
+                fetched_at: None,
+            },
+            SubscriptionState {
+                id: new_subscription_id(),
+                name: "Пустой".to_string(),
+                url: "https://other.invalid/sub".to_string(),
+                user_agent: String::new(),
+                auto_update_hours: 12,
+                profiles: Vec::new(),
+                disabled_profiles: Vec::new(),
+                fetched_at: None,
+            },
+        ];
+        write_data(&path, &data).unwrap();
+
+        let reloaded = Store::load(&path);
+        let subscriptions = reloaded.subscriptions();
+        assert_eq!(subscriptions.len(), 2);
+        assert_eq!(
+            subscriptions[0].user_agent,
+            default_user_agent(),
+            "дефолт прошлой версии следует за версией"
+        );
+        assert_eq!(
+            subscriptions[1].user_agent,
+            default_user_agent(),
+            "пустой UA заполняется текущим дефолтом"
+        );
+
+        // Нормализация записана на диск: повторное чтение не меняет данные.
+        let reloaded_again = Store::load(&path);
+        assert_eq!(reloaded_again.subscriptions(), subscriptions);
+        let _ = fs::remove_file(&path);
+    }
+
+    /// Управляемый приложением UA — пустой или `SplitRoute/` с номером версии
+    /// (цифры и точки). Прочие строки считаются пользовательскими.
+    #[test]
+    fn splitroute_prefixed_user_agent_is_app_managed() {
+        assert!(is_app_managed_user_agent("SplitRoute/0.1.0"));
+        assert!(is_app_managed_user_agent("SplitRoute/1.2.3"));
+        assert!(is_app_managed_user_agent(""));
+        assert!(!is_app_managed_user_agent("Custom/1.0"));
+        assert!(!is_app_managed_user_agent("SplitRoute"));
+        assert!(!is_app_managed_user_agent("SplitRoute/1.2.x"));
+        assert!(!is_app_managed_user_agent("SplitRoute-приложение"));
+    }
+
     #[test]
     fn settings_round_trip_through_file() {
         let path = temp_path("settings");
@@ -898,7 +1111,7 @@ mod tests {
         assert_eq!(subscriptions.len(), 1);
         assert_eq!(subscriptions[0].name, "Основная");
         assert_eq!(subscriptions[0].url, "https://example.invalid/sub");
-        assert_eq!(subscriptions[0].user_agent, DEFAULT_USER_AGENT);
+        assert_eq!(subscriptions[0].user_agent, default_user_agent());
         assert_eq!(subscriptions[0].auto_update_hours, 6);
         let _ = fs::remove_file(&path);
     }
@@ -981,7 +1194,11 @@ mod tests {
             .unwrap();
         assert_eq!(entry.name, "Главная", "имя обрезается");
         assert_eq!(entry.url, "url");
-        assert_eq!(entry.user_agent, DEFAULT_USER_AGENT, "пустой UA — свой");
+        assert_eq!(
+            entry.user_agent,
+            default_user_agent(),
+            "пустой UA — свой"
+        );
         assert_eq!(entry.auto_update_hours, 0);
         assert!(entry.profiles.is_empty());
         assert_eq!(entry.fetched_at, None);
@@ -1015,7 +1232,8 @@ mod tests {
         assert_eq!(updated.fetched_at, None);
         assert_eq!(store.data().selected_profile_id, None);
         assert_eq!(
-            updated.user_agent, DEFAULT_USER_AGENT,
+            updated.user_agent,
+            default_user_agent(),
             "пустой UA заменяется на свой"
         );
         assert!(matches!(
@@ -1115,6 +1333,243 @@ mod tests {
             .unwrap();
         store.select_profile("p1").unwrap();
         assert_eq!(store.data().selected_profile_id.as_deref(), Some("p1"));
+    }
+
+    /// Выключение локации сохраняется в состоянии и переживает перезапуск;
+    /// включение убирает её из списка. Пинг и автовыбор видят только
+    /// включённые (`enabled_profiles`).
+    #[test]
+    fn set_profiles_enabled_toggles_and_survives_reload() {
+        let path = temp_path("enabled-toggle");
+        let store = Store::load(&path);
+        let entry = store
+            .add_subscription("", "https://a.invalid/sub", "", 12)
+            .unwrap();
+        store
+            .set_subscription_profiles(
+                &entry.id,
+                vec![profile("p1"), profile("p2"), profile("p3")],
+                1,
+            )
+            .unwrap();
+
+        store
+            .set_profiles_enabled(&entry.id, &["p1".to_string()], false)
+            .unwrap();
+        store
+            .set_profiles_enabled(&entry.id, &["p2".to_string(), "p3".to_string()], false)
+            .unwrap();
+        let disabled = &store.data().subscriptions[0].disabled_profiles;
+        assert_eq!(disabled, &["p1".to_string(), "p2".to_string(), "p3".to_string()]);
+        assert!(store.data().enabled_profiles().is_empty());
+
+        let reloaded = Store::load(&path);
+        assert_eq!(
+            reloaded.data().subscriptions[0].disabled_profiles,
+            ["p1".to_string(), "p2".to_string(), "p3".to_string()],
+            "список выключенных переживает перезапуск"
+        );
+
+        store
+            .set_profiles_enabled(&entry.id, &["p2".to_string()], true)
+            .unwrap();
+        let data = store.data();
+        assert_eq!(
+            data.subscriptions[0].disabled_profiles,
+            ["p1".to_string(), "p3".to_string()]
+        );
+        assert_eq!(
+            data.enabled_profiles()
+                .iter()
+                .map(|profile| profile.id.as_str())
+                .collect::<Vec<_>>(),
+            ["p2"],
+            "включённая локация одна и на своём месте"
+        );
+        let _ = fs::remove_file(&path);
+    }
+
+    /// Неизвестная локация (не из этой подписки) — ошибка, состояние не меняется.
+    #[test]
+    fn set_profiles_enabled_validates_subscription() {
+        let store = Store::load(temp_path("enabled-validate"));
+        let first = store
+            .add_subscription("A", "https://a.invalid/sub", "", 12)
+            .unwrap();
+        let second = store
+            .add_subscription("B", "https://b.invalid/sub", "", 12)
+            .unwrap();
+        store
+            .set_subscription_profiles(&first.id, vec![profile("p1")], 1)
+            .unwrap();
+        store
+            .set_subscription_profiles(&second.id, vec![profile("p2")], 1)
+            .unwrap();
+
+        assert!(matches!(
+            store.set_profiles_enabled(&first.id, &["p2".to_string()], false),
+            Err(StoreError::NotFound(_))
+        ));
+        assert!(matches!(
+            store.set_profiles_enabled("nope", &["p1".to_string()], false),
+            Err(StoreError::NotFound(_))
+        ));
+        assert!(store.data().subscriptions[0].disabled_profiles.is_empty());
+    }
+
+    /// Выключение выбранной локации переносит выбор на первую включённую
+    /// этой подписки; когда включённых в ней нет — в любой другой.
+    #[test]
+    fn disabling_selected_profile_moves_selection() {
+        let store = Store::load(temp_path("enabled-selection"));
+        let first = store
+            .add_subscription("A", "https://a.invalid/sub", "", 12)
+            .unwrap();
+        let second = store
+            .add_subscription("B", "https://b.invalid/sub", "", 12)
+            .unwrap();
+        store
+            .set_subscription_profiles(
+                &first.id,
+                vec![profile("a1"), profile("a2"), profile("a3")],
+                1,
+            )
+            .unwrap();
+        store
+            .set_subscription_profiles(&second.id, vec![profile("b1")], 2)
+            .unwrap();
+        store.select_profile("a2").unwrap();
+
+        store
+            .set_profiles_enabled(&first.id, &["a2".to_string()], false)
+            .unwrap();
+        assert_eq!(
+            store.data().selected_profile_id.as_deref(),
+            Some("a1"),
+            "выбор переносится на первую включённую этой подписки"
+        );
+
+        store
+            .set_profiles_enabled(&first.id, &["a1".to_string()], false)
+            .unwrap();
+        assert_eq!(
+            store.data().selected_profile_id.as_deref(),
+            Some("a3"),
+            "следующая включённая этой подписки"
+        );
+
+        store
+            .set_profiles_enabled(&first.id, &["a3".to_string()], false)
+            .unwrap();
+        assert_eq!(
+            store.data().selected_profile_id.as_deref(),
+            Some("b1"),
+            "в этой подписке включённых нет — берём из любой другой"
+        );
+    }
+
+    /// «Выключить все» сбрасывает выбор, «включить все» при пустом выборе
+    /// выбирает первую включённую.
+    #[test]
+    fn disable_all_clears_selection_and_enable_all_picks_first() {
+        let store = Store::load(temp_path("enabled-all"));
+        let entry = store
+            .add_subscription("", "https://a.invalid/sub", "", 12)
+            .unwrap();
+        store
+            .set_subscription_profiles(&entry.id, vec![profile("p1"), profile("p2")], 1)
+            .unwrap();
+
+        store
+            .set_profiles_enabled(
+                &entry.id,
+                &["p1".to_string(), "p2".to_string()],
+                false,
+            )
+            .unwrap();
+        assert_eq!(store.data().selected_profile_id, None, "включённых нет");
+
+        store
+            .set_profiles_enabled(
+                &entry.id,
+                &["p1".to_string(), "p2".to_string()],
+                true,
+            )
+            .unwrap();
+        assert_eq!(
+            store.data().selected_profile_id.as_deref(),
+            Some("p1"),
+            "после включения всех выбор возвращается на первую"
+        );
+    }
+
+    /// Рефетч подчищает выключенные локации, пропавшие из ответа провайдера,
+    /// а fallback выбора при обновлении пропускает выключенные.
+    #[test]
+    fn refresh_prunes_disabled_and_fallback_skips_disabled() {
+        let store = Store::load(temp_path("enabled-refresh"));
+        let entry = store
+            .add_subscription("", "https://a.invalid/sub", "", 12)
+            .unwrap();
+        store
+            .set_subscription_profiles(&entry.id, vec![profile("p1"), profile("p2")], 1)
+            .unwrap();
+        store.select_profile("p2").unwrap();
+        store
+            .set_profiles_enabled(&entry.id, &["p1".to_string()], false)
+            .unwrap();
+
+        // p1 пропал из ответа: он больше не нужен в списке выключенных.
+        store
+            .set_subscription_profiles(&entry.id, vec![profile("p2"), profile("p3")], 2)
+            .unwrap();
+        assert_eq!(
+            store.data().subscriptions[0].disabled_profiles,
+            Vec::<String>::new(),
+            "пропавшие из подписки выключенные подчищены"
+        );
+        assert_eq!(store.data().selected_profile_id.as_deref(), Some("p2"));
+
+        // p1 вернулся и был выключен, выбор остался на p2.
+        store
+            .set_subscription_profiles(&entry.id, vec![profile("p1"), profile("p2")], 3)
+            .unwrap();
+        store
+            .set_profiles_enabled(&entry.id, &["p1".to_string()], false)
+            .unwrap();
+        assert_eq!(store.data().selected_profile_id.as_deref(), Some("p2"));
+
+        // Выбранный p2 пропал, а выключенный p1 остался: fallback берёт p3.
+        store
+            .set_subscription_profiles(&entry.id, vec![profile("p1"), profile("p3")], 4)
+            .unwrap();
+        assert_eq!(
+            store.data().subscriptions[0].disabled_profiles,
+            ["p1".to_string()],
+        );
+        assert_eq!(
+            store.data().selected_profile_id.as_deref(),
+            Some("p3"),
+            "выключенный p1 не становится выбором"
+        );
+    }
+
+    /// Выключенную локацию нельзя выбрать вручную.
+    #[test]
+    fn select_disabled_profile_is_rejected() {
+        let store = Store::load(temp_path("enabled-select"));
+        let entry = store
+            .add_subscription("", "https://a.invalid/sub", "", 12)
+            .unwrap();
+        store
+            .set_subscription_profiles(&entry.id, vec![profile("p1"), profile("p2")], 1)
+            .unwrap();
+        store
+            .set_profiles_enabled(&entry.id, &["p1".to_string()], false)
+            .unwrap();
+        assert!(store.select_profile("p1").is_err());
+        store.select_profile("p2").unwrap();
+        assert_eq!(store.data().selected_profile_id.as_deref(), Some("p2"));
     }
 
     #[test]
