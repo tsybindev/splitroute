@@ -44,8 +44,10 @@
   },
   "plugins": {
     "updater": {
-      "endpoints": ["https://updates.splitroute.invalid/stable/latest.json"],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEY4MkY0RTkxOTM0OEE4NjIKUldSaXFFaVRrVTR2K0o4M2xObGJpZVdNVEltRkFTS1hjby92b0FCY0pmWEFmWm9KSWNmWXBZSzkK",
+      "endpoints": [
+        "https://github.com/tsybindev/splitroute/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVGNkI0QTQ4QzJFOUNFRTcKUldUbnp1bkNTRXByNzFNZ0NCWmVMZ1F4ZXpFaDBOajNHc1dFeXFqNmJqN2VvNDkvK3RIVW5oREEK",
       "requireSignedVersion": true
     }
   }

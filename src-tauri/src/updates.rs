@@ -5,9 +5,11 @@
 //! Артефакты подписываются приватным ключом, который хранится вне репозитория;
 //! здесь используется только публичный ключ из `tauri.conf.json`.
 //!
-//! Домен обновлений пока не выбран (PRD §13.3), поэтому endpoint — placeholder
-//! `.invalid`: проверка возвращает `UPDATE_NOT_CONFIGURED` без сетевого запроса.
-//! Для локальной проверки в debug-сборке можно задать
+//! Домен обновлений: GitHub Releases (решение по PRD §13.3). Манифест канала
+//! лежит ассетом последнего опубликованного релиза (не draft, не prerelease);
+//! апдейтер следует редиректам. Ассеты GitHub Releases плоские, поэтому канал
+//! кодируется в имени файла (`latest.json` — stable, `beta-latest.json` — beta),
+//! а не в подпапке. Для локальной проверки в debug-сборке базу можно задать
 //! `SPLITROUTE_UPDATE_ENDPOINT` (только HTTPS).
 
 use std::time::Duration;
@@ -18,10 +20,9 @@ use tauri_plugin_updater::{Updater, UpdaterExt};
 
 use crate::store::{UpdateChannel, UpdateSettings};
 
-/// Публичный домен обновлений. Placeholder до решения PRD §13.3.
-const UPDATE_BASE: &str = "https://updates.splitroute.invalid";
-/// Имя манифеста внутри канала.
-const UPDATE_MANIFEST: &str = "latest.json";
+/// База канала обновлений: `releases/latest/download` раздаёт манифест
+/// последнего опубликованного (не draft, не prerelease) релиза.
+const UPDATE_BASE: &str = "https://github.com/tsybindev/splitroute/releases/latest/download";
 /// Таймаут проверки: сеть может подвиснуть, окно не блокируется.
 const CHECK_TIMEOUT: Duration = Duration::from_secs(20);
 /// Таймаут загрузки артефакта.
@@ -35,6 +36,7 @@ pub const DOWNLOADED_EVENT: &str = "update-downloaded";
 /// Ошибка обновления: стабильный код и безопасный русский текст.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UpdateError {
+    /// Код остаётся в API сборки, но с реальным endpoint не возникает.
     NotConfigured,
     Config,
     CheckFailed,
@@ -80,6 +82,7 @@ impl std::error::Error for UpdateError {}
 pub struct UpdateStatus {
     pub current_version: String,
     pub channel: UpdateChannel,
+    /// Поле осталось в API UI: приложение собирается с настроенным каналом.
     pub configured: bool,
 }
 
@@ -108,7 +111,8 @@ pub fn status(app: &AppHandle, settings: &UpdateSettings) -> UpdateStatus {
     UpdateStatus {
         current_version: app.package_info().version.to_string(),
         channel: settings.channel,
-        configured: configured_base().is_some(),
+        // Endpoint вшит в сборку (см. UPDATE_BASE), канал всегда настроен.
+        configured: true,
     }
 }
 
@@ -188,35 +192,30 @@ fn build_updater(
         .map_err(|_| UpdateError::Config)
 }
 
-fn configured_base() -> Option<String> {
+fn endpoint(channel: UpdateChannel) -> Result<Url, UpdateError> {
+    let mut base = UPDATE_BASE.to_string();
     #[cfg(debug_assertions)]
     if let Ok(value) = std::env::var("SPLITROUTE_UPDATE_ENDPOINT") {
         let value = value.trim().trim_end_matches('/');
         if !value.is_empty() {
-            return Some(value.to_string());
+            base = value.to_string();
         }
     }
-    if is_configured(UPDATE_BASE) {
-        Some(UPDATE_BASE.to_string())
-    } else {
-        None
-    }
-}
-
-/// Placeholder-домен `.invalid` означает «канал ещё не выбран».
-fn is_configured(base: &str) -> bool {
-    !base.trim().trim_end_matches('/').ends_with(".invalid")
-}
-
-fn endpoint(channel: UpdateChannel) -> Result<Url, UpdateError> {
-    let base = configured_base().ok_or(UpdateError::NotConfigured)?;
     manifest_url(&base, channel)
+}
+
+/// Имя манифеста канала: ассеты GitHub Releases плоские, канал — в имени файла.
+fn manifest_name(channel: UpdateChannel) -> &'static str {
+    match channel {
+        UpdateChannel::Stable => "latest.json",
+        UpdateChannel::Beta => "beta-latest.json",
+    }
 }
 
 /// Собирает URL манифеста. Обновления принимаются только по HTTPS.
 fn manifest_url(base: &str, channel: UpdateChannel) -> Result<Url, UpdateError> {
     let base = base.trim().trim_end_matches('/');
-    let url = format!("{base}/{}/{}", channel.as_str(), UPDATE_MANIFEST);
+    let url = format!("{base}/{}", manifest_name(channel));
     let url = Url::parse(&url).map_err(|_| UpdateError::Config)?;
     if url.scheme() != "https" {
         return Err(UpdateError::Config);
@@ -262,22 +261,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn placeholder_domain_is_not_configured() {
-        assert!(!is_configured(UPDATE_BASE));
-        assert!(is_configured("https://updates.example.test"));
-    }
-
-    #[test]
-    fn manifest_url_uses_channel_and_https() {
+    fn manifest_url_uses_channel_file_names() {
         let stable = manifest_url("https://updates.example.test", UpdateChannel::Stable).unwrap();
-        assert_eq!(
-            stable.as_str(),
-            "https://updates.example.test/stable/latest.json"
-        );
+        assert_eq!(stable.as_str(), "https://updates.example.test/latest.json");
         let beta = manifest_url("https://updates.example.test/", UpdateChannel::Beta).unwrap();
         assert_eq!(
             beta.as_str(),
-            "https://updates.example.test/beta/latest.json"
+            "https://updates.example.test/beta-latest.json"
         );
     }
 
@@ -294,12 +284,19 @@ mod tests {
     }
 
     #[test]
-    fn endpoint_is_not_configured_with_placeholder() {
-        // Без env-переопределения домен остаётся placeholder: сеть не трогаем.
+    fn endpoint_defaults_to_github_releases() {
+        // Без env-переопределения база — реальный канал GitHub Releases.
+        // Только URL, сеть не трогаем.
         if std::env::var("SPLITROUTE_UPDATE_ENDPOINT").is_err() {
+            let stable = endpoint(UpdateChannel::Stable).unwrap();
             assert_eq!(
-                endpoint(UpdateChannel::Stable),
-                Err(UpdateError::NotConfigured)
+                stable.as_str(),
+                "https://github.com/tsybindev/splitroute/releases/latest/download/latest.json"
+            );
+            let beta = endpoint(UpdateChannel::Beta).unwrap();
+            assert_eq!(
+                beta.as_str(),
+                "https://github.com/tsybindev/splitroute/releases/latest/download/beta-latest.json"
             );
         }
     }
