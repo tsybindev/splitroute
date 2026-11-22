@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde_json::Value;
-use splitroute_lib::config::{build_config, tun_stack, ClashApi};
+use splitroute_lib::config::{build_config, build_rule_set, tun_stack, ClashApi};
 use splitroute_protocol::{
     AppRule, DnsMode, LogLevel, Platform, Profile, Protocol, Settings, TlsConfig, TlsKind,
     Transport,
@@ -111,13 +111,7 @@ fn check_golden(name: &str, config: &Value) {
 #[test]
 fn golden_default_allowlist_proxy_dns() {
     let api = clash_api();
-    let config = build_config(
-        &Settings::default(),
-        &profile(),
-        &[chrome_rule(), curl_rule()],
-        Some(&api),
-    )
-    .unwrap();
+    let config = build_config(&Settings::default(), &profile(), Some(&api)).unwrap();
     check_golden("default-allowlist", &config);
 }
 
@@ -130,15 +124,35 @@ fn golden_ipv6_on_system_dns() {
         log_level: LogLevel::Debug,
         ..Settings::default()
     };
-    let config = build_config(&settings, &profile(), &[chrome_rule()], Some(&api)).unwrap();
+    let config = build_config(&settings, &profile(), Some(&api)).unwrap();
     check_golden("ipv6-on-system-dns", &config);
 }
 
 #[test]
 fn golden_empty_allowlist() {
     let api = clash_api();
-    let config = build_config(&Settings::default(), &profile(), &[], Some(&api)).unwrap();
+    let config = build_config(&Settings::default(), &profile(), Some(&api)).unwrap();
     check_golden("empty-allowlist", &config);
+}
+
+/// Готовит конфиг и rule-set к проверке как helper: путь к rule-set знает
+/// только helper, конфиг уходит к нему с пустым `path` (S10-T1).
+fn prepare_for_check(config: &Value, rules: &[AppRule]) -> (PathBuf, PathBuf) {
+    let dir = std::env::temp_dir().join(format!("splitroute-golden-{}-check", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    let rule_set_path = dir.join("rule-apps.json");
+    fs::write(
+        &rule_set_path,
+        serde_json::to_string_pretty(&build_rule_set(rules)).unwrap(),
+    )
+    .unwrap();
+
+    let mut config = config.clone();
+    config["route"]["rule_set"][0]["path"] =
+        Value::String(rule_set_path.to_string_lossy().to_string());
+    let config_path = dir.join("config.json");
+    fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap()).unwrap();
+    (config_path, dir)
 }
 
 #[test]
@@ -149,57 +163,32 @@ fn generated_configs_pass_sing_box_check() {
     };
 
     let api = clash_api();
-    for (name, config) in [
-        (
-            "default",
-            build_config(
-                &Settings::default(),
-                &profile(),
-                &[chrome_rule(), curl_rule()],
-                Some(&api),
-            )
-            .unwrap(),
-        ),
+    for (name, settings) in [
+        ("default", Settings::default()),
         (
             "ipv6",
-            build_config(
-                &Settings {
-                    ipv6_enabled: true,
-                    ..Settings::default()
-                },
-                &profile(),
-                &[chrome_rule()],
-                Some(&api),
-            )
-            .unwrap(),
+            Settings {
+                ipv6_enabled: true,
+                ..Settings::default()
+            },
         ),
         (
             "system-dns",
-            build_config(
-                &Settings {
-                    dns_mode: DnsMode::System,
-                    ..Settings::default()
-                },
-                &profile(),
-                &[chrome_rule()],
-                Some(&api),
-            )
-            .unwrap(),
+            Settings {
+                dns_mode: DnsMode::System,
+                ..Settings::default()
+            },
         ),
     ] {
-        let path = std::env::temp_dir().join(format!(
-            "splitroute-golden-{}-{}.json",
-            std::process::id(),
-            name
-        ));
-        fs::write(&path, serde_json::to_string_pretty(&config).unwrap()).unwrap();
+        let config = build_config(&settings, &profile(), Some(&api)).unwrap();
+        let (config_path, dir) = prepare_for_check(&config, &[chrome_rule(), curl_rule()]);
         let output = Command::new(&binary)
             .arg("check")
             .arg("-c")
-            .arg(&path)
+            .arg(&config_path)
             .output()
             .expect("не удалось запустить sing-box");
-        let _ = fs::remove_file(&path);
+        let _ = fs::remove_dir_all(&dir);
         assert!(
             output.status.success(),
             "sing-box check провалился для {name}: {}{}",

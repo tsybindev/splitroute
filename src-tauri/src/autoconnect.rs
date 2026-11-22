@@ -259,7 +259,9 @@ mod tests {
         let state = state_with(helper.clone(), "running");
         prepare(&state, true);
         // Ядро поднято прошлой сессией или другим путём.
-        helper.start(serde_json::json!({}), false).unwrap();
+        helper
+            .start(serde_json::json!({}), serde_json::json!({}), false)
+            .unwrap();
 
         let outcome = run(&state);
         assert!(matches!(outcome, Outcome::AlreadyRunning(_)));
@@ -281,6 +283,7 @@ mod tests {
         fn start(
             &self,
             config: serde_json::Value,
+            rule_set: serde_json::Value,
             kill_switch: bool,
         ) -> Result<HelperStatus, HelperClientError> {
             if self.starts.fetch_add(1, Ordering::SeqCst) == 0 {
@@ -289,7 +292,14 @@ mod tests {
                     message: "синтетическая ошибка старта".to_string(),
                 });
             }
-            self.inner.start(config, kill_switch)
+            self.inner.start(config, rule_set, kill_switch)
+        }
+
+        fn reload_routing(
+            &self,
+            rule_set: serde_json::Value,
+        ) -> Result<HelperStatus, HelperClientError> {
+            self.inner.reload_routing(rule_set)
         }
 
         fn stop(&self) -> Result<HelperStatus, HelperClientError> {

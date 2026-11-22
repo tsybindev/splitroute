@@ -343,9 +343,11 @@ function RunningApps() {
 function RulesTab() {
   const rules = useAppStore((state) => state.rules);
   const busy = useAppStore((state) => state.busy);
+  const actionError = useAppStore((state) => state.actionError);
   const addRule = useAppStore((state) => state.addRule);
   const toggleRule = useAppStore((state) => state.toggleRule);
   const deleteRule = useAppStore((state) => state.deleteRule);
+  const loadRules = useAppStore((state) => state.loadRules);
   const [input, setInput] = useState<NewRuleInput>(emptyInput);
   const [invalid, setInvalid] = useState(false);
   const [hintOpen, setHintOpen] = useState(false);
@@ -454,7 +456,15 @@ function RulesTab() {
       {rules.length === 0 ? (
         <EmptyState title={t("apps.empty")} />
       ) : (
-        <ul className="flex flex-col gap-2">
+        <>
+          {actionError ? (
+            <ErrorBox
+              error={actionError}
+              showDetail
+              onRetry={() => void loadRules()}
+            />
+          ) : null}
+          <ul className="flex flex-col gap-2">
           {rules.map((rule) => (
             <li
               key={rule.id}
@@ -493,7 +503,8 @@ function RulesTab() {
               </div>
             </li>
           ))}
-        </ul>
+          </ul>
+        </>
       )}
 
       <p className="text-xs text-neutral-500">

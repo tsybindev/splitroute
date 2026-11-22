@@ -14,7 +14,7 @@ use splitroute_protocol::{
 use tauri::Manager;
 
 use crate::catalog;
-use crate::config::{build_config, ConfigError};
+use crate::config::{build_config, build_rule_set, ConfigError};
 use crate::latency::{self, LatencyProbe, LatencyTracker, PingResult, SwitchPolicy};
 use crate::logging::{LogBuffer, LogEntry};
 use crate::privileged::{HelperClient, HelperClientError, HelperInstaller, InstallerError};
@@ -72,6 +72,7 @@ impl From<HelperClientError> for CommandError {
             HelperClientError::Helper { code, .. } => match code {
                 // Права/неподдерживаемая ОС: UI показывает отдельную причину.
                 ErrorCode::KillSwitchFailed => "KILL_SWITCH_FAILED",
+                ErrorCode::ReloadFailed => "RELOAD_FAILED",
                 _ => "HELPER_ERROR",
             },
             HelperClientError::InvalidPayload(_) => "HELPER_INVALID_RESPONSE",
@@ -447,9 +448,9 @@ pub(crate) fn connect_inner(state: &AppState) -> Result<HelperStatus, CommandErr
     let config = build_config(
         &data.settings.network,
         profile,
-        &data.rules,
         traffic.as_ref().map(TrafficEndpoint::api),
     )?;
+    let rule_set = build_rule_set(&data.rules);
     match data.settings.network.dns_mode {
         splitroute_protocol::DnsMode::Proxy => {
             state
@@ -475,7 +476,7 @@ pub(crate) fn connect_inner(state: &AppState) -> Result<HelperStatus, CommandErr
             "Kill switch: включён, прямой выход блокируется helper'ом",
         );
     }
-    let status = state.helper.start(config, kill_switch)?;
+    let status = state.helper.start(config, rule_set, kill_switch)?;
     // Новая сессия начинается с нулевых счётчиков: порт и secret новые.
     state.set_traffic_endpoint(traffic);
     // Успешное подключение закрывает ошибку автоподключения при запуске (B2).
@@ -1168,12 +1169,22 @@ pub fn app_icon(app: InstalledApp) -> Option<String> {
     catalog::icons::icon_for(&app)
 }
 
+/// Список правил с проверкой и применением к активной сессии (S10-T1).
 #[tauri::command(async)]
 pub fn rules_upsert(
     state: tauri::State<'_, AppState>,
     rule: AppRule,
 ) -> Result<Vec<AppRuleView>, CommandError> {
+    rules_upsert_inner(&state, rule)
+}
+
+pub(crate) fn rules_upsert_inner(
+    state: &AppState,
+    rule: AppRule,
+) -> Result<Vec<AppRuleView>, CommandError> {
+    rules::validate_rule(&rule).map_err(|message| CommandError::new("RULES_INVALID", message))?;
     let rules = state.store.upsert_rule(rule)?;
+    apply_rules_to_session(state, &rules)?;
     Ok(rules::views(rules))
 }
 
@@ -1182,8 +1193,51 @@ pub fn rules_delete(
     state: tauri::State<'_, AppState>,
     id: String,
 ) -> Result<Vec<AppRuleView>, CommandError> {
-    let rules = state.store.delete_rule(&id)?;
+    rules_delete_inner(&state, &id)
+}
+
+pub(crate) fn rules_delete_inner(
+    state: &AppState,
+    id: &str,
+) -> Result<Vec<AppRuleView>, CommandError> {
+    let rules = state.store.delete_rule(id)?;
+    apply_rules_to_session(state, &rules)?;
     Ok(rules::views(rules))
+}
+
+/// Применяет правки per-app правил к работающему ядру без переподключения.
+///
+/// Вне сессии (или если helper не отвечает — сессия тогда всё равно мертва и
+/// её поднимет надзор) правка ограничивается записью в store: поведение такое
+/// же, как до hot-reload. При активной сессии rule-set уходит helper'у: он
+/// атомарно заменяет файл, sing-box перечитывает его на новых соединениях.
+/// Kill switch и DNS-режим при этом не затрагиваются. Правило уже сохранено в
+/// store, поэтому ошибка применения означает «вступит в силу при
+/// переподключении», а не потерю правки.
+fn apply_rules_to_session(state: &AppState, rules: &[AppRule]) -> Result<(), CommandError> {
+    let running = state
+        .helper
+        .status()
+        .map(|status| status.state == CoreState::Running)
+        .unwrap_or(false);
+    if !running {
+        return Ok(());
+    }
+    let rule_set = build_rule_set(rules);
+    if let Err(error) = state.helper.reload_routing(rule_set) {
+        state.logs.push(
+            LogLevel::Warn,
+            "Правило сохранено, но не применено к сессии: вступит в силу при переподключении",
+        );
+        return Err(CommandError::new(
+            "RELOAD_FAILED",
+            format!("{error}; правило сохранено и применится при переподключении"),
+        ));
+    }
+    state
+        .logs
+        .push(LogLevel::Info, "Правила применены к активной сессии");
+    Ok(())
 }
 
 #[tauri::command]
@@ -1883,6 +1937,7 @@ mod tests {
         fn start(
             &self,
             config: serde_json::Value,
+            rule_set: serde_json::Value,
             kill_switch: bool,
         ) -> Result<HelperStatus, HelperClientError> {
             if self
@@ -1895,7 +1950,14 @@ mod tests {
                     message: "синтетическая ошибка старта".to_string(),
                 });
             }
-            self.inner.start(config, kill_switch)
+            self.inner.start(config, rule_set, kill_switch)
+        }
+
+        fn reload_routing(
+            &self,
+            rule_set: serde_json::Value,
+        ) -> Result<HelperStatus, HelperClientError> {
+            self.inner.reload_routing(rule_set)
         }
 
         fn stop(&self) -> Result<HelperStatus, HelperClientError> {
@@ -2116,21 +2178,23 @@ mod tests {
             })
             .unwrap();
 
-        // Подключение через mock helper: в конфиг попадает только включённое правило,
-        // выбранная локация — вторая.
+        // Подключение через mock helper: в rule-set попадает только включённое
+        // правило, выбранная локация — вторая.
         let status = connect_inner(&state).unwrap();
         assert_eq!(status.state, splitroute_protocol::CoreState::Running);
         let config = helper.last_config().expect("конфиг передан helper'у");
         let route_rules = config["route"]["rules"].as_array().unwrap();
-        assert!(route_rules
-            .iter()
-            .any(|rule| rule["process_name"][0] == "curl"));
         assert!(
-            !route_rules
-                .iter()
-                .any(|rule| rule.get("process_path_regex").is_some()),
-            "выключенное правило не должно попадать в конфиг"
+            route_rules.iter().any(
+                |rule| rule["rule_set"][0] == crate::config::APP_RULE_SET_TAG
+                    && rule["outbound"] == "proxy"
+            ),
+            "per-app routing ссылается на rule-set"
         );
+        let rule_set = helper.last_rule_set().expect("rule-set передан helper'у");
+        let items = rule_set["rules"].as_array().unwrap();
+        assert_eq!(items.len(), 1, "в rule-set только включённое правило");
+        assert_eq!(items[0]["process_name"][0], "curl");
         assert_eq!(config["outbounds"][0]["server"], "203.0.113.20");
 
         // Отключение.
@@ -2138,6 +2202,100 @@ mod tests {
             disconnect_inner(&state).unwrap().state,
             splitroute_protocol::CoreState::Stopped
         );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Правки правил при активной сессии уходят в reload_routing без разрыва
+    /// подключения; без сессии — только в store (S10-T1).
+    #[test]
+    fn rule_edits_apply_to_running_session_without_reconnect() {
+        let helper = Arc::new(MockHelperClient::new());
+        let path = temp_path("rules-reload");
+        let state = AppState::new(
+            helper.clone(),
+            Arc::new(UnsupportedInstaller),
+            Store::load(&path),
+            Arc::new(MockFetcher {
+                body: Ok(fixture()),
+            }),
+        );
+        let rule = AppRule {
+            id: "rule-curl".to_string(),
+            name: "curl".to_string(),
+            platform: Platform::Macos,
+            process_name: vec!["curl".to_string()],
+            process_path: Vec::new(),
+            path_regex: Vec::new(),
+            enabled: true,
+        };
+
+        // Вне сессии: правка ограничивается store, reload не вызывается.
+        let rules = rules_upsert_inner(&state, rule.clone()).unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(helper.reload_calls(), 0);
+
+        fetch_sub(&state).unwrap();
+        connect_inner(&state).unwrap();
+        // Выключение правила при активной сессии: reload с пустым rule-set.
+        let rules = rules_upsert_inner(
+            &state,
+            AppRule {
+                enabled: false,
+                ..rule
+            },
+        )
+        .unwrap();
+        assert!(!rules[0].rule.enabled);
+        assert_eq!(helper.reload_calls(), 1);
+        let rule_set = helper.last_rule_set().unwrap();
+        assert!(
+            rule_set["rules"].as_array().unwrap().is_empty(),
+            "выключенное правило исчезло из rule-set"
+        );
+
+        // Удаление при активной сессии тоже применяется.
+        rules_delete_inner(&state, "rule-curl").unwrap();
+        assert_eq!(helper.reload_calls(), 2);
+        assert!(state.store.rules().is_empty());
+        assert_eq!(
+            helper.status().unwrap().state,
+            CoreState::Running,
+            "сессия не разрывалась: правки правил не рестартят ядро"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Невалидное правило отклоняется до записи в store и до reload'а.
+    #[test]
+    fn invalid_rule_is_rejected_and_not_saved() {
+        let helper = Arc::new(MockHelperClient::new());
+        let path = temp_path("rules-invalid");
+        let state = AppState::new(
+            helper.clone(),
+            Arc::new(UnsupportedInstaller),
+            Store::load(&path),
+            Arc::new(MockFetcher {
+                body: Ok(fixture()),
+            }),
+        );
+        fetch_sub(&state).unwrap();
+        connect_inner(&state).unwrap();
+
+        let broken = AppRule {
+            id: "rule-broken".to_string(),
+            name: "broken".to_string(),
+            platform: Platform::Macos,
+            process_name: Vec::new(),
+            process_path: Vec::new(),
+            path_regex: vec!["^/opt/[unclosed".to_string()],
+            enabled: true,
+        };
+        let error = rules_upsert_inner(&state, broken).unwrap_err();
+        assert_eq!(error.code, "RULES_INVALID");
+        assert!(state.store.rules().is_empty());
+        assert_eq!(helper.reload_calls(), 0);
+
         let _ = std::fs::remove_file(&path);
     }
 

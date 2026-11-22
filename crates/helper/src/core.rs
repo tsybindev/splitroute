@@ -22,6 +22,13 @@ use crate::platform;
 const START_GRACE: Duration = Duration::from_millis(300);
 /// Сколько ждём завершения ядра по SIGTERM перед SIGKILL.
 const STOP_TIMEOUT: Duration = Duration::from_secs(5);
+/// Файл локального rule-set с per-app правилами рядом с конфигом ядра.
+///
+/// sing-box перечитывает локальные rule-set при изменении файла (с 1.10.0),
+/// поэтому правки правил применяются к работающему ядру без рестарта:
+/// helper атомарно заменяет файл, watcher ядра подхватывает его на новых
+/// соединениях. Kill switch и DNS-режим при этом не затрагиваются.
+pub const RULE_SET_FILENAME: &str = "rule-apps.json";
 
 /// Ошибка helper'а: стабильный код протокола и русский текст для пользователя.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,12 +55,15 @@ pub struct HelperCore {
     sing_box: PathBuf,
     runtime_dir: PathBuf,
     config_path: PathBuf,
+    rule_set_path: PathBuf,
     log_path: PathBuf,
     version: Option<String>,
     child: Option<Child>,
     started_at: Option<u64>,
     /// Конфиг записан этим экземпляром и должен быть удалён при остановке.
     config_owned: bool,
+    /// Rule-set записан этим экземпляром и должен быть удалён при остановке.
+    rule_set_owned: bool,
     /// Правила fail-closed; живут дольше процесса ядра.
     kill_switch: KillSwitch,
 }
@@ -73,6 +83,7 @@ impl HelperCore {
 
         let version = read_version(&sing_box);
         let config_path = runtime_dir.join("config.json");
+        let rule_set_path = runtime_dir.join(RULE_SET_FILENAME);
         let log_path = runtime_dir.join("sing-box.log");
         let kill_switch = KillSwitch::platform(&runtime_dir, &sing_box);
 
@@ -80,11 +91,13 @@ impl HelperCore {
             sing_box,
             runtime_dir,
             config_path,
+            rule_set_path,
             log_path,
             version,
             child: None,
             started_at: None,
             config_owned: false,
+            rule_set_owned: false,
             kill_switch,
         })
     }
@@ -126,11 +139,21 @@ impl HelperCore {
 
     /// Проверяет конфиг и запускает ядро. Повторный запуск запрещён.
     ///
+    /// `rule_set` — содержимое локального rule-set per-app правил: записывается
+    /// в runtime-каталог до `sing-box check` (конфиг ссылается на файл), путь
+    /// подставляется в пустые `path` записи `route.rule_set` — приложение не
+    /// знает путей privileged-каталога.
+    ///
     /// При `kill_switch = true` правила ставятся до запуска ядра. Если старт не
     /// удался, а правила поставил именно этот вызов, они снимаются: не блокируем
     /// сеть пользователя без работающего туннеля. Если правила остались от
     /// прошлой сессии после падения ядра, они сохраняются (fail-closed).
-    pub fn start(&mut self, config: Value, kill_switch: bool) -> Result<HelperStatus, HelperError> {
+    pub fn start(
+        &mut self,
+        config: Value,
+        rule_set: Value,
+        kill_switch: bool,
+    ) -> Result<HelperStatus, HelperError> {
         self.reap();
         if self.child.is_some() {
             return Err(HelperError::new(
@@ -144,6 +167,12 @@ impl HelperCore {
                 "payload.config должен быть объектом",
             ));
         }
+        if !rule_set.is_object() {
+            return Err(HelperError::new(
+                ErrorCode::ConfigInvalid,
+                "payload.rule_set должен быть объектом",
+            ));
+        }
 
         let was_active = self.kill_switch.is_active();
         if let Err(error) = self.kill_switch.sync(kill_switch) {
@@ -153,8 +182,29 @@ impl HelperCore {
             ));
         }
 
-        self.write_config(&config)
-            .inspect_err(|_| self.rollback_kill_switch(was_active))?;
+        let start_result = self.start_with_files(config, rule_set);
+        if start_result.is_err() {
+            self.rollback_kill_switch(was_active);
+        }
+        start_result
+    }
+
+    /// Запись файлов и запуск ядра без rollback'а kill switch.
+    ///
+    /// Выделено, чтобы `start` откатывал правила при любой ошибке, а
+    /// `reload_routing` переиспользовал запись rule-set.
+    fn start_with_files(
+        &mut self,
+        mut config: Value,
+        rule_set: Value,
+    ) -> Result<HelperStatus, HelperError> {
+        self.write_rule_set(&rule_set)?;
+
+        // Путь к rule-set знает только helper: пустые `path` локальных
+        // rule-set заполняются здесь, файл уже записан.
+        fill_rule_set_paths(&mut config, &self.rule_set_path);
+
+        self.write_config(&config)?;
 
         let check = match Command::new(&self.sing_box)
             .arg("check")
@@ -168,7 +218,6 @@ impl HelperCore {
             Ok(status) => status,
             Err(error) => {
                 self.discard_config();
-                self.rollback_kill_switch(was_active);
                 return Err(HelperError::io(
                     ErrorCode::StartFailed,
                     "не удалось проверить конфиг",
@@ -178,7 +227,6 @@ impl HelperCore {
         };
         if !check.success() {
             self.discard_config();
-            self.rollback_kill_switch(was_active);
             // Текст ошибки ядра может содержать значения конфига — не отдаём его.
             return Err(HelperError::new(
                 ErrorCode::ConfigInvalid,
@@ -190,7 +238,6 @@ impl HelperCore {
             Ok(log) => log,
             Err(error) => {
                 self.discard_config();
-                self.rollback_kill_switch(was_active);
                 return Err(HelperError::io(
                     ErrorCode::StartFailed,
                     "не удалось открыть лог ядра",
@@ -202,7 +249,6 @@ impl HelperCore {
             Ok(stdout) => stdout,
             Err(error) => {
                 self.discard_config();
-                self.rollback_kill_switch(was_active);
                 return Err(HelperError::io(
                     ErrorCode::StartFailed,
                     "не удалось подготовить лог ядра",
@@ -223,7 +269,6 @@ impl HelperCore {
             Ok(child) => child,
             Err(error) => {
                 self.discard_config();
-                self.rollback_kill_switch(was_active);
                 return Err(HelperError::io(
                     ErrorCode::StartFailed,
                     "не удалось запустить ядро",
@@ -235,7 +280,6 @@ impl HelperCore {
         std::thread::sleep(START_GRACE);
         if let Ok(Some(status)) = child.try_wait() {
             self.discard_config();
-            self.rollback_kill_switch(was_active);
             let code = status
                 .code()
                 .map(|code| code.to_string())
@@ -256,6 +300,32 @@ impl HelperCore {
         if !was_active && self.kill_switch.is_active() {
             self.kill_switch.release();
         }
+    }
+
+    /// Применяет новый rule-set per-app правил к работающему ядру.
+    ///
+    /// Файл заменяется атомарно: sing-box перечитывает локальные rule-set при
+    /// изменении (watcher fswatch следит за каталогом, поэтому замена через
+    /// rename безопасна), новые соединения матчатся по новым правилам.
+    /// Процесс ядра не перезапускается: сессия и kill switch не затрагиваются.
+    /// При ошибке парсинга нового файла ядро продолжает работать со старой
+    /// версией правил (ошибка попадает в sing-box.log).
+    pub fn reload_routing(&mut self, rule_set: Value) -> Result<HelperStatus, HelperError> {
+        self.reap();
+        if self.child.is_none() {
+            return Err(HelperError::new(
+                ErrorCode::ReloadFailed,
+                "нет активной сессии: правило применится при следующем подключении",
+            ));
+        }
+        if !rule_set.is_object() {
+            return Err(HelperError::new(
+                ErrorCode::BadRequest,
+                "payload.rule_set должен быть объектом",
+            ));
+        }
+        self.write_rule_set(&rule_set)?;
+        Ok(self.status())
     }
 
     /// Останавливает ядро и снимает правила; операция идемпотентна.
@@ -295,14 +365,53 @@ impl HelperCore {
         Ok(())
     }
 
+    /// Пишет rule-set атомарно, теми же правами, что и конфиг.
+    ///
+    /// Атомарность обязательна: watcher ядра читает файл в произвольный
+    /// момент, и частичная запись дала бы ошибку парсинга (правила просто не
+    /// обновились бы до следующей правки).
+    fn write_rule_set(&mut self, rule_set: &Value) -> Result<(), HelperError> {
+        let temp_path = self.runtime_dir.join(format!("{RULE_SET_FILENAME}.tmp"));
+        let result = (|| -> io::Result<()> {
+            let mut file = platform::open_private(&temp_path)?;
+            serde_json::to_writer_pretty(&mut file, rule_set).map_err(io::Error::other)?;
+            file.flush()?;
+            file.sync_all()?;
+            drop(file);
+            fs::rename(&temp_path, &self.rule_set_path)?;
+            platform::set_file_mode(&self.rule_set_path)?;
+            Ok(())
+        })();
+
+        if result.is_err() {
+            let _ = fs::remove_file(&temp_path);
+            return result.map_err(|error| {
+                HelperError::io(
+                    ErrorCode::ReloadFailed,
+                    "не удалось записать rule-set правил",
+                    error,
+                )
+            });
+        }
+
+        self.rule_set_owned = true;
+        Ok(())
+    }
+
     fn discard_config(&mut self) {
+        // Чужой конфиг (работающий второй helper) не трогаем: удаляем только
+        // временные файлы, если ничего не писали сами.
         if !self.config_owned {
             let _ = fs::remove_file(self.runtime_dir.join("config.json.tmp"));
+            let _ = fs::remove_file(self.runtime_dir.join(format!("{RULE_SET_FILENAME}.tmp")));
             return;
         }
         let _ = fs::remove_file(&self.config_path);
         let _ = fs::remove_file(self.runtime_dir.join("config.json.tmp"));
+        let _ = fs::remove_file(&self.rule_set_path);
+        let _ = fs::remove_file(self.runtime_dir.join(format!("{RULE_SET_FILENAME}.tmp")));
         self.config_owned = false;
+        self.rule_set_owned = false;
     }
 
     fn reap(&mut self) {
@@ -333,6 +442,26 @@ impl Drop for HelperCore {
         self.discard_config();
         // При завершении helper'а правила не должны «залипнуть».
         self.kill_switch.release();
+    }
+}
+
+/// Подставляет путь к rule-set в конфиг: у локальных rule-set с пустым `path`
+/// (приложение их так и отправляет) путь заполняет helper — он единственный
+/// знает runtime-каталог. Остальные записи не трогаются.
+fn fill_rule_set_paths(config: &mut Value, rule_set_path: &Path) {
+    let Some(entries) = config
+        .get_mut("route")
+        .and_then(|route| route.get_mut("rule_set"))
+        .and_then(Value::as_array_mut)
+    else {
+        return;
+    };
+    for entry in entries.iter_mut() {
+        let empty_local = entry.get("type").and_then(Value::as_str) == Some("local")
+            && entry.get("path").and_then(Value::as_str) == Some("");
+        if empty_local {
+            entry["path"] = json!(rule_set_path.to_string_lossy());
+        }
     }
 }
 
@@ -437,9 +566,21 @@ mod tests {
     fn non_object_config_is_rejected_before_writing() {
         let dir = temp_dir("invalid");
         let mut core = HelperCore::new(dir.join("missing-sing-box"), &dir).unwrap();
-        let error = core.start(Value::Null, false).unwrap_err();
+        let error = core.start(Value::Null, json!({}), false).unwrap_err();
         assert_eq!(error.code, ErrorCode::ConfigInvalid);
         assert!(!core.config_path.exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn non_object_rule_set_is_rejected_before_writing() {
+        let dir = temp_dir("invalid-ruleset");
+        let mut core = HelperCore::new(dir.join("missing-sing-box"), &dir).unwrap();
+        let error = core
+            .start(json!({ "log": { "level": "info" } }), Value::Null, false)
+            .unwrap_err();
+        assert_eq!(error.code, ErrorCode::ConfigInvalid);
+        assert!(!core.rule_set_path.exists());
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -450,7 +591,7 @@ mod tests {
         let mut core = core_with_fake(&dir, counters.clone(), true);
 
         let error = core
-            .start(json!({ "log": { "level": "info" } }), true)
+            .start(json!({ "log": { "level": "info" } }), json!({}), true)
             .unwrap_err();
         assert_eq!(error.code, ErrorCode::KillSwitchFailed);
         assert!(error.message.contains("нужны права root"));
@@ -468,7 +609,7 @@ mod tests {
 
         // Ядра нет: проверка конфига падает после установки правил.
         let error = core
-            .start(json!({ "log": { "level": "info" } }), true)
+            .start(json!({ "log": { "level": "info" } }), json!({}), true)
             .unwrap_err();
         assert_eq!(error.code, ErrorCode::StartFailed);
         assert_eq!(counters.enable.load(Ordering::SeqCst), 1);
@@ -489,7 +630,7 @@ mod tests {
         core.kill_switch.sync(true).unwrap();
 
         let error = core
-            .start(json!({ "log": { "level": "info" } }), true)
+            .start(json!({ "log": { "level": "info" } }), json!({}), true)
             .unwrap_err();
         assert_eq!(error.code, ErrorCode::StartFailed);
         assert_eq!(
@@ -540,6 +681,83 @@ mod tests {
             config_path.exists(),
             "второй экземпляр не должен удалять конфиг работающего helper'а"
         );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rule_set_file_is_written_with_private_permissions() {
+        let dir = temp_dir("ruleset");
+        let mut core = HelperCore::new(dir.join("missing-sing-box"), &dir).unwrap();
+        core.write_rule_set(&json!({ "version": 2, "rules": [] }))
+            .unwrap();
+
+        let mode = fs::metadata(&core.rule_set_path)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
+        let written: Value =
+            serde_json::from_str(&fs::read_to_string(&core.rule_set_path).unwrap()).unwrap();
+        assert_eq!(written["version"], 2);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reload_routing_without_session_is_rejected() {
+        let dir = temp_dir("reload-no-session");
+        let mut core = HelperCore::new(dir.join("missing-sing-box"), &dir).unwrap();
+        let error = core
+            .reload_routing(json!({ "version": 2, "rules": [] }))
+            .unwrap_err();
+        assert_eq!(error.code, ErrorCode::ReloadFailed);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reload_routing_rejects_non_object_payload() {
+        let dir = temp_dir("reload-bad-payload");
+        let mut core = HelperCore::new(dir.join("missing-sing-box"), &dir).unwrap();
+        let error = core.reload_routing(Value::Null).unwrap_err();
+        assert_eq!(error.code, ErrorCode::BadRequest);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn fill_rule_set_paths_fills_only_empty_local_paths() {
+        let path = Path::new("/var/lib/splitroute/rule-apps.json");
+        let mut config = json!({
+            "route": {
+                "rule_set": [
+                    { "type": "local", "tag": "splitroute-apps", "format": "source", "path": "" },
+                    { "type": "remote", "tag": "geo", "url": "https://example.test/rules.srs" },
+                    { "type": "local", "tag": "explicit", "path": "/custom/path.json" }
+                ]
+            }
+        });
+        fill_rule_set_paths(&mut config, path);
+        let entries = config["route"]["rule_set"].as_array().unwrap();
+        assert_eq!(entries[0]["path"], path.to_string_lossy());
+        assert_eq!(entries[1]["url"], "https://example.test/rules.srs");
+        assert_eq!(entries[2]["path"], "/custom/path.json");
+    }
+
+    #[test]
+    fn fill_rule_set_paths_without_route_is_noop() {
+        let mut config = json!({ "log": { "level": "info" } });
+        fill_rule_set_paths(&mut config, Path::new("/tmp/rule-apps.json"));
+        assert!(config.get("route").is_none());
+    }
+
+    #[test]
+    fn failed_start_after_rule_set_write_discards_files_on_stop() {
+        // Старт упал на check (ядра нет), но rule-set успел записаться:
+        // stop обязан убрать и его, иначе файл «залипнет» в runtime-каталоге.
+        let dir = temp_dir("orphan-ruleset");
+        let mut core = core_with_fake(&dir, Arc::new(FakeCounters::default()), false);
+        let _ = core.start(json!({}), json!({}), false);
+        core.stop();
+        assert!(!core.rule_set_path.exists());
         let _ = fs::remove_dir_all(&dir);
     }
 }

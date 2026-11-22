@@ -238,6 +238,22 @@ export const useAppStore = create<AppState>((set, get) => {
     }
   };
 
+  /// Ошибка правки правила. RELOAD_FAILED — правка уже сохранена в ядре,
+  /// но не применена к активной сессии (S10-T1, применится при
+  /// переподключении): список синхронизируется с persist-состоянием, чтобы
+  /// UI не показывал то, чего в хранилище нет.
+  const setRuleActionError = async (error: unknown) => {
+    const commandError = toCommandError(error);
+    set({ actionError: commandError });
+    if (commandError.code === "RELOAD_FAILED") {
+      try {
+        set({ rules: await api.rulesList() });
+      } catch {
+        // Список обновится при следующей загрузке вкладки.
+      }
+    }
+  };
+
   const applyStatus = (status: HelperStatus) => {
     set({
       helperStatus: status,
@@ -580,7 +596,7 @@ export const useAppStore = create<AppState>((set, get) => {
           const rules = await api.rulesUpsert(ruleFromInput(input));
           set({ rules, actionError: null });
         } catch (error) {
-          set({ actionError: toCommandError(error) });
+          await setRuleActionError(error);
         }
       });
     },
@@ -594,7 +610,7 @@ export const useAppStore = create<AppState>((set, get) => {
           const rules = await api.rulesUpsert(rule);
           set({ rules, actionError: null });
         } catch (error) {
-          set({ actionError: toCommandError(error) });
+          await setRuleActionError(error);
         }
       });
     },
@@ -608,7 +624,7 @@ export const useAppStore = create<AppState>((set, get) => {
           const rules = await api.rulesUpsert(rule);
           set({ rules, actionError: null });
         } catch (error) {
-          set({ actionError: toCommandError(error) });
+          await setRuleActionError(error);
         }
       });
     },
@@ -630,7 +646,7 @@ export const useAppStore = create<AppState>((set, get) => {
           const rules = await api.rulesUpsert(payload);
           set({ rules, actionError: null });
         } catch (error) {
-          set({ actionError: toCommandError(error) });
+          await setRuleActionError(error);
         }
       });
     },
@@ -641,7 +657,7 @@ export const useAppStore = create<AppState>((set, get) => {
           const rules = await api.rulesDelete(id);
           set({ rules, actionError: null });
         } catch (error) {
-          set({ actionError: toCommandError(error) });
+          await setRuleActionError(error);
         }
       });
     },

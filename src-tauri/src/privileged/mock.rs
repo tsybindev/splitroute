@@ -3,7 +3,7 @@
 use std::sync::Mutex;
 
 use serde_json::Value;
-use splitroute_protocol::{CoreState, HelperStatus, KillSwitchStatus};
+use splitroute_protocol::{CoreState, ErrorCode, HelperStatus, KillSwitchStatus};
 
 use super::{HelperClient, HelperClientError};
 
@@ -12,8 +12,10 @@ struct MockState {
     running: bool,
     started_at: Option<u64>,
     start_calls: u32,
+    reload_calls: u32,
     stop_calls: u32,
     last_config: Option<Value>,
+    last_rule_set: Option<Value>,
     /// Правила kill switch действуют, пока идёт сессия.
     kill_switch: bool,
 }
@@ -49,6 +51,16 @@ impl MockHelperClient {
         self.state.lock().unwrap().kill_switch
     }
 
+    /// Сколько раз вызывали `reload_routing` (для тестов).
+    pub fn reload_calls(&self) -> u32 {
+        self.state.lock().unwrap().reload_calls
+    }
+
+    /// Rule-set, переданный в последний `reload_routing` (для тестов).
+    pub fn last_rule_set(&self) -> Option<Value> {
+        self.state.lock().unwrap().last_rule_set.clone()
+    }
+
     fn status_of(state: &MockState) -> HelperStatus {
         HelperStatus {
             state: if state.running {
@@ -73,15 +85,34 @@ impl HelperClient for MockHelperClient {
         Ok(Self::status_of(&state))
     }
 
-    fn start(&self, config: Value, kill_switch: bool) -> Result<HelperStatus, HelperClientError> {
+    fn start(
+        &self,
+        config: Value,
+        rule_set: Value,
+        kill_switch: bool,
+    ) -> Result<HelperStatus, HelperClientError> {
         let mut state = self.state.lock().unwrap();
         state.start_calls += 1;
         state.last_config = Some(config);
+        state.last_rule_set = Some(rule_set);
         state.kill_switch = kill_switch;
         if !state.running {
             state.running = true;
             state.started_at = Some(crate::store::now_secs());
         }
+        Ok(Self::status_of(&state))
+    }
+
+    fn reload_routing(&self, rule_set: Value) -> Result<HelperStatus, HelperClientError> {
+        let mut state = self.state.lock().unwrap();
+        if !state.running {
+            return Err(HelperClientError::Helper {
+                code: ErrorCode::ReloadFailed,
+                message: "нет активной сессии".to_string(),
+            });
+        }
+        state.reload_calls += 1;
+        state.last_rule_set = Some(rule_set);
         Ok(Self::status_of(&state))
     }
 
@@ -102,8 +133,8 @@ mod tests {
     #[test]
     fn start_is_idempotent() {
         let client = MockHelperClient::new();
-        let first = client.start(Value::Null, false).unwrap();
-        let second = client.start(Value::Null, false).unwrap();
+        let first = client.start(Value::Null, Value::Null, false).unwrap();
+        let second = client.start(Value::Null, Value::Null, false).unwrap();
         assert_eq!(first.state, CoreState::Running);
         assert_eq!(second.state, CoreState::Running);
         assert_eq!(client.start_calls(), 2);
@@ -112,7 +143,7 @@ mod tests {
     #[test]
     fn stop_is_idempotent() {
         let client = MockHelperClient::new();
-        client.start(Value::Null, false).unwrap();
+        client.start(Value::Null, Value::Null, false).unwrap();
         assert_eq!(client.stop().unwrap().state, CoreState::Stopped);
         assert_eq!(client.stop().unwrap().state, CoreState::Stopped);
         assert_eq!(client.stop_calls(), 2);
@@ -122,7 +153,7 @@ mod tests {
     fn status_reflects_state() {
         let client = MockHelperClient::new();
         assert_eq!(client.status().unwrap().state, CoreState::Stopped);
-        client.start(Value::Null, false).unwrap();
+        client.start(Value::Null, Value::Null, false).unwrap();
         let status = client.status().unwrap();
         assert_eq!(status.state, CoreState::Running);
         assert_eq!(status.pid, Some(4242));
@@ -133,7 +164,7 @@ mod tests {
         let client = MockHelperClient::new();
         let before = crate::store::now_secs();
         let config = serde_json::json!({ "log": { "level": "info" } });
-        let status = client.start(config.clone(), false).unwrap();
+        let status = client.start(config.clone(), Value::Null, false).unwrap();
         let after = crate::store::now_secs();
 
         let started_at = status.started_at.expect("время старта");
@@ -147,11 +178,26 @@ mod tests {
         let client = MockHelperClient::new();
         assert!(!client.status().unwrap().kill_switch.enabled);
 
-        let status = client.start(Value::Null, true).unwrap();
+        let status = client.start(Value::Null, Value::Null, true).unwrap();
         assert!(client.last_kill_switch());
         assert!(status.kill_switch.enabled);
 
         let stopped = client.stop().unwrap();
         assert!(!stopped.kill_switch.enabled);
+    }
+
+    #[test]
+    fn reload_routing_requires_running_session() {
+        let client = MockHelperClient::new();
+        assert!(client.reload_routing(Value::Null).is_err());
+
+        client.start(Value::Null, Value::Null, false).unwrap();
+        let rule_set = serde_json::json!({ "version": 2, "rules": [] });
+        client.reload_routing(rule_set.clone()).unwrap();
+        assert_eq!(client.reload_calls(), 1);
+        assert_eq!(client.last_rule_set(), Some(rule_set));
+
+        client.stop().unwrap();
+        assert!(client.reload_routing(Value::Null).is_err());
     }
 }

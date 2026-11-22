@@ -95,6 +95,14 @@
       "server": "local"
     },
     "final": "direct",
+    "rule_set": [
+      {
+        "format": "source",
+        "path": "",
+        "tag": "splitroute-apps",
+        "type": "local"
+      }
+    ],
     "rules": [
       {
         "action": "hijack-dns",
@@ -111,6 +119,21 @@
       {
         "ip_is_private": true,
         "outbound": "direct"
+      },
+      {
+        "ip_cidr": [
+          "::/0"
+        ],
+        "outbound": "block",
+        "rule_set": [
+          "splitroute-apps"
+        ]
+      },
+      {
+        "outbound": "proxy",
+        "rule_set": [
+          "splitroute-apps"
+        ]
       }
     ]
   }

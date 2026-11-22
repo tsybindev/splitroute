@@ -1,7 +1,14 @@
-//! Генератор конфига sing-box: чистая функция `Settings + Profile + AppRule[] → JSON`.
+//! Генератор конфига sing-box: чистые функции `Settings + Profile → JSON` и
+//! `AppRule[] → rule-set`.
 //!
 //! Схема повторяет проверенный спайком `spike/convert.py` (sing-box 1.14.4,
 //! `sing-box check`). Все внешние данные приходят типами, строки не исполняются.
+//!
+//! Per-app правила живут не в самом конфиге, а в локальном rule-set
+//! (`route.rule_set` ссылается на файл по тегу): sing-box перечитывает
+//! локальные rule-set при изменении файла, поэтому правки правил применяются
+//! к работающему ядру без рестарта (S10-T1). Файл пишет helper, путь он
+//! подставляет сам — конфиг уходит к нему с пустым `path`.
 
 use serde_json::{json, Map, Value};
 use splitroute_protocol::{AppRule, DnsMode, Profile, Protocol, Settings, TlsKind, Transport};
@@ -16,6 +23,11 @@ pub const TUN_ADDRESS_V4: &str = "172.19.0.1/30";
 pub const TUN_ADDRESS_V6: &str = "fdfe:dcba:9876::1/126";
 /// Локальный адрес Clash API: только loopback, наружу не слушает.
 pub const CLASH_API_HOST: &str = "127.0.0.1";
+/// Тег rule-set с per-app правилами; на него ссылаются routing-правила.
+pub const APP_RULE_SET_TAG: &str = "splitroute-apps";
+/// Версия формата rule-set (source, JSON). Версия 2 поддерживает все поля,
+/// которые используют правила (`process_name`/`process_path`/`path_regex`).
+pub const RULE_SET_VERSION: u8 = 2;
 
 /// Параметры локального Clash API ядра для статистики трафика (PRD §6.2).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,24 +49,22 @@ pub enum ConfigError {
     InvalidSettings(String),
 }
 
-/// Собирает конфиг sing-box. `rules` — полный список правил allowlist; выключенные
-/// игнорируются. `clash_api` включает локальный API статистики, если задан.
+/// Собирает конфиг sing-box. Per-app правила в конфиг не входят: routing
+/// ссылается на rule-set по тегу, содержимое собирает `build_rule_set`.
+/// `clash_api` включает локальный API статистики, если задан.
 pub fn build_config(
     settings: &Settings,
     profile: &Profile,
-    rules: &[AppRule],
     clash_api: Option<&ClashApi>,
 ) -> Result<Value, ConfigError> {
     validate(settings, profile)?;
-
-    let active: Vec<&AppRule> = rules.iter().filter(|rule| rule.enabled).collect();
 
     let mut config = json!({
         "log": { "level": json!(settings.log_level), "timestamp": true },
         "dns": build_dns(settings),
         "inbounds": build_inbounds(settings),
         "outbounds": build_outbounds(settings, profile)?,
-        "route": build_route(settings, &active),
+        "route": build_route(settings),
     });
     if let Some(clash_api) = clash_api {
         config["experimental"] = json!({
@@ -65,6 +75,23 @@ pub fn build_config(
         });
     }
     Ok(config)
+}
+
+/// Собирает содержимое локального rule-set с per-app правилами (S10-T1).
+///
+/// Выключенные правила и правила без селекторов не попадают в файл. Элементы
+/// внутри одного объекта матчятся по И (как раньше в route-правиле), объекты
+/// между собой — по ИЛИ. Файл перечитывается ядром при изменении, поэтому
+/// включение/выключение/правка правила применяется к активной сессии без
+/// переподключения.
+pub fn build_rule_set(rules: &[AppRule]) -> Value {
+    let items: Vec<Value> = rules
+        .iter()
+        .filter(|rule| rule.enabled)
+        .filter_map(selectors)
+        .map(Value::Object)
+        .collect();
+    json!({ "version": RULE_SET_VERSION, "rules": items })
 }
 
 fn validate(settings: &Settings, profile: &Profile) -> Result<(), ConfigError> {
@@ -227,7 +254,7 @@ fn build_tls(profile: &Profile) -> Result<Value, ConfigError> {
     }
 }
 
-fn build_route(settings: &Settings, rules: &[&AppRule]) -> Value {
+fn build_route(settings: &Settings) -> Value {
     let mut route_rules = Vec::new();
 
     // В режиме proxy перехватываем DNS из TUN и отдаём его в dns.final=remote.
@@ -241,25 +268,31 @@ fn build_route(settings: &Settings, rules: &[&AppRule]) -> Value {
     route_rules.push(json!({ "domain": ["localhost"], "outbound": "direct" }));
     route_rules.push(json!({ "ip_is_private": true, "outbound": "direct" }));
 
+    // Per-app routing — через rule-set по тегу: содержимое файла ядро
+    // перечитывает без рестарта (S10-T1). Без IPv6 выключенные правила
+    // блокируются раньше: правило матчится, если соединение попало в rule-set
+    // И адрес назначения IPv6.
     if !settings.ipv6_enabled {
-        for rule in rules {
-            if let Some(mut selectors) = selectors(rule) {
-                selectors.insert("ip_cidr".to_string(), json!(["::/0"]));
-                selectors.insert("outbound".to_string(), json!("block"));
-                route_rules.push(Value::Object(selectors));
-            }
-        }
+        route_rules.push(json!({
+            "rule_set": [APP_RULE_SET_TAG],
+            "ip_cidr": ["::/0"],
+            "outbound": "block",
+        }));
     }
-
-    for rule in rules {
-        if let Some(mut selectors) = selectors(rule) {
-            selectors.insert("outbound".to_string(), json!("proxy"));
-            route_rules.push(Value::Object(selectors));
-        }
-    }
+    route_rules.push(json!({
+        "rule_set": [APP_RULE_SET_TAG],
+        "outbound": "proxy",
+    }));
 
     json!({
         "rules": route_rules,
+        "rule_set": [{
+            "type": "local",
+            "tag": APP_RULE_SET_TAG,
+            "format": "source",
+            // Путь подставляет helper: он единственный знает runtime-каталог.
+            "path": "",
+        }],
         "final": "direct",
         "auto_detect_interface": true,
         "default_domain_resolver": { "server": "local" },
@@ -325,32 +358,35 @@ mod tests {
     }
 
     #[test]
-    fn default_config_has_tun_and_process_rule() {
-        let config = build_config(&Settings::default(), &profile(), &[rule()], None).unwrap();
+    fn default_config_routes_app_rules_through_rule_set() {
+        let config = build_config(&Settings::default(), &profile(), None).unwrap();
         assert_eq!(config["inbounds"][0]["type"], "tun");
         assert_eq!(config["inbounds"][0]["mtu"], 1500);
         assert_eq!(config["outbounds"][0]["type"], "vless");
         assert_eq!(config["route"]["final"], "direct");
+
         let rules = config["route"]["rules"].as_array().unwrap();
-        assert!(rules
-            .iter()
-            .any(|item| item["process_name"][0] == "Google Chrome"));
-        assert!(rules.iter().any(|item| {
-            item["process_path_regex"]
-                .as_array()
-                .is_some_and(|patterns| {
-                    patterns.iter().any(|pattern| {
-                        pattern
-                            .as_str()
-                            .is_some_and(|p| p.contains("Google Chrome"))
-                    })
-                })
-        }));
+        assert!(
+            rules
+                .iter()
+                .any(|item| item["rule_set"][0] == APP_RULE_SET_TAG && item["outbound"] == "proxy"),
+            "per-app routing ссылается на rule-set по тегу"
+        );
+
+        let rule_sets = config["route"]["rule_set"].as_array().unwrap();
+        assert_eq!(rule_sets.len(), 1);
+        assert_eq!(rule_sets[0]["type"], "local");
+        assert_eq!(rule_sets[0]["tag"], APP_RULE_SET_TAG);
+        assert_eq!(rule_sets[0]["format"], "source");
+        assert_eq!(
+            rule_sets[0]["path"], "",
+            "путь подставляет helper: приложению runtime-каталог неизвестен"
+        );
     }
 
     #[test]
     fn tun_stack_is_gvisor_on_linux_and_mixed_elsewhere() {
-        let config = build_config(&Settings::default(), &profile(), &[], None).unwrap();
+        let config = build_config(&Settings::default(), &profile(), None).unwrap();
         let expected = if cfg!(target_os = "linux") {
             "gvisor"
         } else {
@@ -363,21 +399,50 @@ mod tests {
     }
 
     #[test]
-    fn disabled_rules_are_ignored() {
+    fn rule_set_contains_only_enabled_rules() {
         let mut disabled = rule();
         disabled.enabled = false;
-        let config = build_config(&Settings::default(), &profile(), &[disabled], None).unwrap();
-        let rules = config["route"]["rules"].as_array().unwrap();
+        let rule_set = build_rule_set(&[rule(), disabled]);
+        let items = rule_set["rules"].as_array().unwrap();
+        assert_eq!(items.len(), 1, "выключенное правило не попадает в файл");
+        assert_eq!(rule_set["version"], RULE_SET_VERSION);
+        assert_eq!(items[0]["process_name"][0], "Google Chrome");
         assert_eq!(
-            rules.len(),
-            3,
-            "hijack-dns, localhost и ip_is_private; правил по процессам нет"
+            items[0]["process_path_regex"][0],
+            "^/Applications/Google Chrome\\.app/"
         );
     }
 
     #[test]
+    fn rule_set_without_rules_or_selectors_is_empty() {
+        let empty = build_rule_set(&[]);
+        assert!(empty["rules"].as_array().unwrap().is_empty());
+
+        let mut blank = rule();
+        blank.process_name.clear();
+        blank.path_regex.clear();
+        let rule_set = build_rule_set(&[blank]);
+        assert!(
+            rule_set["rules"].as_array().unwrap().is_empty(),
+            "правило без селекторов ничего не матчит и в файл не попадает"
+        );
+    }
+
+    #[test]
+    fn rule_set_merges_selectors_within_one_rule() {
+        // Поля одного элемента матчятся по И — как раньше в route-правиле.
+        let mut combined = rule();
+        combined.process_path = vec!["/Applications/Google Chrome.app/".to_string()];
+        let rule_set = build_rule_set(&[combined]);
+        let item = &rule_set["rules"].as_array().unwrap()[0];
+        assert!(item.get("process_name").is_some());
+        assert!(item.get("process_path").is_some());
+        assert!(item.get("process_path_regex").is_some());
+    }
+
+    #[test]
     fn proxy_dns_goes_through_proxy_without_process_rules() {
-        let config = build_config(&Settings::default(), &profile(), &[rule()], None).unwrap();
+        let config = build_config(&Settings::default(), &profile(), None).unwrap();
         let dns = &config["dns"];
         assert_eq!(dns["final"], "remote");
         let servers = dns["servers"].as_array().unwrap();
@@ -402,12 +467,14 @@ mod tests {
     }
 
     #[test]
-    fn ipv6_disabled_blocks_selected_process() {
-        let config = build_config(&Settings::default(), &profile(), &[rule()], None).unwrap();
+    fn ipv6_disabled_blocks_rule_set_via_ipv6_rule() {
+        let config = build_config(&Settings::default(), &profile(), None).unwrap();
         let rules = config["route"]["rules"].as_array().unwrap();
         assert!(rules
             .iter()
-            .any(|item| item["ip_cidr"][0] == "::/0" && item["outbound"] == "block"));
+            .any(|item| item["rule_set"][0] == APP_RULE_SET_TAG
+                && item["ip_cidr"][0] == "::/0"
+                && item["outbound"] == "block"));
         assert!(config["outbounds"]
             .as_array()
             .unwrap()
@@ -421,7 +488,7 @@ mod tests {
             ipv6_enabled: true,
             ..Settings::default()
         };
-        let config = build_config(&settings, &profile(), &[rule()], None).unwrap();
+        let config = build_config(&settings, &profile(), None).unwrap();
         let address = config["inbounds"][0]["address"].as_array().unwrap();
         assert_eq!(address.len(), 2);
         assert!(config["outbounds"]
@@ -437,7 +504,7 @@ mod tests {
             dns_mode: DnsMode::System,
             ..Settings::default()
         };
-        let config = build_config(&settings, &profile(), &[rule()], None).unwrap();
+        let config = build_config(&settings, &profile(), None).unwrap();
         let servers = config["dns"]["servers"].as_array().unwrap();
         assert_eq!(servers.len(), 1);
         assert_eq!(servers[0]["tag"], "local");
@@ -458,7 +525,7 @@ mod tests {
         let mut broken = profile();
         broken.tls.public_key = None;
         assert_eq!(
-            build_config(&Settings::default(), &broken, &[], None),
+            build_config(&Settings::default(), &broken, None),
             Err(ConfigError::MissingRealityKey)
         );
     }
@@ -470,7 +537,7 @@ mod tests {
             ..Settings::default()
         };
         assert!(matches!(
-            build_config(&settings, &profile(), &[], None),
+            build_config(&settings, &profile(), None),
             Err(ConfigError::InvalidSettings(_))
         ));
     }
@@ -481,7 +548,7 @@ mod tests {
             mixed_inbound_enabled: false,
             ..Settings::default()
         };
-        let config = build_config(&settings, &profile(), &[], None).unwrap();
+        let config = build_config(&settings, &profile(), None).unwrap();
         assert_eq!(config["inbounds"].as_array().unwrap().len(), 1);
     }
 
@@ -491,7 +558,7 @@ mod tests {
             port: 19090,
             secret: "0123456789abcdef0123456789abcdef".to_string(),
         };
-        let config = build_config(&Settings::default(), &profile(), &[], Some(&api)).unwrap();
+        let config = build_config(&Settings::default(), &profile(), Some(&api)).unwrap();
         assert_eq!(
             config["experimental"]["clash_api"]["external_controller"],
             "127.0.0.1:19090"
@@ -504,7 +571,7 @@ mod tests {
 
     #[test]
     fn no_clash_api_block_without_endpoint() {
-        let config = build_config(&Settings::default(), &profile(), &[], None).unwrap();
+        let config = build_config(&Settings::default(), &profile(), None).unwrap();
         assert!(config.get("experimental").is_none());
     }
 }

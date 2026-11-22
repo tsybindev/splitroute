@@ -106,7 +106,7 @@ export const en: Record<MessageKey, string> = {
   "apps.add.type.regex": "Path regex",
   "apps.add.regex_hint.toggle": "How to write the pattern",
   "apps.add.regex_hint.body":
-    "The pattern matches the full process path.\nDouble every backslash in the path (\\\\), escape the dot in the file name (\\\\.).\nAnchors ^ and $ pin the match to the full path.\nReplace the version directory the app changes on update (Discord: app-1.0.9269) with app-[0-9.]+:\nThe rule applies on the next connect.",
+    "The pattern matches the full process path.\nDouble every backslash in the path (\\\\), escape the dot in the file name (\\\\.).\nAnchors ^ and $ pin the match to the full path.\nReplace the version directory the app changes on update (Discord: app-1.0.9269) with app-[0-9.]+:\nRule changes apply to the active connection immediately; without one, on the next connect.",
   "apps.add.regex_hint.example":
     "^C:\\\\Users\\\\Name\\\\AppData\\\\Local\\\\Discord\\\\app-[0-9.]+\\\\Discord\\.exe$",
   "apps.add.value": "Value",
@@ -290,6 +290,9 @@ export const en: Record<MessageKey, string> = {
   "errors.HELPER_INVALID_RESPONSE": "Helper returned an invalid response.",
   "errors.KILL_SWITCH_FAILED":
     "Could not enable the kill switch. Check the helper privileges.",
+  "errors.RELOAD_FAILED":
+    "The rule change is saved but was not applied to the active session — it takes effect after reconnecting.",
+  "errors.RULES_INVALID": "The rule failed validation.",
   "errors.CORE_STOPPED":
     "The core stopped. The kill switch is blocking direct traffic.",
   "errors.RECONNECT_FAILED":

@@ -72,6 +72,14 @@
       "server": "local"
     },
     "final": "direct",
+    "rule_set": [
+      {
+        "format": "source",
+        "path": "",
+        "tag": "splitroute-apps",
+        "type": "local"
+      }
+    ],
     "rules": [
       {
         "domain": [
@@ -85,11 +93,8 @@
       },
       {
         "outbound": "proxy",
-        "process_name": [
-          "Google Chrome"
-        ],
-        "process_path_regex": [
-          "^/Applications/Google Chrome\\.app/"
+        "rule_set": [
+          "splitroute-apps"
         ]
       }
     ]

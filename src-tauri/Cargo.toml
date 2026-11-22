@@ -31,6 +31,10 @@ reqwest = { version = "0.13", default-features = false, features = [
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 dirs = "7"
 uuid = { version = "1", features = ["v4"] }
+# Валидация path_regex правил (S10-T1): компиляция шаблонов до записи в store,
+# чтобы rule-set работающего ядра всегда перечитывался без ошибок парсинга.
+# Синтаксис совместим с Go-regexp sing-box (оба происходят из RE2).
+regex = "1"
 # Иконки каталога: декодирование PNG и resize. Крейт уже в дереве через
 # tauri/image-png, поэтому новых зависимостей по факту нет.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }

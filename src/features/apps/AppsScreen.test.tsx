@@ -12,6 +12,7 @@ import {
 } from "../../test/fixtures";
 
 const apiMock = vi.hoisted(() => ({
+  rulesList: vi.fn(),
   rulesUpsert: vi.fn(),
   rulesDelete: vi.fn(),
   appsInstalled: vi.fn(),
@@ -288,6 +289,47 @@ describe("AppsScreen", () => {
         enabled: false,
       }),
     );
+  });
+
+  it("при ошибке применения к сессии показывает ошибку и синхронизирует список (S10-T1)", async () => {
+    const user = userEvent.setup();
+    const rule = makeRule();
+    // Правка сохранена в ядре, но helper не применил её к активной сессии.
+    apiMock.rulesUpsert.mockRejectedValue({
+      code: "RELOAD_FAILED",
+      message: "helper недоступен",
+    });
+    apiMock.rulesList.mockResolvedValue([{ ...rule, enabled: false }]);
+    useAppStore.setState({ rules: [rule] });
+
+    await openRulesTab();
+    await user.click(screen.getByRole("button", { name: /Через прокси/ }));
+
+    expect(
+      await screen.findByText(/сохранено, но не применено к активной сессии/),
+    ).toBeInTheDocument();
+    // Правило уже сохранено в store ядра: список подтягивается оттуда.
+    await waitFor(() => expect(apiMock.rulesList).toHaveBeenCalled());
+    expect(screen.getByText(rule.name)).toBeInTheDocument();
+  });
+
+  it("валидационная ошибка не синхронизирует список", async () => {
+    const user = userEvent.setup();
+    const rule = makeRule();
+    apiMock.rulesUpsert.mockRejectedValue({
+      code: "RULES_INVALID",
+      message: "шаблон не компилируется",
+    });
+    useAppStore.setState({ rules: [rule] });
+
+    await openRulesTab();
+    await user.click(screen.getByRole("button", { name: /Через прокси/ }));
+
+    expect(
+      await screen.findByText("Правило не прошло проверку."),
+    ).toBeInTheDocument();
+    expect(apiMock.rulesList).not.toHaveBeenCalled();
+    expect(screen.getByText(rule.name)).toBeInTheDocument();
   });
 
   it("помечает правило с несуществующим путём как неактивное", async () => {

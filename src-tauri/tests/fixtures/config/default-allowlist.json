@@ -95,6 +95,14 @@
       "server": "local"
     },
     "final": "direct",
+    "rule_set": [
+      {
+        "format": "source",
+        "path": "",
+        "tag": "splitroute-apps",
+        "type": "local"
+      }
+    ],
     "rules": [
       {
         "action": "hijack-dns",
@@ -117,35 +125,14 @@
           "::/0"
         ],
         "outbound": "block",
-        "process_name": [
-          "Google Chrome"
-        ],
-        "process_path_regex": [
-          "^/Applications/Google Chrome\\.app/"
-        ]
-      },
-      {
-        "ip_cidr": [
-          "::/0"
-        ],
-        "outbound": "block",
-        "process_name": [
-          "curl"
+        "rule_set": [
+          "splitroute-apps"
         ]
       },
       {
         "outbound": "proxy",
-        "process_name": [
-          "Google Chrome"
-        ],
-        "process_path_regex": [
-          "^/Applications/Google Chrome\\.app/"
-        ]
-      },
-      {
-        "outbound": "proxy",
-        "process_name": [
-          "curl"
+        "rule_set": [
+          "splitroute-apps"
         ]
       }
     ]

@@ -1,12 +1,14 @@
-//! Проекция правил allowlist для UI: признак «путь не найден» (PRD §6.3).
+//! Проекция правил allowlist для UI: признак «путь не найден» (PRD §6.3) и
+//! валидация правила до записи в store (S10-T1).
 //!
-//! Проверка — локальный `stat` при чтении списка: без сети, привилегий и
-//! исполнения строк из правила. Признак ставится только там, где ответ
+//! Проверка путей — локальный `stat` при чтении списка: без сети, привилегий
+//! и исполнения строк из правила. Признак ставится только там, где ответ
 //! однозначен: `process_name` и произвольные regex не проверяются, чтобы не
 //! показывать ложное «неактивно».
 
 use std::path::Path;
 
+use regex::Regex;
 use splitroute_protocol::{AppRule, AppRuleView};
 
 /// Строит правило с признаком отсутствующего пути.
@@ -20,6 +22,63 @@ pub fn view(rule: &AppRule) -> AppRuleView {
 /// Проекция списка правил для команд `rules_list`/`rules_upsert`/`rules_delete`.
 pub fn views(rules: Vec<AppRule>) -> Vec<AppRuleView> {
     rules.iter().map(view).collect()
+}
+
+/// Лимиты валидации правила: rule-set перечитывается работающим ядром, и
+/// мусор в нём означал бы, что новые правила просто не применятся до
+/// следующей правки (sing-box при ошибке парсинга оставляет старые). Проверка
+/// в Rust закрывает это до записи в store.
+const MAX_NAME_CHARS: usize = 200;
+const MAX_PATTERNS: usize = 20;
+const MAX_PATTERN_CHARS: usize = 1024;
+
+/// Проверяет правило до записи в store (S10-T1).
+///
+/// `path_regex` компилируется крейтом `regex`: его синтаксис и синтаксис
+/// Go-regexp в sing-box происходят из RE2, поэтому для шаблонов правил
+/// (пути, экранирование, якоря, символьные классы) компиляция эквивалентна.
+/// Пустое имя или правило без селекторов в rule-set не попадает и смысла не
+/// имеет — такие тоже отклоняются.
+pub fn validate_rule(rule: &AppRule) -> Result<(), String> {
+    let name = rule.name.trim();
+    if name.is_empty() {
+        return Err("название правила не заполнено".to_string());
+    }
+    if rule.name.chars().count() > MAX_NAME_CHARS {
+        return Err(format!("название длиннее {MAX_NAME_CHARS} символов"));
+    }
+
+    let fields: [(&str, &Vec<String>); 3] = [
+        ("process_name", &rule.process_name),
+        ("process_path", &rule.process_path),
+        ("path_regex", &rule.path_regex),
+    ];
+    if fields.iter().all(|(_, values)| values.is_empty()) {
+        return Err("правило без селекторов: заполните имя процесса, путь или шаблон".to_string());
+    }
+
+    for (field, values) in fields {
+        if values.len() > MAX_PATTERNS {
+            return Err(format!("поле {field}: больше {MAX_PATTERNS} значений"));
+        }
+        for value in values {
+            if value.trim().is_empty() {
+                return Err(format!("поле {field}: есть пустое значение"));
+            }
+            if value.chars().count() > MAX_PATTERN_CHARS {
+                return Err(format!(
+                    "поле {field}: значение длиннее {MAX_PATTERN_CHARS} символов"
+                ));
+            }
+        }
+    }
+
+    for pattern in &rule.path_regex {
+        if let Err(error) = Regex::new(pattern) {
+            return Err(format!("шаблон не компилируется: {error}"));
+        }
+    }
+    Ok(())
 }
 
 /// Возвращает абсолютные пути правила, которых нет на диске.
@@ -101,6 +160,60 @@ mod tests {
     /// Существование подменяется предикатом: тесты не зависят от файловой системы.
     fn missing_with(rule: &AppRule, existing: &[&str]) -> Vec<String> {
         missing_paths(rule, |path| existing.contains(&path))
+    }
+
+    fn validation_error(rule: &AppRule) -> String {
+        validate_rule(rule).unwrap_err()
+    }
+
+    #[test]
+    fn valid_rules_pass_validation() {
+        for rule in [
+            rule(&[], &[], &["curl"]),
+            rule(&["/opt/app/bin/app"], &[], &[]),
+            rule(
+                &[],
+                &[r"^C:\\Users\\Имя\\Discord\\app-[0-9.]+\\Discord\.exe$"],
+                &[],
+            ),
+            rule(&[], &[r"^/opt/.*\.app/"], &[]),
+        ] {
+            assert!(validate_rule(&rule).is_ok(), "{}", rule.name);
+        }
+    }
+
+    #[test]
+    fn empty_name_and_blank_selectors_are_rejected() {
+        let mut no_name = rule(&[], &[], &["curl"]);
+        no_name.name = "   ".to_string();
+        assert_eq!(validation_error(&no_name), "название правила не заполнено");
+
+        let blank = rule(&[], &[], &[]);
+        assert!(validation_error(&blank).contains("без селекторов"));
+
+        let mut empty_value = rule(&[], &[], &[]);
+        empty_value.process_name = vec!["   ".to_string()];
+        assert!(validation_error(&empty_value).contains("пустое значение"));
+    }
+
+    #[test]
+    fn broken_regex_is_rejected_before_store() {
+        let rule = rule(&[], &[r"^/opt/[unclosed"], &[]);
+        assert!(validation_error(&rule).contains("не компилируется"));
+    }
+
+    #[test]
+    fn oversized_values_are_rejected() {
+        let mut long_name = rule(&[], &[], &["curl"]);
+        long_name.name = "x".repeat(201);
+        assert!(validation_error(&long_name).contains("название длиннее"));
+
+        let long_pattern = rule(&[], &[&"a".repeat(1025)], &[]);
+        assert!(validation_error(&long_pattern).contains("длиннее"));
+
+        let mut many = rule(&[], &[], &[]);
+        many.process_name = (0..21).map(|i| format!("app-{i}")).collect();
+        assert!(validation_error(&many).contains("больше"));
     }
 
     /// Несуществующий абсолютный путь, корректный на текущей платформе.

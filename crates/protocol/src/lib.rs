@@ -17,22 +17,29 @@ pub use model::{
 /// Версия протокола IPC. Несовпадение — повод переустановить helper.
 ///
 /// Версия 2 добавила `kill_switch` в `start` и состояние kill switch в `status`.
-/// Старый helper молча проигнорировал бы флаг и оставил трафик без защиты,
-/// поэтому совместимость не сохраняется.
-pub const PROTOCOL_VERSION: u16 = 2;
+/// Версия 3 добавила `rule_set` в `start` и команду `reload_routing`: per-app
+/// правила применяются к работающему ядру через локальный rule-set без
+/// рестарта. Старый helper не знал бы новых полей и команд, поэтому
+/// совместимость не сохраняется.
+pub const PROTOCOL_VERSION: u16 = 3;
 
 /// Максимальный размер одного сообщения протокола, байт.
 pub const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 
 /// Разрешённые команды helper'а. Других команд быть не должно.
+///
+/// `snake_case`, а не `lowercase`: `lowercase` не разделяет слова и дал бы
+/// `reloadrouting`, а проводной формат однословных команд (`start`, `status`)
+/// при смене не меняется.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum Command {
     Install,
     Uninstall,
     Start,
     Stop,
     Status,
+    ReloadRouting,
 }
 
 /// Запрос к helper'у.
@@ -77,15 +84,32 @@ impl Request {
     }
 }
 
-/// Payload команды `start`: конфиг ядра и режим kill switch.
+/// Payload команды `start`: конфиг ядра, rule-set per-app правил и kill switch.
+///
+/// `rule_set` — содержимое локального rule-set (`route.rule_set` в конфиге
+/// ссылается на файл по тегу `splitroute-apps`); helper записывает его в
+/// runtime-каталог и подставляет путь в конфиг, чтобы приложение не знало
+/// файловых путей privileged-каталога.
 ///
 /// `kill_switch` передаётся отдельно от конфига: правила ставит helper, а не
 /// sing-box, и они должны оставаться в силе, если ядро упадёт.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StartPayload {
     pub config: Value,
+    pub rule_set: Value,
     #[serde(default)]
     pub kill_switch: bool,
+}
+
+/// Payload команды `reload_routing`: новый rule-set per-app правил.
+///
+/// Вызывается при правках правил активной сессии: helper атомарно заменяет
+/// файл rule-set, sing-box перечитывает его без рестарта (локальные rule-set
+/// перечитываются при изменении файла с sing-box 1.10.0). Kill switch и
+/// DNS-режим при этом не затрагиваются.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReloadRoutingPayload {
+    pub rule_set: Value,
 }
 
 /// Код ошибки протокола: стабильный, машинно-читаемый.
@@ -100,6 +124,7 @@ pub enum ErrorCode {
     ConfigInvalid,
     AlreadyRunning,
     StartFailed,
+    ReloadFailed,
     KillSwitchFailed,
     Internal,
 }
@@ -259,6 +284,7 @@ mod tests {
             (Command::Start, "start"),
             (Command::Stop, "stop"),
             (Command::Status, "status"),
+            (Command::ReloadRouting, "reload_routing"),
         ] {
             assert_eq!(serde_json::to_value(command).unwrap(), expected);
         }
@@ -371,23 +397,40 @@ mod tests {
     #[test]
     fn start_payload_defaults_kill_switch_to_false() {
         let payload: StartPayload = serde_json::from_value(serde_json::json!({
-            "config": { "log": { "level": "info" } }
+            "config": { "log": { "level": "info" } },
+            "rule_set": { "version": 2, "rules": [] }
         }))
         .unwrap();
         assert!(!payload.kill_switch);
         assert_eq!(payload.config["log"]["level"], "info");
+        assert_eq!(payload.rule_set["version"], 2);
     }
 
     #[test]
     fn start_payload_round_trip_with_kill_switch() {
         let payload = StartPayload {
             config: serde_json::json!({ "log": { "level": "info" } }),
+            rule_set: serde_json::json!({ "version": 2, "rules": [] }),
             kill_switch: true,
         };
         let encoded = serde_json::to_string(&payload).unwrap();
         let decoded: StartPayload = serde_json::from_str(&encoded).unwrap();
         assert_eq!(decoded, payload);
         assert!(encoded.contains(r#""kill_switch":true"#));
+        assert!(encoded.contains(r#""rule_set""#));
+    }
+
+    #[test]
+    fn reload_routing_payload_round_trip() {
+        let payload = ReloadRoutingPayload {
+            rule_set: serde_json::json!({
+                "version": 2,
+                "rules": [{ "process_name": ["Discord.exe"] }]
+            }),
+        };
+        let encoded = serde_json::to_string(&payload).unwrap();
+        let decoded: ReloadRoutingPayload = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded, payload);
     }
 
     #[test]
@@ -395,6 +438,28 @@ mod tests {
         assert_eq!(
             serde_json::to_value(ErrorCode::KillSwitchFailed).unwrap(),
             "KILL_SWITCH_FAILED"
+        );
+    }
+
+    #[test]
+    fn reload_error_code_is_stable() {
+        assert_eq!(
+            serde_json::to_value(ErrorCode::ReloadFailed).unwrap(),
+            "RELOAD_FAILED"
+        );
+    }
+
+    #[test]
+    fn parse_response_rejects_protocol_v2() {
+        // v2 helper не знает rule_set и reload_routing: совместимость нельзя
+        // сохранять, иначе правки правил молча перестанут применяться.
+        let raw = r#"{"protocol":2,"id":"x","ok":true,"payload":{}}"#;
+        assert_eq!(
+            parse_response(raw),
+            Err(ProtocolError::VersionMismatch {
+                expected: PROTOCOL_VERSION,
+                got: 2
+            })
         );
     }
 }

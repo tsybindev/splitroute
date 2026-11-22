@@ -8,7 +8,7 @@ use std::io::{BufRead, Write};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde_json::Value;
-use splitroute_protocol::{Command, ErrorCode, Response, StartPayload};
+use splitroute_protocol::{Command, ErrorCode, ReloadRoutingPayload, Response, StartPayload};
 
 use crate::core::{HelperCore, HelperError};
 use crate::ipc::{self, ParsedRequest};
@@ -60,12 +60,30 @@ pub fn dispatch(
                     return Response::error(
                         id,
                         ErrorCode::BadRequest,
-                        "payload: ожидались config и kill_switch",
+                        "payload: ожидались config, rule_set и kill_switch",
                     );
                 }
             };
-            core.start(start.config, start.kill_switch)
+            core.start(start.config, start.rule_set, start.kill_switch)
                 .map(status_payload)
+        }
+        Command::ReloadRouting => {
+            let mut core = lock(shared);
+            if shutting_down {
+                return Response::error(id, ErrorCode::Internal, "helper завершается");
+            }
+            let reload: ReloadRoutingPayload = match serde_json::from_value(request.payload.clone())
+            {
+                Ok(reload) => reload,
+                Err(_) => {
+                    return Response::error(
+                        id,
+                        ErrorCode::BadRequest,
+                        "payload: ожидался rule_set",
+                    );
+                }
+            };
+            core.reload_routing(reload.rule_set).map(status_payload)
         }
         Command::Stop => {
             let mut core = lock(shared);

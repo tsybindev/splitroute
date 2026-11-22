@@ -11,8 +11,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 use splitroute_protocol::{
-    parse_response, Command, ErrorCode, HelperStatus, ProtocolError, Request, StartPayload,
-    MAX_MESSAGE_BYTES,
+    parse_response, Command, ErrorCode, HelperStatus, ProtocolError, ReloadRoutingPayload, Request,
+    StartPayload, MAX_MESSAGE_BYTES,
 };
 
 use super::HelperClientError;
@@ -97,18 +97,32 @@ pub fn status<S: Read + Write>(stream: &mut S) -> Result<HelperStatus, HelperCli
     parse_status(call(stream, Command::Status, Value::Null)?)
 }
 
-/// `start` поверх открытого потока. `kill_switch` — часть протокола 2.
+/// `start` поверх открытого потока. `kill_switch` — часть протокола 2,
+/// `rule_set` — часть протокола 3.
 pub fn start<S: Read + Write>(
     stream: &mut S,
     config: Value,
+    rule_set: Value,
     kill_switch: bool,
 ) -> Result<HelperStatus, HelperClientError> {
     let payload = serde_json::to_value(StartPayload {
         config,
+        rule_set,
         kill_switch,
     })
     .map_err(|error| HelperClientError::InvalidPayload(error.to_string()))?;
     parse_status(call(stream, Command::Start, payload)?)
+}
+
+/// `reload_routing` поверх открытого потока: правки per-app правил к активной
+/// сессии без рестарта ядра (S10-T1).
+pub fn reload_routing<S: Read + Write>(
+    stream: &mut S,
+    rule_set: Value,
+) -> Result<HelperStatus, HelperClientError> {
+    let payload = serde_json::to_value(ReloadRoutingPayload { rule_set })
+        .map_err(|error| HelperClientError::InvalidPayload(error.to_string()))?;
+    parse_status(call(stream, Command::ReloadRouting, payload)?)
 }
 
 /// `stop` поверх открытого потока.
@@ -206,9 +220,14 @@ mod unix {
         fn start(
             &self,
             config: Value,
+            rule_set: Value,
             kill_switch: bool,
         ) -> Result<HelperStatus, HelperClientError> {
-            super::start(&mut self.connect()?, config, kill_switch)
+            super::start(&mut self.connect()?, config, rule_set, kill_switch)
+        }
+
+        fn reload_routing(&self, rule_set: Value) -> Result<HelperStatus, HelperClientError> {
+            super::reload_routing(&mut self.connect()?, rule_set)
         }
 
         fn stop(&self) -> Result<HelperStatus, HelperClientError> {
@@ -277,9 +296,14 @@ mod windows_pipe {
         fn start(
             &self,
             config: Value,
+            rule_set: Value,
             kill_switch: bool,
         ) -> Result<HelperStatus, HelperClientError> {
-            super::start(&mut self.connect()?, config, kill_switch)
+            super::start(&mut self.connect()?, config, rule_set, kill_switch)
+        }
+
+        fn reload_routing(&self, rule_set: Value) -> Result<HelperStatus, HelperClientError> {
+            super::reload_routing(&mut self.connect()?, rule_set)
         }
 
         fn stop(&self) -> Result<HelperStatus, HelperClientError> {
